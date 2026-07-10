@@ -41,6 +41,12 @@ def test_unknown_intent() -> None:
     assert result.requires_confirmation
 
 
+def test_greeting_is_general_chat() -> None:
+    result = RuleBasedIntentClassifier().classify("你好")
+    assert result.intent is IntentType.CHAT_GENERAL
+    assert not result.requires_confirmation
+
+
 async def test_hybrid_uses_llm_when_rule_confidence_is_low() -> None:
     async def fake_llm(_prompt):
         return '{"intent":"note.search","confidence":0.91,"requiresConfirmation":false,"entities":[{"type":"keyword","value":"项目结构设计"}]}'
@@ -69,5 +75,6 @@ if __name__ == "__main__":
     test_task_create_intent()
     test_note_search_intent()
     test_unknown_intent()
+    test_greeting_is_general_chat()
     asyncio.run(test_hybrid_uses_llm_when_rule_confidence_is_low())
     asyncio.run(test_hybrid_keeps_rule_result_when_confidence_is_high())

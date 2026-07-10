@@ -175,7 +175,12 @@ class RuleBasedPlanner:
             if rule.mode is PlannerMode.CLARIFICATION:
                 return self._clarification(input_data, "我无法确定你的操作意图，请换一种方式描述。")
             if rule.mode is PlannerMode.DIRECT_ANSWER:
-                read_steps.append(PlanStep(PlanStepType.ANSWER_DIRECTLY, message="我可以直接回答这个问题。"))
+                read_steps.append(
+                    PlanStep(
+                        PlanStepType.ANSWER_DIRECTLY,
+                        message="你好，我在。你可以让我查询笔记、列任务，或生成修改计划。",
+                    )
+                )
                 continue
 
             resolved = self._argument_resolver.resolve(intent, input_data.context)

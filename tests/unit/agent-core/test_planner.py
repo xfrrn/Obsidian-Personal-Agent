@@ -81,6 +81,15 @@ def test_read_intent_maps_to_read_tool() -> None:
     assert PlanValidator().validate(plan, input_data).valid
 
 
+def test_general_chat_answers_directly() -> None:
+    input_data = PlannerInput(_single_intent(IntentType.CHAT_GENERAL, "你好"), _context("你好"), _tools())
+    plan = RuleBasedPlanner().create_plan(input_data)
+
+    assert not plan.contains_write_request
+    assert plan.steps[0].type is PlanStepType.ANSWER_DIRECTLY
+    assert "你好" in plan.steps[0].message
+
+
 def test_write_intents_are_merged_into_operation_plan() -> None:
     intents = MultiIntentResult(
         raw_text="优化当前笔记并添加标签",
@@ -138,6 +147,7 @@ async def test_plan_executor_calls_tools_and_stops_after_build_plan() -> None:
 
 if __name__ == "__main__":
     test_read_intent_maps_to_read_tool()
+    test_general_chat_answers_directly()
     test_write_intents_are_merged_into_operation_plan()
     test_confirmed_trigger_can_execute_operation_plan()
     test_user_message_cannot_call_system_write_tool()

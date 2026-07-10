@@ -35,6 +35,13 @@ def _patterns(*values: str) -> tuple[re.Pattern[str], ...]:
 
 INTENT_RULES: tuple[IntentRule, ...] = (
     IntentRule(
+        IntentType.CHAT_GENERAL,
+        strong_keywords=("你好", "您好", "hello", "hi"),
+        keywords=("在吗", "谢谢", "感谢"),
+        patterns=_patterns(r"^(你好|您好|hello|hi)[!！。,.，\s]*$"),
+        priority=8,
+    ),
+    IntentRule(
         IntentType.TASK_COMPLETE,
         strong_keywords=("完成任务", "标记完成", "设为完成", "任务已完成"),
         keywords=("完成", "做完", "结束任务", "打勾"),
