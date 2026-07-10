@@ -1,4 +1,4 @@
-import { AgentError, parseJsonObject } from "./protocol";
+import { AgentError, parseJsonObject } from "../../utils/protocol";
 
 export type OperationRisk = "low" | "medium" | "high";
 

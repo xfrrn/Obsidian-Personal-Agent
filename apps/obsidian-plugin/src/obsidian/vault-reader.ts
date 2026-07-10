@@ -4,7 +4,7 @@ import {
   getFrontMatterInfo,
   TFile
 } from "obsidian";
-import { AgentError } from "./protocol";
+import { AgentError } from "../utils/protocol";
 
 const MAX_CATALOG_CHARS = 40_000;
 const MAX_NOTE_CHARS = 20_000;
@@ -122,4 +122,3 @@ function shortString(value: unknown): string | undefined {
     ? value.trim().slice(0, 200)
     : undefined;
 }
-

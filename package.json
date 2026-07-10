@@ -4,10 +4,10 @@
   "private": true,
   "description": "A safe, local-first personal knowledge agent for Obsidian.",
   "scripts": {
-    "dev": "node esbuild.config.mjs",
-    "build": "node esbuild.config.mjs production",
-    "check": "tsc --noEmit",
-    "test": "esbuild tests/protocol.test.ts tests/operations.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/*.js"
+    "dev": "node apps/obsidian-plugin/esbuild.config.mjs",
+    "build": "node apps/obsidian-plugin/esbuild.config.mjs production",
+    "check": "tsc --noEmit -p apps/obsidian-plugin/tsconfig.json",
+    "test": "esbuild apps/obsidian-plugin/tests/protocol.test.ts apps/obsidian-plugin/tests/operations.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/*.js"
   },
   "engines": {
     "node": ">=20"

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentError } from "../src/protocol";
-import { parseOperationPlan } from "../src/operation-plan";
+import { AgentError } from "../src/utils/protocol";
+import { parseOperationPlan } from "../src/features/operation-preview/operation-plan";
 
 test("修改计划支持第一版六种操作并计算风险", () => {
   const plan = parseOperationPlan(

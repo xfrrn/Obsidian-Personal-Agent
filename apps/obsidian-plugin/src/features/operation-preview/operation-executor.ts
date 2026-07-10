@@ -4,18 +4,19 @@ import {
   TFile,
   TFolder
 } from "obsidian";
-import { callModel, QueryScope } from "./agent";
+import { callModel } from "../../api/model-client";
+import type { QueryScope } from "../assistant/types";
 import {
   AgentError,
   parseCandidatePaths
-} from "./protocol";
-import type { AgentSettings } from "./settings";
+} from "../../utils/protocol";
+import type { AgentSettings } from "../../settings/settings";
 import {
   getCurrentSource,
   getVaultCatalog,
   loadSources,
   SourceDocument
-} from "./vault-context";
+} from "../../obsidian/vault-reader";
 import {
   describeOperation,
   KnowledgeOperation,

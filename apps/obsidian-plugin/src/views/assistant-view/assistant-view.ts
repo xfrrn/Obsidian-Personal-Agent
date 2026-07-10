@@ -4,13 +4,13 @@ import {
   setIcon,
   WorkspaceLeaf
 } from "obsidian";
-import type { QueryScope } from "./agent";
-import type PersonalKnowledgeAgentPlugin from "./main";
+import type { QueryScope } from "../../features/assistant/types";
+import type PersonalKnowledgeAgentPlugin from "../../main";
 import {
   describeOperation,
   OperationPlan
-} from "./operations";
-import { AgentAnswer, AgentError } from "./protocol";
+} from "../../features/operation-preview/operation-executor";
+import { AgentAnswer, AgentError } from "../../utils/protocol";
 
 export const AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
 

@@ -7,7 +7,7 @@ import {
   parseAgentAnswer,
   parseCandidatePaths,
   parseIntent
-} from "../src/protocol";
+} from "../src/utils/protocol";
 
 test("API 地址只允许 HTTPS 或本机 HTTP", () => {
   assert.equal(

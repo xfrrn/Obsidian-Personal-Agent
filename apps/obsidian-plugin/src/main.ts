@@ -1,37 +1,26 @@
 import { Plugin } from "obsidian";
-import { askAgent, judgeIntent, QueryScope } from "./agent";
-import { AssistantView, AGENT_VIEW_TYPE } from "./assistant-view";
+import { initializePlugin } from "./bootstrap/initialize-plugin";
+import { askAgent, judgeIntent } from "./features/assistant/agent-loop";
+import type { QueryScope } from "./features/assistant/types";
 import {
   buildOperationPlan,
   executeOperationPlan,
   OperationPlan
-} from "./operations";
-import { AgentAnswer, AgentIntent } from "./protocol";
+} from "./features/operation-preview/operation-executor";
+import { AGENT_VIEW_TYPE } from "./views/assistant-view/assistant-view";
+import type { AgentAnswer, AgentIntent } from "./types";
 import {
   AgentSettings,
-  AgentSettingTab,
   DEFAULT_SETTINGS,
   providerById
-} from "./settings";
+} from "./settings/settings";
 
 export default class PersonalKnowledgeAgentPlugin extends Plugin {
   settings!: AgentSettings;
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.registerView(
-      AGENT_VIEW_TYPE,
-      (leaf) => new AssistantView(leaf, this)
-    );
-    this.addSettingTab(new AgentSettingTab(this.app, this));
-    this.addRibbonIcon("bot", "打开个人知识库 Agent", () => {
-      void this.activateView();
-    });
-    this.addCommand({
-      id: "open-personal-knowledge-agent",
-      name: "打开个人知识库 Agent",
-      callback: () => this.activateView()
-    });
+    initializePlugin(this);
   }
 
   onunload(): void {
@@ -56,13 +45,6 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
-  }
-
-  private async activateView(): Promise<void> {
-    await this.app.workspace.ensureSideLeaf(AGENT_VIEW_TYPE, "right", {
-      active: true,
-      reveal: true
-    });
   }
 
   private async loadSettings(): Promise<void> {

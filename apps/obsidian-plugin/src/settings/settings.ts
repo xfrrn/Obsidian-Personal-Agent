@@ -3,8 +3,8 @@ import {
   PluginSettingTab,
   Setting
 } from "obsidian";
-import { callModel } from "./agent";
-import type PersonalKnowledgeAgentPlugin from "./main";
+import { callModel } from "../api/model-client";
+import type PersonalKnowledgeAgentPlugin from "../main";
 
 export interface AgentSettings {
   provider: string;
