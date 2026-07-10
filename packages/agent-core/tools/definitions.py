@@ -29,6 +29,22 @@ class ToolRiskLevel(str, Enum):
     HIGH = "high"
 
 
+class ToolEffect(str, Enum):
+    """工具对系统状态的影响类型。"""
+
+    READ = "read"
+    PREPARE_WRITE = "prepare_write"
+    WRITE = "write"
+    COMMUNICATION = "communication"
+
+
+class ToolInvocationPolicy(str, Enum):
+    """工具可由谁触发。"""
+
+    PLANNER_ALLOWED = "planner_allowed"
+    SYSTEM_ONLY = "system_only"
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Agent 选择工具前可见的静态元数据。"""
@@ -40,6 +56,9 @@ class ToolDefinition:
     permission: ToolPermission = ToolPermission.READ
     risk_level: ToolRiskLevel = ToolRiskLevel.LOW
     timeout_seconds: int = 30
+    effect: ToolEffect = ToolEffect.READ
+    invocation_policy: ToolInvocationPolicy = ToolInvocationPolicy.PLANNER_ALLOWED
+    requires_confirmation: bool = False
 
     def __post_init__(self) -> None:
         if not _TOOL_NAME.fullmatch(self.name):
