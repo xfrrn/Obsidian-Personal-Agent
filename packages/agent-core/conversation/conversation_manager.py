@@ -8,6 +8,8 @@ from enum import Enum
 from typing import Mapping
 from uuid import uuid4
 
+from exceptions import ConversationError
+
 
 class ConversationRole(str, Enum):
     """对话消息角色。"""
@@ -51,7 +53,7 @@ class ConversationManager:
     ) -> ConversationMessage:
         """追加一条消息。"""
         if not content.strip():
-            raise ValueError("message content is required")
+            raise ConversationError("message content is required")
         self.start_conversation(conversation_id)
         message = ConversationMessage(
             role=role,

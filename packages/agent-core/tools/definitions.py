@@ -7,6 +7,8 @@ from enum import Enum
 import re
 from typing import Any, Mapping
 
+from exceptions import AgentValidationError
+
 JsonSchema = Mapping[str, Any]
 
 _TOOL_NAME = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -62,11 +64,11 @@ class ToolDefinition:
 
     def __post_init__(self) -> None:
         if not _TOOL_NAME.fullmatch(self.name):
-            raise ValueError(f"invalid tool name: {self.name!r}")
+            raise AgentValidationError(f"invalid tool name: {self.name!r}")
         if not self.description.strip():
-            raise ValueError("tool description is required")
+            raise AgentValidationError("tool description is required")
         if self.timeout_seconds <= 0:
-            raise ValueError("tool timeout must be positive")
+            raise AgentValidationError("tool timeout must be positive")
 
 
 @dataclass(frozen=True)

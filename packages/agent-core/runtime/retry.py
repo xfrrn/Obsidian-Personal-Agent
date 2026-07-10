@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from exceptions import AgentValidationError
+
 
 @dataclass(frozen=True)
 class RetryPolicy:
@@ -14,6 +16,6 @@ class RetryPolicy:
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
-            raise ValueError("max_attempts must be at least 1")
+            raise AgentValidationError("max_attempts must be at least 1")
         if self.backoff_seconds < 0:
-            raise ValueError("backoff_seconds cannot be negative")
+            raise AgentValidationError("backoff_seconds cannot be negative")

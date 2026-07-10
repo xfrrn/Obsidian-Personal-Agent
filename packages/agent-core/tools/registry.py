@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Mapping
 
+from exceptions import ToolNotFoundError, ToolPermissionDeniedError, ToolRegistrationError
+
 from .base import FunctionTool, Tool
 from .definitions import ToolCall, ToolDefinition, ToolResult
 from .permissions import ToolPolicy
@@ -20,7 +22,7 @@ class ToolRegistry:
         """按工具定义中的名称注册一个工具。"""
         name = tool.definition.name
         if name in self._tools:
-            raise ValueError(f"tool already registered: {name}")
+            raise ToolRegistrationError(f"tool already registered: {name}")
         self._tools[name] = tool
 
     def register_function(
@@ -36,7 +38,7 @@ class ToolRegistry:
         try:
             return self._tools[name]
         except KeyError as exc:
-            raise KeyError(f"unknown tool: {name}") from exc
+            raise ToolNotFoundError(f"unknown tool: {name}") from exc
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
         """返回供 Agent 选择工具使用的工具定义。"""
@@ -57,7 +59,7 @@ class ToolRegistry:
         tool = self.get(call.tool_name)
         decision = self._policy.check(tool.definition, confirmed=confirmed)
         if not decision.allowed:
-            raise PermissionError(decision.reason)
+            raise ToolPermissionDeniedError(decision.reason)
         return await tool.run(call.input, context)
 
     def extend(self, tools: Iterable[Tool]) -> None:

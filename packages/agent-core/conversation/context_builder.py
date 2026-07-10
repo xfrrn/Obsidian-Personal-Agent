@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from exceptions import ConversationError
 from intent.intent_types import IntentResult
 from tools.definitions import ToolDefinition
 
@@ -38,7 +39,7 @@ class ContextBuilder:
         recent_message_limit: int = 12,
     ) -> None:
         if recent_message_limit < 0:
-            raise ValueError("recent_message_limit cannot be negative")
+            raise ConversationError("recent_message_limit cannot be negative")
         self._conversations = conversations
         self._memory = memory or MemoryManager()
         self._recent_message_limit = recent_message_limit
@@ -57,7 +58,7 @@ class ContextBuilder:
     ) -> AgentTurnContext:
         """构建当前回合上下文。"""
         if not user_input.strip():
-            raise ValueError("user_input is required")
+            raise ConversationError("user_input is required")
 
         self._conversations.start_conversation(conversation_id)
         return AgentTurnContext(

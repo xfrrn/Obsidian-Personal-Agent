@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from exceptions import AgentCancelledError
+
 
 class CancellationToken:
     """轻量取消标记。"""
@@ -21,4 +23,4 @@ class CancellationToken:
     def throw_if_cancelled(self) -> None:
         """已取消时抛出异常。"""
         if self._cancelled:
-            raise RuntimeError("agent run cancelled")
+            raise AgentCancelledError("agent run cancelled")

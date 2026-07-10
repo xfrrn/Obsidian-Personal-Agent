@@ -7,6 +7,7 @@ from inspect import isawaitable
 import json
 from typing import Any, Callable
 
+from exceptions import IntentClassificationError
 from prompts import build_intent_fallback_prompt
 
 from .entity_extractor import EntityExtractor
@@ -74,10 +75,10 @@ class HybridIntentClassifier:
         start = text.find("{")
         end = text.rfind("}")
         if start < 0 or end <= start:
-            raise ValueError("LLM intent response is not JSON")
+            raise IntentClassificationError("LLM intent response is not JSON")
         value = json.loads(text[start : end + 1])
         if not isinstance(value, dict):
-            raise ValueError("LLM intent response must be an object")
+            raise IntentClassificationError("LLM intent response must be an object")
         return value
 
     def _result_from_payload(

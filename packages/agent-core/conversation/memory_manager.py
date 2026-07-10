@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from exceptions import ConversationError
+
 
 @dataclass(frozen=True)
 class MemorySnapshot:
@@ -36,7 +38,7 @@ class MemoryManager:
     def set_user_preference(self, conversation_id: str, key: str, value: object) -> None:
         """记录用户偏好。"""
         if not key.strip():
-            raise ValueError("preference key is required")
+            raise ConversationError("preference key is required")
         self._preferences.setdefault(conversation_id, {})[key] = value
 
     def clear(self, conversation_id: str) -> None:
