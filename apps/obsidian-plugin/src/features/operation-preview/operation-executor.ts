@@ -10,17 +10,14 @@ import {
   PLAN_GENERATION_PROMPT,
   PLAN_NOTE_SELECTION_PROMPT
 } from "../assistant/prompts";
-import {
-  AgentError,
-  parseCandidatePaths
-} from "../../utils/protocol";
+import { AgentError } from "../../utils/protocol";
 import type { AgentSettings } from "../../settings/settings";
 import {
   getCurrentSource,
-  getVaultCatalog,
   loadSources,
   SourceDocument
 } from "../../obsidian/vault-reader";
+import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
 import {
   describeOperation,
   KnowledgeOperation,
@@ -173,20 +170,14 @@ async function getPlanningSources(
 ): Promise<SourceDocument[]> {
   if (scope === "current") return [await getCurrentSource(app)];
 
-  const { catalog, paths } = await getVaultCatalog(app);
-  if (!paths.length) return [];
-
-  const selection = await callModel(app, settings, [
-    {
-      role: "system",
-      content: PLAN_NOTE_SELECTION_PROMPT
-    },
-    {
-      role: "user",
-      content: `修改请求：${request}\n\n知识库目录：\n${catalog}`
-    }
-  ]);
-  return loadSources(app, parseCandidatePaths(selection, new Set(paths), 8));
+  const paths = await selectCandidateNotePaths(
+    app,
+    settings,
+    request,
+    PLAN_NOTE_SELECTION_PROMPT,
+    "修改请求"
+  );
+  return loadSources(app, paths);
 }
 
 function assertPlanMatchesSources(

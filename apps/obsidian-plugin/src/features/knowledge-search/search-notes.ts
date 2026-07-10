@@ -2,27 +2,34 @@ import { App } from "obsidian";
 import { callModel } from "../../api/model-client";
 import type { AgentSettings } from "../../settings/settings";
 import { AgentError, parseCandidatePaths } from "../../utils/protocol";
-import { getVaultCatalog } from "../../obsidian/vault-reader";
+import { getVaultCatalogItems } from "../../obsidian/vault-reader";
 import { NOTE_SELECTION_PROMPT } from "../assistant/prompts";
+import { rankCandidateNotes } from "./local-rank";
+
+const MODEL_CANDIDATE_LIMIT = 30;
 
 export async function selectCandidateNotePaths(
   app: App,
   settings: AgentSettings,
-  question: string
+  question: string,
+  systemPrompt = NOTE_SELECTION_PROMPT,
+  inputLabel = "问题"
 ): Promise<string[]> {
-  const { catalog, paths } = await getVaultCatalog(app);
+  const { items, paths } = await getVaultCatalogItems(app);
   if (!paths.length) throw new AgentError("知识库中没有 Markdown 笔记。");
+  const candidates = rankCandidateNotes(items, question, MODEL_CANDIDATE_LIMIT);
+  const candidatePaths = candidates.map((item) => item.path);
 
   const selection = await callModel(app, settings, [
     {
       role: "system",
-      content: NOTE_SELECTION_PROMPT
+      content: systemPrompt
     },
     {
       role: "user",
-      content: `问题：${question}\n\n知识库目录：\n${catalog}`
+      content: `${inputLabel}：${question}\n\n候选笔记：\n${JSON.stringify(candidates)}`
     }
   ]);
 
-  return parseCandidatePaths(selection, new Set(paths), 8);
+  return parseCandidatePaths(selection, new Set(candidatePaths), 8);
 }

@@ -20,6 +20,8 @@ apps/obsidian-plugin/
     views/assistant-view/       侧边栏对话视图
 ```
 
+Agent 第一阶段设计见 [docs/agent-design.md](docs/agent-design.md)。
+
 ## 已实现
 
 - Obsidian 侧边栏对话视图。

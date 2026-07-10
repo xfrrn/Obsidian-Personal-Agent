@@ -17,7 +17,7 @@ export interface SourceDocument {
   content: string;
 }
 
-interface CatalogItem {
+export interface CatalogItem {
   path: string;
   title: string;
   type?: string;
@@ -40,6 +40,22 @@ export async function getVaultCatalog(app: App): Promise<{
   catalog: string;
   paths: string[];
 }> {
+  const { items, paths } = await getVaultCatalogItems(app);
+  let catalog = JSON.stringify(items);
+  if (catalog.length > MAX_CATALOG_CHARS) {
+    catalog = JSON.stringify(items.map(({ excerpt: _excerpt, ...item }) => item));
+  }
+  if (catalog.length > MAX_CATALOG_CHARS) {
+    throw new AgentError("知识库目录已超过第一版查询上限，请先使用“当前笔记”范围。");
+  }
+
+  return { catalog, paths };
+}
+
+export async function getVaultCatalogItems(app: App): Promise<{
+  items: CatalogItem[];
+  paths: string[];
+}> {
   const files = app.vault.getMarkdownFiles().sort((a, b) =>
     a.path.localeCompare(b.path)
   );
@@ -50,15 +66,7 @@ export async function getVaultCatalog(app: App): Promise<{
     return toCatalogItem(app, file, content);
   }));
 
-  let catalog = JSON.stringify(items);
-  if (catalog.length > MAX_CATALOG_CHARS) {
-    catalog = JSON.stringify(items.map(({ excerpt: _excerpt, ...item }) => item));
-  }
-  if (catalog.length > MAX_CATALOG_CHARS) {
-    throw new AgentError("知识库目录已超过第一版查询上限，请先使用“当前笔记”范围。");
-  }
-
-  return { catalog, paths: files.map((file) => file.path) };
+  return { items, paths: files.map((file) => file.path) };
 }
 
 export async function loadSources(
