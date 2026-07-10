@@ -48,16 +48,22 @@ export async function askLocalAgent(
   return toAgentAnswer(response.json as unknown);
 }
 
-export async function testLocalAgent(settings: AgentSettings): Promise<void> {
+export async function testLocalAgent(app: App, settings: AgentSettings): Promise<void> {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("本地 Agent 端口未配置。");
+  if (!settings.localAgentToken) throw new AgentError("本地 Agent 尚未配对。");
   const response = await requestUrl({
-    url: `http://127.0.0.1:${port}/health`,
+    url: `http://127.0.0.1:${port}/identity`,
     method: "GET",
+    headers: { "X-Agent-Token": settings.localAgentToken },
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
     throw new AgentError(`本地 Agent 不可用（HTTP ${response.status}）。`);
+  }
+  const payload = response.json as unknown;
+  if (!isRecord(payload) || payload.vaultRoot !== vaultBasePath(app)) {
+    throw new AgentError("本地 Agent 绑定的不是当前 Vault。");
   }
 }
 
@@ -67,6 +73,27 @@ export async function discoverLocalAgent(
 ): Promise<{ port: string; token: string; vaultRoot: string }> {
   const vaultPath = vaultBasePath(app);
   const ports = candidatePorts(settings);
+  if (settings.localAgentToken) {
+    for (const port of ports) {
+      try {
+        const response = await withTimeout(requestUrl({
+          url: `http://127.0.0.1:${port}/identity`,
+          method: "GET",
+          headers: { "X-Agent-Token": settings.localAgentToken },
+          throw: false
+        }), 400);
+        const payload = response.json as unknown;
+        if (
+          response.status >= 200 && response.status < 300 &&
+          isRecord(payload) && payload.vaultRoot === vaultPath
+        ) {
+          return { port: String(port), token: settings.localAgentToken, vaultRoot: vaultPath };
+        }
+      } catch {
+        // Try the next local port.
+      }
+    }
+  }
   for (const port of ports) {
     try {
       await withTimeout(requestUrl({

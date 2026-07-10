@@ -6,6 +6,8 @@ import {
   extractChatContent,
   parseAgentAnswer,
   parseCandidatePaths,
+  inferIntent,
+  isTaskQuery,
   parseIntent
 } from "../src/utils/protocol";
 
@@ -89,4 +91,17 @@ test("意图判断只接受问答或修改计划", () => {
     () => parseIntent("{\"intent\":\"delete\"}"),
     AgentError
   );
+});
+
+test("本地意图判断不会把提问误当成写操作", () => {
+  assert.equal(inferIntent("创建一篇项目笔记"), "plan");
+  assert.equal(inferIntent("如何创建一篇项目笔记？"), "ask");
+  assert.equal(inferIntent("总结当前笔记"), "ask");
+  assert.equal(isTaskQuery("列出未完成任务"), true);
+  assert.equal(isTaskQuery("总结当前笔记"), false);
+});
+
+test("JSON 对象外的额外文本会被拒绝", () => {
+  assert.throws(() => parseIntent('说明：{"intent":"ask"}'), AgentError);
+  assert.equal(parseIntent('```json\n{"intent":"ask"}\n```'), "ask");
 });

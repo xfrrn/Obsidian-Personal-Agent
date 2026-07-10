@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock
 from typing import Any
 
 from bootstrap.container import LocalAgentContainer, build_container
@@ -19,6 +20,7 @@ from infrastructure.logging import configure_logging
 from runtime import RuntimeRequest, RuntimeTrigger
 
 LOGGER = logging.getLogger(__name__)
+MAX_REQUEST_BYTES = 1_000_000
 
 
 class LocalAgentHandler(BaseHTTPRequestHandler):
@@ -26,24 +28,28 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
     settings: LocalAgentSettings
     token: str | None = None
     vault_root: Path | None = None
+    paired = False
+    pairing_lock = Lock()
 
     def do_OPTIONS(self) -> None:
-        self.send_response(204)
-        self._send_cors_headers()
-        self.end_headers()
+        self._send_json({"error": "browser access is not allowed"}, status=403)
 
     def do_GET(self) -> None:
         if self.path == "/health":
             self._send_json({
                 "status": "ok",
                 "configured": self.container is not None,
-                "vaultRoot": str(self.vault_root) if self.vault_root else None,
             })
             return
         if self.path == "/tools":
-            if not self._require_ready():
+            if not self._require_ready() or not self._require_token():
                 return
             self._send_json({"tools": [_jsonable(tool) for tool in self.container.registry.definitions()]})
+            return
+        if self.path == "/identity":
+            if not self._require_ready() or not self._require_token():
+                return
+            self._send_json({"vaultRoot": str(self.vault_root)})
             return
         self._send_json({"error": "not found"}, status=404)
 
@@ -77,22 +83,33 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
 
     def _handshake(self) -> None:
         try:
-            payload = self._read_json()
-            vault_path = _text(payload, "vaultPath")
-            vault_root = Path(vault_path).expanduser().resolve()
-            if not vault_root.exists() or not vault_root.is_dir():
-                raise ValueError(f"vault path does not exist: {vault_root}")
-            if not (vault_root / ".obsidian").is_dir():
-                raise ValueError("vault path must contain a .obsidian directory")
+            if self.headers.get("Origin"):
+                self._send_json({"error": "browser handshake is not allowed"}, status=403)
+                return
+            with self.pairing_lock:
+                if self.paired:
+                    self._send_json({"error": "local-agent is already paired; restart it to pair again"}, status=409)
+                    return
+                payload = self._read_json()
+                vault_path = _text(payload, "vaultPath")
+                vault_root = Path(vault_path).expanduser().resolve()
+                if not vault_root.exists() or not vault_root.is_dir():
+                    raise ValueError(f"vault path does not exist: {vault_root}")
+                if not (vault_root / ".obsidian").is_dir():
+                    raise ValueError("vault path must contain a .obsidian directory")
+                if self.vault_root is not None and vault_root != self.vault_root:
+                    raise ValueError("local-agent is already bound to another vault")
 
-            settings = LocalAgentSettings(
-                host=self.settings.host,
-                port=self.settings.port,
-                vault_root=vault_root,
-            )
-            self.__class__.container = build_container(settings)
-            self.__class__.vault_root = vault_root
-            self.__class__.token = secrets.token_urlsafe(24)
+                if self.container is None:
+                    settings = LocalAgentSettings(
+                        host=self.settings.host,
+                        port=self.settings.port,
+                        vault_root=vault_root,
+                    )
+                    self.__class__.container = build_container(settings)
+                self.__class__.vault_root = vault_root
+                self.__class__.token = secrets.token_urlsafe(24)
+                self.__class__.paired = True
             LOGGER.info("local-agent bound to vault root: %s", vault_root)
             self._send_json({
                 "status": "ok",
@@ -123,6 +140,10 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
 
     def _read_json(self) -> dict[str, Any]:
         size = int(self.headers.get("Content-Length", "0"))
+        if size < 0 or size > MAX_REQUEST_BYTES:
+            raise ValueError("request body is too large")
+        if self.headers.get_content_type() != "application/json":
+            raise ValueError("Content-Type must be application/json")
         raw = self.rfile.read(size).decode("utf-8")
         value = json.loads(raw or "{}")
         if not isinstance(value, dict):
@@ -133,15 +154,9 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
         raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self._send_cors_headers()
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
-
-    def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Agent-Token")
 
     def log_message(self, format: str, *args: Any) -> None:
         LOGGER.info(format, *args)

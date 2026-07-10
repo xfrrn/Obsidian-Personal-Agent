@@ -20,10 +20,15 @@ export type KnowledgeOperation =
   | { type: "invoke-plugin"; commandId: string };
 
 export interface OperationPlan {
+  planId?: string;
+  createdAt?: string;
+  expectedHashes?: Record<string, string>;
   summary: string;
   risk: OperationRisk;
   operations: KnowledgeOperation[];
 }
+
+const ALLOWED_PLUGIN_COMMANDS = new Set(["workspace:save-file"]);
 
 export function parseOperationPlan(
   text: string,
@@ -112,12 +117,16 @@ function parseOperation(
     return {
       type: "create-task",
       path: existingSourcePath(raw.path, existingPaths, sourcePaths),
-      title: requiredString(raw.title, "任务标题")
+      title: requiredSingleLine(raw.title, "任务标题")
     };
   }
 
   if (raw.type === "invoke-plugin") {
-    return { type: "invoke-plugin", commandId: requiredString(raw.commandId, "插件命令 ID") };
+    const commandId = requiredSingleLine(raw.commandId, "插件命令 ID");
+    if (!ALLOWED_PLUGIN_COMMANDS.has(commandId)) {
+      throw new AgentError(`不允许调用插件命令：${commandId}`);
+    }
+    return { type: "invoke-plugin", commandId };
   }
 
   throw new AgentError(`第一版不支持操作类型：${raw.type}`);
@@ -174,7 +183,7 @@ function optionalKeyList(value: unknown): string[] | undefined {
 function optionalTagList(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new AgentError("标签列表必须是数组。");
-  return value.map((item) => requiredString(item, "标签")).filter(unique);
+  return value.map((item) => requiredSingleLine(item, "标签")).filter(unique);
 }
 
 function metadataKey(value: unknown): string {
@@ -200,6 +209,14 @@ function requiredString(value: unknown, name: string): string {
     throw new AgentError(`修改操作缺少${name}。`);
   }
   return value.trim();
+}
+
+function requiredSingleLine(value: unknown, name: string): string {
+  const result = requiredString(value, name);
+  if (/[\r\n\u0000-\u001f\u007f]/.test(result)) {
+    throw new AgentError(`${name}不能包含换行或控制字符。`);
+  }
+  return result;
 }
 
 function unique(value: string, index: number, array: string[]): boolean {

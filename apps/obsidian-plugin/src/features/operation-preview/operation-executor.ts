@@ -61,7 +61,12 @@ export async function buildOperationPlan(
 
   const plan = parseOperationPlan(response, existingPaths, sourcePaths);
   assertPlanMatchesSources(plan, sources);
-  return plan;
+  return {
+    ...plan,
+    planId: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    expectedHashes: await hashPaths(app, operationSourcePaths(plan))
+  };
 }
 
 export async function executeOperationPlan(
@@ -74,18 +79,19 @@ export async function executeOperationPlan(
   const rollback: Array<() => Promise<void>> = [];
 
   try {
-    await appendAudit(app, "started", plan);
+    const beforeHashes = await assertExpectedHashes(app, plan);
+    await appendAudit(app, "started", plan, undefined, beforeHashes);
     for (const operation of plan.operations) {
       await executeOperation(app, operation, rollback);
       results.push(`已执行：${describeOperation(operation)}`);
     }
-    await appendAudit(app, "succeeded", plan);
+    await appendAudit(app, "succeeded", plan, undefined, await currentHashes(app, affectedPaths(plan)));
     return results;
   } catch (error) {
     const message = error instanceof Error ? error.message : "未知错误";
     try {
       await rollbackDone(rollback);
-      await appendAudit(app, "rolled-back", plan, message);
+      await appendAudit(app, "rolled-back", plan, message, await currentHashes(app, affectedPaths(plan)));
     } catch (rollbackError) {
       const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : "未知错误";
       await appendAudit(app, "rollback-failed", plan, `${message}; ${rollbackMessage}`);
@@ -110,8 +116,10 @@ async function executeOperation(
     }
     await ensureParentFolder(app, operation.path);
     await app.vault.create(operation.path, operation.content);
+    const createdHash = await sha256(operation.content);
     rollback.push(async () => {
       const file = getMarkdownFile(app, operation.path);
+      await assertRollbackHash(app, file, createdHash);
       await app.vault.delete(file);
     });
     return;
@@ -119,6 +127,7 @@ async function executeOperation(
 
   if (operation.type === "move-note") {
     const file = getMarkdownFile(app, operation.path);
+    const movedHash = await sha256(await app.vault.cachedRead(file));
     if (app.vault.getAbstractFileByPath(operation.targetPath)) {
       throw new AgentError(`目标路径已存在，已停止执行：${operation.targetPath}`);
     }
@@ -126,6 +135,7 @@ async function executeOperation(
     await app.fileManager.renameFile(file, operation.targetPath);
     rollback.push(async () => {
       const moved = getMarkdownFile(app, operation.targetPath);
+      await assertRollbackHash(app, moved, movedHash);
       await app.fileManager.renameFile(moved, operation.path);
     });
     return;
@@ -143,23 +153,36 @@ async function executeOperation(
 
   const file = getMarkdownFile(app, operation.path);
   const content = await app.vault.cachedRead(file);
+  let writtenHash: string;
 
   if (operation.type === "update-note") {
     assertUniqueText(content, operation.oldText, operation.path);
-    await app.vault.modify(file, content.replace(operation.oldText, operation.newText));
+    const updated = content.replace(operation.oldText, operation.newText);
+    await app.vault.modify(file, updated);
+    writtenHash = await sha256(updated);
   } else if (operation.type === "update-metadata") {
     await app.fileManager.processFrontMatter(file, (frontmatter) => {
       applyMetadata(frontmatter, operation);
     });
+    writtenHash = await sha256(await app.vault.cachedRead(file));
   } else {
-    await app.vault.modify(file, `${content.replace(/\s+$/, "")}\n\n- [ ] ${operation.title}\n`);
+    const updated = `${content.replace(/\s+$/, "")}\n\n- [ ] ${operation.title}\n`;
+    await app.vault.modify(file, updated);
+    writtenHash = await sha256(updated);
   }
 
   // ponytail: in-memory snapshot; persist snapshots if executions must survive app restart.
   rollback.push(async () => {
     const current = getMarkdownFile(app, operation.path);
+    await assertRollbackHash(app, current, writtenHash);
     await app.vault.modify(current, content);
   });
+}
+
+async function assertRollbackHash(app: App, file: TFile, expectedHash: string): Promise<void> {
+  if (await sha256(await app.vault.cachedRead(file)) !== expectedHash) {
+    throw new AgentError(`回滚冲突，文件在执行期间被修改：${file.path}`);
+  }
 }
 
 async function getPlanningSources(
@@ -238,21 +261,85 @@ async function appendAudit(
   app: App,
   status: string,
   plan: OperationPlan,
-  error?: string
+  error?: string,
+  actualHashes?: Record<string, string>
 ): Promise<void> {
   const adapter = app.vault.adapter;
   if (!(await adapter.exists(AUDIT_DIR))) await adapter.mkdir(AUDIT_DIR);
   const line = JSON.stringify({
     at: new Date().toISOString(),
+    planId: plan.planId,
+    createdAt: plan.createdAt,
     status,
     risk: plan.risk,
     summary: plan.summary,
-    operations: plan.operations.map(describeOperation),
+    expectedHashes: plan.expectedHashes,
+    actualHashes,
+    operations: plan.operations,
     error
   });
   // ponytail: JSONL append via read+write; replace with adapter-level append if audit grows large.
   const old = await adapter.exists(AUDIT_PATH) ? await adapter.read(AUDIT_PATH) : "";
   await adapter.write(AUDIT_PATH, `${old}${line}\n`);
+}
+
+async function assertExpectedHashes(
+  app: App,
+  plan: OperationPlan
+): Promise<Record<string, string>> {
+  if (!plan.planId || !plan.createdAt || !plan.expectedHashes) {
+    throw new AgentError("修改计划缺少版本信息，请重新生成。");
+  }
+  const actual = await hashPaths(app, operationSourcePaths(plan));
+  for (const [path, hash] of Object.entries(actual)) {
+    if (plan.expectedHashes[path] !== hash) {
+      throw new AgentError(`笔记在预览后已变化，请重新生成计划：${path}`);
+    }
+  }
+  return actual;
+}
+
+function operationSourcePaths(plan: OperationPlan): string[] {
+  const paths = new Set<string>();
+  for (const operation of plan.operations) {
+    if (operation.type !== "create-note" && operation.type !== "invoke-plugin") paths.add(operation.path);
+  }
+  return [...paths];
+}
+
+function affectedPaths(plan: OperationPlan): string[] {
+  const paths = new Set<string>();
+  for (const operation of plan.operations) {
+    if (operation.type === "invoke-plugin") continue;
+    paths.add(operation.path);
+    if (operation.type === "move-note") paths.add(operation.targetPath);
+  }
+  return [...paths];
+}
+
+async function hashPaths(app: App, paths: readonly string[]): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const path of paths) {
+    const file = getMarkdownFile(app, path);
+    result[path] = await sha256(await app.vault.cachedRead(file));
+  }
+  return result;
+}
+
+async function currentHashes(app: App, paths: readonly string[]): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  for (const path of paths) {
+    const file = app.vault.getAbstractFileByPath(normalizePath(path));
+    if (file instanceof TFile && file.extension === "md") {
+      result[path] = await sha256(await app.vault.cachedRead(file));
+    }
+  }
+  return result;
+}
+
+async function sha256(content: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 function getMarkdownFile(app: App, path: string): TFile {

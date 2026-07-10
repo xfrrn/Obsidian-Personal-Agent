@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from inspect import isawaitable
 import json
+import re
 from typing import Any, Callable
 
 from exceptions import IntentClassificationError
@@ -72,11 +73,9 @@ class HybridIntentClassifier:
         return self._result_from_payload(input_text, payload, rule_result)
 
     def _parse_json(self, text: str) -> dict[str, Any]:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise IntentClassificationError("LLM intent response is not JSON")
-        value = json.loads(text[start : end + 1])
+        stripped = text.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*([\s\S]*?)\s*```", stripped, re.IGNORECASE)
+        value = json.loads((fenced.group(1) if fenced else stripped).strip())
         if not isinstance(value, dict):
             raise IntentClassificationError("LLM intent response must be an object")
         return value

@@ -7,7 +7,7 @@ import asyncio
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages" / "agent-core"))
 
-from intent import HybridIntentClassifier, RuleBasedIntentClassifier  # noqa: E402
+from intent import HybridIntentClassifier, HybridIntentClassifierOptions, RuleBasedIntentClassifier  # noqa: E402
 from intent.intent_types import IntentEntityType, IntentType  # noqa: E402
 
 
@@ -47,17 +47,17 @@ def test_greeting_is_general_chat() -> None:
     assert not result.requires_confirmation
 
 
-async def test_hybrid_uses_llm_when_rule_confidence_is_low() -> None:
+def test_hybrid_uses_llm_when_rule_confidence_is_low() -> None:
     async def fake_llm(_prompt):
         return '{"intent":"note.search","confidence":0.91,"requiresConfirmation":false,"entities":[{"type":"keyword","value":"项目结构设计"}]}'
 
-    result = await HybridIntentClassifier(fake_llm).classify("我记得之前写过项目结构设计，找一下")
+    result = asyncio.run(HybridIntentClassifier(fake_llm).classify("我记得之前写过项目结构设计，找一下"))
     assert result.intent is IntentType.NOTE_SEARCH
     assert result.confidence == 0.91
     assert _entity_values(result, IntentEntityType.KEYWORD) == ["项目结构设计"]
 
 
-async def test_hybrid_keeps_rule_result_when_confidence_is_high() -> None:
+def test_hybrid_keeps_rule_result_when_confidence_is_high() -> None:
     called = False
 
     async def fake_llm(_prompt):
@@ -65,9 +65,25 @@ async def test_hybrid_keeps_rule_result_when_confidence_is_high() -> None:
         called = True
         return "{}"
 
-    result = await HybridIntentClassifier(fake_llm).classify("查询一下本周还有哪些任务")
+    result = asyncio.run(HybridIntentClassifier(fake_llm).classify("查询一下本周还有哪些任务"))
     assert result.intent is IntentType.TASK_SEARCH
     assert not called
+
+
+def test_hybrid_rejects_text_wrapped_json() -> None:
+    async def fake_llm(_prompt):
+        return '说明：{"intent":"note.search","confidence":0.9}'
+
+    classifier = HybridIntentClassifier(
+        fake_llm,
+        options=HybridIntentClassifierOptions(llm_failure_fallback_to_rule=False),
+    )
+    try:
+        asyncio.run(classifier.classify("嗯"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("wrapped JSON should fail")
 
 
 if __name__ == "__main__":
@@ -76,5 +92,6 @@ if __name__ == "__main__":
     test_note_search_intent()
     test_unknown_intent()
     test_greeting_is_general_chat()
-    asyncio.run(test_hybrid_uses_llm_when_rule_confidence_is_low())
-    asyncio.run(test_hybrid_keeps_rule_result_when_confidence_is_high())
+    test_hybrid_uses_llm_when_rule_confidence_is_low()
+    test_hybrid_keeps_rule_result_when_confidence_is_high()
+    test_hybrid_rejects_text_wrapped_json()

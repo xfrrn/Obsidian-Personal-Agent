@@ -41,3 +41,13 @@ test("没有命中时保留原顺序作为模型兜底候选", () => {
     ["Archive/Random.md", "Projects/AutoUp/Agent.md"]
   );
 });
+
+test("中文整句能召回末尾的相关笔记", () => {
+  const many = Array.from({ length: 31 }, (_, index) => ({
+    path: `${index}.md`,
+    title: index === 30 ? "项目计划" : `无关记录 ${index}`,
+    tags: [],
+    headings: []
+  }));
+  assert.ok(rankCandidateNotes(many, "请查找项目计划", 30).some((item) => item.title === "项目计划"));
+});

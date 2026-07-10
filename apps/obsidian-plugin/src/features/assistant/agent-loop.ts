@@ -3,34 +3,22 @@ import { askLocalAgent } from "../../api/local-agent-client";
 import { callModel } from "../../api/model-client";
 import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/vault-reader";
 import type { AgentSettings } from "../../settings/settings";
-import { AgentAnswer, AgentError, parseAgentAnswer, parseIntent } from "../../utils/protocol";
+import { AgentAnswer, AgentError, inferIntent, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
 import { answerWithTasks } from "../task-actions/list-tasks";
-import { ANSWER_PROMPT, INTENT_PROMPT } from "./prompts";
-import { chooseReadTool } from "./tool-router";
+import { ANSWER_PROMPT } from "./prompts";
 import type { QueryScope } from "./types";
 
 export type { QueryScope } from "./types";
 
 export async function judgeIntent(
-  app: App,
-  settings: AgentSettings,
+  _app: App,
+  _settings: AgentSettings,
   input: string
 ): Promise<"ask" | "plan"> {
   const cleanInput = input.trim();
   if (!cleanInput) throw new AgentError("请输入问题或修改请求。");
-
-  const response = await callModel(app, settings, [
-    {
-      role: "system",
-      content: INTENT_PROMPT
-    },
-    {
-      role: "user",
-      content: cleanInput
-    }
-  ]);
-  return parseIntent(response);
+  return inferIntent(cleanInput);
 }
 
 export async function askAgent(
@@ -42,14 +30,11 @@ export async function askAgent(
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("请输入问题。");
 
-  try {
-    return await askLocalAgent(app, settings, cleanQuestion, scope);
-  } catch {
-    // ponytail: local-agent is optional until plugin/backend protocol is stable.
+  if (isTaskQuery(cleanQuestion)) {
+    return settings.localAgentToken
+      ? askLocalAgent(app, settings, cleanQuestion, scope)
+      : answerWithTasks(app, cleanQuestion, scope);
   }
-
-  const tool = await chooseReadTool(app, settings, cleanQuestion, scope);
-  if (tool === "list_tasks") return answerWithTasks(app, cleanQuestion, scope);
 
   if (scope === "current") {
     const source = await getCurrentSource(app);

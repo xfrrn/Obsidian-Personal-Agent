@@ -4,6 +4,7 @@ node_modules/
 *.tsbuildinfo
 *.log
 /data.json
+/apps/obsidian-plugin/data.json
 .env
 .env.*
 !.env.example

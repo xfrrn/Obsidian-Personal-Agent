@@ -28,8 +28,9 @@ class FakeTasks:
         *,
         status: str | None = None,
         limit: int = 50,
+        path: str | None = None,
     ) -> Sequence[Mapping[str, Any]]:
-        return ({"title": "write tests", "status": status or "open", "query": query, "limit": limit},)
+        return ({"title": "write tests", "status": status or "open", "query": query, "limit": limit, "path": path},)
 
 
 class FakePlanner:
@@ -101,6 +102,14 @@ async def _run() -> None:
 
     tasks = await registry.run(ToolCall("list_tasks", {"rawText": "tasks"}))
     assert tasks.output["count"] == 1
+    assert tasks.output["query"] == ""
+    completed = await registry.run(ToolCall("list_tasks", {"rawText": "已完成任务"}))
+    assert completed.output["status"] == "completed"
+
+    current = await registry.run(ToolCall("search_notes", {"scope": "current", "activeFilePath": "Today.md"}))
+    assert current.output["results"][0]["path"] == "Today.md"
+    current_tasks = await registry.run(ToolCall("list_tasks", {"scope": "current", "activeFilePath": "Today.md"}))
+    assert current_tasks.output["tasks"][0]["path"] == "Today.md"
 
     plan = await registry.run(
         ToolCall(
@@ -120,5 +129,9 @@ async def _run() -> None:
     assert executed.output["results"][0]["status"] == "ok"
 
 
-if __name__ == "__main__":
+def test_application_tools() -> None:
     asyncio.run(_run())
+
+
+if __name__ == "__main__":
+    test_application_tools()

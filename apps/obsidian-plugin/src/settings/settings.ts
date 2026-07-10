@@ -110,8 +110,8 @@ export class AgentSettingTab extends PluginSettingTab {
             localAgentStatusEl.setText("测试中...");
             localAgentStatusEl.removeClass("is-success", "is-error");
             try {
-              await testLocalAgent(this.agentPlugin.settings);
-              localAgentStatusEl.setText("本地 Agent health 可用。");
+              await testLocalAgent(this.app, this.agentPlugin.settings);
+              localAgentStatusEl.setText("本地 Agent 鉴权和工具接口可用。");
               localAgentStatusEl.addClass("is-success");
             } catch (error) {
               localAgentStatusEl.setText(error instanceof Error ? error.message : "本地 Agent 不可用。");

@@ -34,7 +34,11 @@ def test_validation_error_keeps_value_error_semantics() -> None:
         raise AssertionError("invalid tool name should fail")
 
 
-async def test_registry_errors_keep_builtin_semantics() -> None:
+def test_registry_errors_keep_builtin_semantics() -> None:
+    asyncio.run(_test_registry_errors_keep_builtin_semantics())
+
+
+async def _test_registry_errors_keep_builtin_semantics() -> None:
     registry = ToolRegistry()
     try:
         registry.get("missing")
@@ -58,4 +62,4 @@ async def test_registry_errors_keep_builtin_semantics() -> None:
 if __name__ == "__main__":
     test_agent_core_error_can_be_serialized()
     test_validation_error_keeps_value_error_semantics()
-    asyncio.run(test_registry_errors_keep_builtin_semantics())
+    test_registry_errors_keep_builtin_semantics()

@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+from threading import Thread
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path[:0] = [
+    str(ROOT),
+    str(ROOT / "packages"),
+    str(ROOT / "packages" / "agent-core"),
+    str(ROOT / "apps" / "local-agent" / "src"),
+]
+
+from bootstrap.settings import LocalAgentSettings  # noqa: E402
+from main import LocalAgentHandler, ThreadingHTTPServer  # noqa: E402
+
+
+def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
+    (tmp_path / ".obsidian").mkdir()
+    LocalAgentHandler.container = None
+    LocalAgentHandler.token = None
+    LocalAgentHandler.vault_root = None
+    LocalAgentHandler.paired = False
+    LocalAgentHandler.settings = LocalAgentSettings("127.0.0.1", 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LocalAgentHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    body = {"vaultPath": str(tmp_path)}
+
+    try:
+        status, headers, _ = _request(base + "/handshake", body, {"Origin": "https://evil.example"})
+        assert status == 403
+        assert "Access-Control-Allow-Origin" not in headers
+
+        status, _, paired = _request(base + "/handshake", body)
+        assert status == 200
+        token = paired["token"]
+
+        status, _, health = _request(base + "/health")
+        assert status == 200 and "vaultRoot" not in health
+        assert _request(base + "/tools")[0] == 403
+        assert _request(base + "/tools", headers={"X-Agent-Token": token})[0] == 200
+        assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["vaultRoot"] == str(tmp_path)
+        assert _request(base + "/handshake", body)[0] == 409
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        LocalAgentHandler.container = None
+        LocalAgentHandler.token = None
+        LocalAgentHandler.vault_root = None
+        LocalAgentHandler.paired = False
+
+
+def _request(
+    url: str,
+    body: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, object, dict[str, object]]:
+    data = json.dumps(body).encode() if body is not None else None
+    request = Request(url, data=data, headers=headers or {}, method="POST" if body is not None else "GET")
+    if body is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        response = urlopen(request, timeout=2)
+    except HTTPError as error:
+        response = error
+    with response:
+        payload = json.loads(response.read().decode())
+        return response.status, response.headers, payload

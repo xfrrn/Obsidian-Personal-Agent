@@ -198,7 +198,9 @@ export class AssistantView extends ItemView {
     title.createSpan({ text: `执行计划（${plan.operations.length} 步）` });
     const list = card.createEl("ol", { cls: "pka-plan" });
     for (const operation of plan.operations) {
-      list.createEl("li", { text: describeOperation(operation) });
+      const item = list.createEl("li");
+      item.createDiv({ text: describeOperation(operation) });
+      item.createEl("pre", { text: JSON.stringify(operation, null, 2) });
     }
 
     const actions = card.createDiv({ cls: "pka-card-actions" });

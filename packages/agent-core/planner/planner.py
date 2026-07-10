@@ -73,6 +73,7 @@ class DefaultArgumentResolver:
         arguments: dict[str, Any] = {
             "intent": intent.type.value,
             "rawText": context.user_input,
+            "scope": context.scope,
             "entities": [
                 {"type": entity.type.value, "value": entity.value}
                 for entity in intent.entities
@@ -117,8 +118,9 @@ class DefaultArgumentResolver:
 INTENT_TOOL_RULES: tuple[IntentToolRule, ...] = (
     IntentToolRule(IntentType.TASK_SEARCH, PlannerMode.READ, "list_tasks"),
     IntentToolRule(IntentType.NOTE_SEARCH, PlannerMode.READ, "search_notes"),
+    IntentToolRule(IntentType.NOTE_SUMMARIZE, PlannerMode.READ, "search_notes"),
     IntentToolRule(IntentType.VAULT_SEARCH, PlannerMode.READ, "search_notes"),
-    IntentToolRule(IntentType.PROJECT_SEARCH, PlannerMode.READ, "search_projects"),
+    IntentToolRule(IntentType.PROJECT_SEARCH, PlannerMode.READ, "search_notes"),
     IntentToolRule(IntentType.NOTE_CREATE, PlannerMode.PREPARE_WRITE, "build_operation_plan"),
     IntentToolRule(IntentType.NOTE_UPDATE, PlannerMode.PREPARE_WRITE, "build_operation_plan"),
     IntentToolRule(IntentType.NOTE_ARCHIVE, PlannerMode.PREPARE_WRITE, "build_operation_plan"),

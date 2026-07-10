@@ -91,4 +91,22 @@ test("第一版拒绝删除、超额操作和非末尾插件调用", () => {
     ),
     AgentError
   );
+
+  assert.throws(
+    () => parseOperationPlan(
+      JSON.stringify({ operations: [{ type: "invoke-plugin", commandId: "dangerous:command" }] }),
+      new Set(),
+      new Set()
+    ),
+    AgentError
+  );
+
+  assert.throws(
+    () => parseOperationPlan(
+      JSON.stringify({ operations: [{ type: "create-task", path: "A.md", title: "正常\n# 注入" }] }),
+      new Set(["A.md"]),
+      new Set(["A.md"])
+    ),
+    AgentError
+  );
 });

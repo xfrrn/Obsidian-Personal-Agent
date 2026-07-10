@@ -11,6 +11,7 @@ from tools import (  # noqa: E402
     ToolCall,
     ToolDefinition,
     ToolPermission,
+    ToolInvocationPolicy,
     ToolPolicy,
     ToolRegistry,
     ToolRiskLevel,
@@ -56,6 +57,32 @@ async def _run() -> None:
     else:
         raise AssertionError("write tool should be denied by read-only policy")
 
+    confirmed_registry = ToolRegistry(
+        ToolPolicy.allow({ToolPermission.WRITE}, ToolRiskLevel.HIGH)
+    )
+    confirmed_registry.register_function(
+        ToolDefinition(
+            name="confirmed_write",
+            description="Confirmed write",
+            permission=ToolPermission.WRITE,
+            risk_level=ToolRiskLevel.HIGH,
+            invocation_policy=ToolInvocationPolicy.SYSTEM_ONLY,
+            requires_confirmation=True,
+        ),
+        lambda _input, _context: "done",
+    )
+    try:
+        await confirmed_registry.run(ToolCall("confirmed_write"))
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("system-only tool should require confirmation")
+    assert (await confirmed_registry.run(ToolCall("confirmed_write"), confirmed=True)).output == "done"
+
+
+def test_tool_registry() -> None:
+    asyncio.run(_run())
+
 
 if __name__ == "__main__":
-    asyncio.run(_run())
+    test_tool_registry()

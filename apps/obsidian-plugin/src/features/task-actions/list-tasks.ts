@@ -40,7 +40,7 @@ export function parseMarkdownTasks(path: string, content: string): MarkdownTask[
     const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
     if (headingMatch) heading = headingMatch[2];
 
-    const taskMatch = /^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
+    const taskMatch = /^\s*[-+*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
     if (!taskMatch) return;
     tasks.push({
       path,

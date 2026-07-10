@@ -44,7 +44,13 @@ class PlanExecutor:
     def __init__(self, tool_registry: ToolRegistry) -> None:
         self._tool_registry = tool_registry
 
-    async def execute(self, plan: AgentPlan, *, context: Any = None) -> PlanExecutionResult:
+    async def execute(
+        self,
+        plan: AgentPlan,
+        *,
+        context: Any = None,
+        confirmed: bool = False,
+    ) -> PlanExecutionResult:
         """顺序执行计划步骤。"""
         results: list[PlanStepExecutionResult] = []
 
@@ -78,7 +84,7 @@ class PlanExecutor:
                 output = await self._tool_registry.run(
                     ToolCall(step.tool_name, step.arguments, step.id),
                     context=context,
-                    confirmed=step.tool_name == "execute_operation_plan",
+                    confirmed=confirmed,
                 )
             except Exception as exc:
                 return self._stopped(plan, results, step, PlanStepStatus.FAILED, {"error": str(exc)})

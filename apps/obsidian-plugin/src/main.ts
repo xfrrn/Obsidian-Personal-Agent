@@ -15,6 +15,8 @@ import {
   providerById
 } from "./settings/settings";
 
+const LOCAL_AGENT_TOKEN_SECRET_ID = "personal-knowledge-agent-local-token";
+
 export default class PersonalKnowledgeAgentPlugin extends Plugin {
   settings!: AgentSettings;
 
@@ -44,7 +46,11 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    const { localAgentToken, ...settings } = this.settings;
+    if (localAgentToken) {
+      this.app.secretStorage.setSecret(LOCAL_AGENT_TOKEN_SECRET_ID, localAgentToken);
+    }
+    await this.saveData(settings);
   }
 
   private async loadSettings(): Promise<void> {
@@ -76,9 +82,7 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
       localAgentPort: typeof value.localAgentPort === "string"
         ? value.localAgentPort
         : DEFAULT_SETTINGS.localAgentPort,
-      localAgentToken: typeof value.localAgentToken === "string"
-        ? value.localAgentToken
-        : DEFAULT_SETTINGS.localAgentToken
+      localAgentToken: this.app.secretStorage.getSecret(LOCAL_AGENT_TOKEN_SECRET_ID) ?? ""
     };
   }
 }

@@ -10,6 +10,18 @@ export interface AgentAnswer {
 
 export type AgentIntent = "ask" | "plan";
 
+export function inferIntent(input: string): AgentIntent {
+  const text = input.trim();
+  if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "ask";
+  return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|元数据|frontmatter|标签|任务)|(?:笔记|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text)
+    ? "plan"
+    : "ask";
+}
+
+export function isTaskQuery(input: string): boolean {
+  return /待办|任务|todo|行动项|未完成事项|已完成事项/i.test(input);
+}
+
 export class AgentError extends Error {
   constructor(message: string) {
     super(message);
@@ -120,17 +132,14 @@ export function parseIntent(text: string): AgentIntent {
 
 export function parseJsonObject(text: string): Record<string, unknown> {
   const trimmed = text.trim();
-  const withoutFence = trimmed
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  const start = withoutFence.indexOf("{");
-  const end = withoutFence.lastIndexOf("}");
-  if (start < 0 || end <= start) {
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  const json = (fenced?.[1] ?? trimmed).trim();
+  if (!json.startsWith("{") || !json.endsWith("}")) {
     throw new AgentError("模型返回的内容不是有效 JSON。");
   }
 
   try {
-    const value: unknown = JSON.parse(withoutFence.slice(start, end + 1));
+    const value: unknown = JSON.parse(json);
     if (!isRecord(value)) throw new Error("not an object");
     return value;
   } catch {

@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, Mapping
 from exceptions import ToolNotFoundError, ToolPermissionDeniedError, ToolRegistrationError
 
 from .base import FunctionTool, Tool
-from .definitions import ToolCall, ToolDefinition, ToolResult
+from .definitions import ToolCall, ToolDefinition, ToolInvocationPolicy, ToolResult
 from .permissions import ToolPolicy
 
 
@@ -57,6 +57,10 @@ class ToolRegistry:
     ) -> ToolResult:
         """先检查策略，再执行已注册工具。"""
         tool = self.get(call.tool_name)
+        if tool.definition.invocation_policy is ToolInvocationPolicy.SYSTEM_ONLY and not confirmed:
+            raise ToolPermissionDeniedError("system-only tool requires a confirmed system trigger")
+        if tool.definition.requires_confirmation and not confirmed:
+            raise ToolPermissionDeniedError("confirmation required")
         decision = self._policy.check(tool.definition, confirmed=confirmed)
         if not decision.allowed:
             raise ToolPermissionDeniedError(decision.reason)

@@ -19,9 +19,13 @@ Vault 路径由 Obsidian 插件通过 `/handshake` 自动发送；手动调试�
 ```text
 GET  /health
 GET  /tools
+GET  /identity
 POST /handshake
 POST /chat
 ```
+
+`/handshake` 只允许无浏览器 Origin 的首次配对；配对后需重启 local-agent 才能重新绑定。
+`/tools`、`/identity` 和 `/chat` 都需要握手返回的 `X-Agent-Token`。
 
 `POST /chat` 示例：
 

@@ -1,8 +1,0 @@
-{
-  "provider": "deepseek",
-  "apiBaseUrl": "https://api.deepseek.com",
-  "model": "deepseek-v4-flash",
-  "secretId": "personal-knowledge-agent-api-key",
-  "localAgentPort": "8765",
-  "localAgentToken": "9_S5RLV080YuPhHDutkUAGZCtIHlz7SL"
-}

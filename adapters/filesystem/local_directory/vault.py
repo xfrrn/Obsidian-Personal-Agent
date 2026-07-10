@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping, Sequence
 
-TASK_RE = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.+?)\s*$")
+TASK_RE = re.compile(r"^\s*[-+*]\s+\[([ xX])\]\s+(.+?)\s*$")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
 
@@ -28,7 +28,7 @@ class LocalDirectoryVaultRepository:
         }
 
     async def search(self, query: str, *, limit: int = 10) -> Sequence[Mapping[str, Any]]:
-        terms = [term.casefold() for term in query.split() if term.strip()]
+        terms = _search_terms(query)
         results: list[tuple[int, Mapping[str, Any]]] = []
         for file in self._markdown_files():
             content = file.read_text(encoding="utf-8", errors="ignore")
@@ -57,11 +57,13 @@ class LocalDirectoryVaultRepository:
         *,
         status: str | None = None,
         limit: int = 50,
+        path: str | None = None,
     ) -> Sequence[Mapping[str, Any]]:
         query_text = query.casefold().strip()
         want_completed = _completed_filter(status)
         tasks: list[Mapping[str, Any]] = []
-        for file in self._markdown_files():
+        files = (self._resolve_note(path),) if path else self._markdown_files()
+        for file in files:
             content = file.read_text(encoding="utf-8", errors="ignore")
             heading: str | None = None
             for line_no, line in enumerate(content.splitlines(), start=1):
@@ -134,3 +136,13 @@ def _completed_filter(status: str | None) -> bool | None:
     if value in {"open", "todo", "pending", "未完成"}:
         return False
     return None
+
+
+def _search_terms(query: str) -> list[str]:
+    terms: list[str] = []
+    for value in re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]+", query.casefold()):
+        if re.fullmatch(r"[\u4e00-\u9fff]+", value) and len(value) > 2:
+            terms.extend(value[index : index + 2] for index in range(len(value) - 1))
+        else:
+            terms.append(value)
+    return list(dict.fromkeys(terms))

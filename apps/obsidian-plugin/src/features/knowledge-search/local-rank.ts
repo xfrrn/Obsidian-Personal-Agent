@@ -58,7 +58,17 @@ function scoreField(
 }
 
 function tokenize(text: string): string[] {
-  return [...new Set(text.match(/[a-z0-9]+|[\u4e00-\u9fff]{2,}/g) ?? [])];
+  const tokens: string[] = [];
+  for (const token of text.match(/[a-z0-9]+|[\u4e00-\u9fff]+/g) ?? []) {
+    if (/^[\u4e00-\u9fff]+$/.test(token) && token.length > 2) {
+      for (let index = 0; index < token.length - 1; index += 1) {
+        tokens.push(token.slice(index, index + 2));
+      }
+    } else {
+      tokens.push(token);
+    }
+  }
+  return [...new Set(tokens)];
 }
 
 function normalize(text: string): string {

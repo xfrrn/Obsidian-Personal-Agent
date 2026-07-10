@@ -130,7 +130,11 @@ def test_user_message_cannot_call_system_write_tool() -> None:
     assert result.errors
 
 
-async def test_plan_executor_calls_tools_and_stops_after_build_plan() -> None:
+def test_plan_executor_calls_tools_and_stops_after_build_plan() -> None:
+    asyncio.run(_test_plan_executor_calls_tools_and_stops_after_build_plan())
+
+
+async def _test_plan_executor_calls_tools_and_stops_after_build_plan() -> None:
     registry = ToolRegistry(ToolPolicy.allow({ToolPermission.READ, ToolPermission.WRITE}, ToolRiskLevel.MEDIUM))
     registry.register_function(
         _tools()[3],
@@ -145,10 +149,32 @@ async def test_plan_executor_calls_tools_and_stops_after_build_plan() -> None:
     assert result.step_results[0].status == "completed"
 
 
+def test_project_search_and_summary_use_registered_search_tool() -> None:
+    for intent in (IntentType.PROJECT_SEARCH, IntentType.NOTE_SUMMARIZE):
+        input_data = PlannerInput(_single_intent(intent), _context(), _tools())
+        plan = RuleBasedPlanner().create_plan(input_data)
+        assert plan.steps[0].tool_name == "search_notes"
+
+
+def test_scope_is_forwarded_to_read_tools() -> None:
+    context = ContextBuilder(ConversationManager()).build(
+        conversation_id="c1",
+        user_input="查询任务",
+        scope="current",
+        active_file_path="Projects/A.md",
+    )
+    plan = RuleBasedPlanner().create_plan(
+        PlannerInput(_single_intent(IntentType.TASK_SEARCH), context, _tools())
+    )
+    assert plan.steps[0].arguments["scope"] == "current"
+
+
 if __name__ == "__main__":
     test_read_intent_maps_to_read_tool()
     test_general_chat_answers_directly()
     test_write_intents_are_merged_into_operation_plan()
     test_confirmed_trigger_can_execute_operation_plan()
     test_user_message_cannot_call_system_write_tool()
-    asyncio.run(test_plan_executor_calls_tools_and_stops_after_build_plan())
+    test_plan_executor_calls_tools_and_stops_after_build_plan()
+    test_project_search_and_summary_use_registered_search_tool()
+    test_scope_is_forwarded_to_read_tools()

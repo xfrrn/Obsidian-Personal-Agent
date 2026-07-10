@@ -101,7 +101,11 @@ class AgentRuntime:
         token.throw_if_cancelled()
         from planner import PlanExecutor
 
-        execution = await PlanExecutor(self._tool_registry).execute(plan, context=context)
+        execution = await PlanExecutor(self._tool_registry).execute(
+            plan,
+            context=context,
+            confirmed=request.trigger is RuntimeTrigger.OPERATION_CONFIRMED,
+        )
         message = self._message_from_execution(execution)
         self._conversations.append(
             request.conversation_id,
