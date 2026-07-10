@@ -10,7 +10,8 @@ import { AgentAnswer, AgentIntent } from "./protocol";
 import {
   AgentSettings,
   AgentSettingTab,
-  DEFAULT_SETTINGS
+  DEFAULT_SETTINGS,
+  providerById
 } from "./settings";
 
 export default class PersonalKnowledgeAgentPlugin extends Plugin {
@@ -69,13 +70,24 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
     const value = typeof data === "object" && data !== null
       ? data as Record<string, unknown>
       : {};
+    const oldApiBaseUrl = typeof value.apiBaseUrl === "string"
+      ? value.apiBaseUrl
+      : DEFAULT_SETTINGS.apiBaseUrl;
+    const providerId = typeof value.provider === "string"
+      ? value.provider
+      : oldApiBaseUrl.includes("api.deepseek.com")
+        ? "deepseek"
+        : "custom";
+    const provider = providerById(providerId);
+    const model = typeof value.model === "string" && value.model
+      ? value.model
+      : provider.models[0] ?? "";
     this.settings = {
-      apiBaseUrl: typeof value.apiBaseUrl === "string"
-        ? value.apiBaseUrl
-        : DEFAULT_SETTINGS.apiBaseUrl,
-      model: typeof value.model === "string"
-        ? value.model
-        : DEFAULT_SETTINGS.model,
+      provider: provider.id,
+      apiBaseUrl: provider.id === "custom" ? oldApiBaseUrl : provider.apiBaseUrl,
+      model: provider.models.length && !provider.models.includes(model)
+        ? provider.models[0]
+        : model,
       secretId: typeof value.secretId === "string" && value.secretId
         ? value.secretId
         : DEFAULT_SETTINGS.secretId
