@@ -5,7 +5,8 @@ import {
   chatCompletionsUrl,
   extractChatContent,
   parseAgentAnswer,
-  parseCandidatePaths
+  parseCandidatePaths,
+  parseIntent
 } from "./protocol";
 import type { AgentSettings } from "./settings";
 import {
@@ -20,6 +21,30 @@ export type QueryScope = "current" | "vault";
 export interface ChatMessage {
   role: "system" | "user";
   content: string;
+}
+
+export async function judgeIntent(
+  app: App,
+  settings: AgentSettings,
+  input: string
+): Promise<"ask" | "plan"> {
+  const cleanInput = input.trim();
+  if (!cleanInput) throw new AgentError("请输入问题或修改请求。");
+
+  const response = await callModel(app, settings, [
+    {
+      role: "system",
+      content:
+        "你只负责判断用户意图。只返回 JSON：{\"intent\":\"ask\"} 或 {\"intent\":\"plan\"}。" +
+        "如果用户想创建、修改、移动笔记，更新 Frontmatter，追加任务，调用插件命令，返回 plan。" +
+        "如果用户只是提问、总结、解释、查找信息，返回 ask。意图不明确时返回 ask。"
+    },
+    {
+      role: "user",
+      content: cleanInput
+    }
+  ]);
+  return parseIntent(response);
 }
 
 export async function askAgent(

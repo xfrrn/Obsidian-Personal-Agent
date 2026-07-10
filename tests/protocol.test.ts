@@ -5,7 +5,8 @@ import {
   chatCompletionsUrl,
   extractChatContent,
   parseAgentAnswer,
-  parseCandidatePaths
+  parseCandidatePaths,
+  parseIntent
 } from "../src/protocol";
 
 test("API 地址只允许 HTTPS 或本机 HTTP", () => {
@@ -77,6 +78,15 @@ test("无法识别的模型响应会被拒绝", () => {
   );
   assert.throws(
     () => parseAgentAnswer("not json", new Set()),
+    AgentError
+  );
+});
+
+test("意图判断只接受问答或修改计划", () => {
+  assert.equal(parseIntent("{\"intent\":\"ask\"}"), "ask");
+  assert.equal(parseIntent("```json\n{\"intent\":\"plan\"}\n```"), "plan");
+  assert.throws(
+    () => parseIntent("{\"intent\":\"delete\"}"),
     AgentError
   );
 });

@@ -1,10 +1,11 @@
 import {
   ItemView,
   MarkdownRenderer,
+  setIcon,
   WorkspaceLeaf
 } from "obsidian";
-import type PersonalKnowledgeAgentPlugin from "./main";
 import type { QueryScope } from "./agent";
+import type PersonalKnowledgeAgentPlugin from "./main";
 import {
   describeOperation,
   OperationPlan
@@ -14,11 +15,12 @@ import { AgentAnswer, AgentError } from "./protocol";
 export const AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
 
 export class AssistantView extends ItemView {
-  private questionEl!: HTMLTextAreaElement;
+  private contextEl!: HTMLElement;
   private modeEl!: HTMLSelectElement;
+  private questionEl!: HTMLTextAreaElement;
+  private resultEl!: HTMLElement;
   private scopeEl!: HTMLSelectElement;
   private sendButton!: HTMLButtonElement;
-  private resultEl!: HTMLElement;
   private busy = false;
 
   constructor(
@@ -44,57 +46,56 @@ export class AssistantView extends ItemView {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("pka-view");
-    contentEl.createEl("h2", { text: "个人知识库 Agent" });
 
-    const modeRow = contentEl.createDiv({ cls: "pka-field" });
-    modeRow.createEl("label", {
-      text: "模式",
-      attr: { for: "pka-mode" }
-    });
-    this.modeEl = modeRow.createEl("select", {
-      attr: { id: "pka-mode" }
-    });
+    const header = contentEl.createDiv({ cls: "pka-header" });
+    const title = header.createDiv({ cls: "pka-title" });
+    title.createEl("h2", { text: "个人知识库 Agent" });
+    const status = title.createDiv({ cls: "pka-status" });
+    status.createSpan({ cls: "pka-dot" });
+    status.createSpan({ text: "当前笔记上下文已加载" });
+
+    const toolbar = contentEl.createDiv({ cls: "pka-toolbar" });
+    const modeShell = toolbar.createDiv({ cls: "pka-select-shell" });
+    this.modeEl = modeShell.createEl("select", { attr: { id: "pka-mode" } });
+    this.modeEl.createEl("option", { text: "自动", value: "auto" });
     this.modeEl.createEl("option", { text: "问答", value: "ask" });
     this.modeEl.createEl("option", { text: "修改计划", value: "plan" });
 
-    const scopeRow = contentEl.createDiv({ cls: "pka-field" });
-    scopeRow.createEl("label", {
-      text: "查询范围",
-      attr: { for: "pka-query-scope" }
-    });
-    this.scopeEl = scopeRow.createEl("select", {
-      attr: { id: "pka-query-scope" }
-    });
+    const scopeShell = toolbar.createDiv({ cls: "pka-segmented" });
+    this.scopeEl = scopeShell.createEl("select", { attr: { id: "pka-query-scope" } });
     this.scopeEl.createEl("option", { text: "当前笔记", value: "current" });
     this.scopeEl.createEl("option", { text: "整个知识库", value: "vault" });
 
-    const questionRow = contentEl.createDiv({ cls: "pka-field pka-grow" });
-    questionRow.createEl("label", {
-      text: "问题",
-      attr: { for: "pka-question" }
-    });
-    this.questionEl = questionRow.createEl("textarea", {
-      cls: "pka-question",
-      attr: {
-        id: "pka-question",
-        rows: "5",
-        placeholder: "询问当前笔记或整个知识库……"
-      }
-    });
+    this.contextEl = contentEl.createDiv({ cls: "pka-context" });
+    this.renderContext();
 
-    this.sendButton = contentEl.createEl("button", {
-      cls: "mod-cta pka-send",
-      text: "发送"
-    });
     this.resultEl = contentEl.createDiv({
       cls: "pka-result",
       attr: { "aria-live": "polite" }
     });
-    this.resultEl.setText("输入问题或修改请求后按 Ctrl/Cmd + Enter 发送。");
+    this.renderEmptyState();
+
+    const composer = contentEl.createDiv({ cls: "pka-composer" });
+    this.questionEl = composer.createEl("textarea", {
+      cls: "pka-question",
+      attr: {
+        id: "pka-question",
+        rows: "3",
+        placeholder: "继续追问，或让 Agent 直接修改这篇笔记..."
+      }
+    });
+    const composerBar = composer.createDiv({ cls: "pka-composer-bar" });
+    this.sendButton = composerBar.createEl("button", {
+      cls: "mod-cta pka-send",
+      attr: { "aria-label": "发送" }
+    });
+    setIcon(this.sendButton, "send");
 
     this.registerDomEvent(this.sendButton, "click", () => void this.submit());
+    this.registerDomEvent(this.modeEl, "change", () => this.renderContext());
+    this.registerDomEvent(this.scopeEl, "change", () => this.renderContext());
     this.registerDomEvent(this.questionEl, "keydown", (event) => {
-      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         void this.submit();
       }
@@ -107,27 +108,41 @@ export class AssistantView extends ItemView {
 
   private async submit(): Promise<void> {
     if (this.busy) return;
+    const prompt = this.questionEl.value.trim();
+    if (!prompt) return;
+    this.questionEl.value = "";
+    await this.sendPrompt(prompt);
+  }
+
+  private async sendPrompt(prompt: string): Promise<void> {
+    if (this.busy) return;
     this.setBusy(true);
     this.resultEl.empty();
-    this.resultEl.setText(this.modeEl.value === "plan"
-      ? "正在生成修改计划……"
-      : "正在查找相关笔记……");
+    this.renderUserMessage(prompt);
+    this.renderLoading(this.busyText());
 
     try {
-      if (this.modeEl.value === "plan") {
+      const mode = this.modeEl.value;
+      const intent = mode === "auto"
+        ? await this.agentPlugin.intent(prompt)
+        : mode;
+      this.renderLoading(intent === "plan"
+        ? "意图判断：修改计划。正在生成修改计划..."
+        : "意图判断：问答。正在查找相关笔记...");
+
+      if (intent === "plan") {
         this.renderPlan(await this.agentPlugin.plan(
-          this.questionEl.value,
+          prompt,
           this.scopeEl.value as QueryScope
         ));
       } else {
-        const answer = await this.agentPlugin.ask(
-          this.questionEl.value,
+        await this.renderAnswer(await this.agentPlugin.ask(
+          prompt,
           this.scopeEl.value as QueryScope
-        );
-        await this.renderAnswer(answer);
+        ));
       }
     } catch (error) {
-      this.resultEl.empty();
+      this.resultEl.querySelector(".pka-loading")?.remove();
       this.resultEl.createDiv({
         cls: "pka-error",
         text: error instanceof AgentError
@@ -140,8 +155,10 @@ export class AssistantView extends ItemView {
   }
 
   private async renderAnswer(answer: AgentAnswer): Promise<void> {
-    this.resultEl.empty();
-    const answerEl = this.resultEl.createDiv({ cls: "pka-answer markdown-rendered" });
+    this.resultEl.querySelector(".pka-loading")?.remove();
+    this.renderContext(answer.citations.length);
+    const card = this.createAssistantCard();
+    const answerEl = card.createDiv({ cls: "pka-answer markdown-rendered" });
     await MarkdownRenderer.render(
       this.app,
       answer.answer,
@@ -151,16 +168,15 @@ export class AssistantView extends ItemView {
     );
 
     if (!answer.citations.length) return;
-    const citationsEl = this.resultEl.createDiv({ cls: "pka-citations" });
-    citationsEl.createEl("h3", { text: "引用" });
-    const list = citationsEl.createEl("ul");
+    const citationsEl = card.createDiv({ cls: "pka-citations" });
+    const title = citationsEl.createDiv({ cls: "pka-section-title" });
+    title.createSpan({ text: "引用依据" });
 
     for (const citation of answer.citations) {
-      const item = list.createEl("li");
       const label = citation.heading
         ? `${citation.path} › ${citation.heading}`
         : citation.path;
-      const button = item.createEl("button", {
+      const button = citationsEl.createEl("button", {
         cls: "pka-citation",
         text: label
       });
@@ -174,16 +190,19 @@ export class AssistantView extends ItemView {
   }
 
   private renderPlan(plan: OperationPlan): void {
-    this.resultEl.empty();
-    this.resultEl.createEl("h3", { text: "修改预览" });
-    this.resultEl.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
+    this.resultEl.querySelector(".pka-loading")?.remove();
+    const card = this.createAssistantCard();
+    card.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
 
-    const list = this.resultEl.createEl("ol", { cls: "pka-plan" });
+    const title = card.createDiv({ cls: "pka-section-title" });
+    title.createSpan({ text: `执行计划（${plan.operations.length} 步）` });
+    const list = card.createEl("ol", { cls: "pka-plan" });
     for (const operation of plan.operations) {
       list.createEl("li", { text: describeOperation(operation) });
     }
 
-    const executeButton = this.resultEl.createEl("button", {
+    const actions = card.createDiv({ cls: "pka-card-actions" });
+    const executeButton = actions.createEl("button", {
       cls: "mod-cta pka-send",
       text: "确认执行"
     });
@@ -199,13 +218,14 @@ export class AssistantView extends ItemView {
     if (this.busy) return;
     this.setBusy(true);
     executeButton.disabled = true;
-    executeButton.setText("执行中……");
+    executeButton.setText("执行中...");
 
     try {
       const results = await this.agentPlugin.executePlan(plan);
-      this.resultEl.empty();
-      this.resultEl.createEl("h3", { text: "已执行" });
-      const list = this.resultEl.createEl("ul", { cls: "pka-plan" });
+      const log = this.resultEl.createDiv({ cls: "pka-execution-log" });
+      const title = log.createDiv({ cls: "pka-section-title" });
+      title.createSpan({ text: `执行日志（已执行 ${results.length} 次）` });
+      const list = log.createEl("ul", { cls: "pka-plan" });
       for (const result of results) list.createEl("li", { text: result });
     } catch (error) {
       this.resultEl.createDiv({
@@ -227,6 +247,118 @@ export class AssistantView extends ItemView {
     this.modeEl.disabled = busy;
     this.scopeEl.disabled = busy;
     this.questionEl.disabled = busy;
-    this.sendButton.setText(busy ? "处理中……" : "发送");
+    this.sendButton.empty();
+    setIcon(this.sendButton, busy ? "loader" : "send");
+  }
+
+  private busyText(): string {
+    if (this.modeEl.value === "auto") return "正在判断意图...";
+    return this.modeEl.value === "plan"
+      ? "正在生成修改计划..."
+      : "正在查找相关笔记...";
+  }
+
+  private renderContext(citations = 0): void {
+    this.contextEl.empty();
+    const file = this.app.workspace.getActiveFile();
+    this.addChip(this.contextEl, `当前文件：${file?.path ?? "未打开 Markdown"}`);
+    this.addChip(this.contextEl, `${citations} 个引用`);
+    this.addChip(this.contextEl, `模式：${this.modeEl.selectedOptions[0]?.text ?? "自动"}`);
+  }
+
+  private renderEmptyState(): void {
+    const card = this.resultEl.createDiv({ cls: "pka-empty" });
+    const title = card.createDiv({ cls: "pka-section-title" });
+    title.createSpan({ text: "准备好了" });
+    card.createEl("p", { text: "选择范围后提问，或直接让 Agent 生成修改计划。" });
+  }
+
+  private renderUserMessage(text: string): void {
+    const turn = this.resultEl.createDiv({ cls: "pka-user-turn" });
+    const bubble = turn.createDiv({ cls: "pka-user-message" });
+    const actions = turn.createDiv({ cls: "pka-user-actions" });
+    const sentAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    const renderReadMode = () => {
+      bubble.empty();
+      actions.empty();
+      bubble.createEl("p", { text });
+      actions.createSpan({ cls: "pka-time", text: sentAt });
+
+      const copyButton = actions.createEl("button", {
+        cls: "pka-user-action",
+        attr: { "aria-label": "复制消息" }
+      });
+      setIcon(copyButton, "copy");
+      this.registerDomEvent(copyButton, "click", () => {
+        void navigator.clipboard.writeText(text);
+      });
+
+      const editButton = actions.createEl("button", {
+        cls: "pka-user-action",
+        attr: { "aria-label": "编辑后重新发送" }
+      });
+      setIcon(editButton, "pencil");
+      this.registerDomEvent(editButton, "click", renderEditMode);
+    };
+
+    const renderEditMode = () => {
+      bubble.empty();
+      actions.empty();
+      const editor = bubble.createEl("textarea", {
+        cls: "pka-user-edit",
+        text
+      });
+      const editActions = bubble.createDiv({ cls: "pka-edit-actions" });
+      const cancelButton = editActions.createEl("button", {
+        cls: "pka-edit-cancel",
+        text: "取消"
+      });
+      const sendButton = editActions.createEl("button", {
+        cls: "mod-cta pka-edit-send",
+        text: "发送"
+      });
+
+      this.registerDomEvent(cancelButton, "click", () => {
+        renderReadMode();
+      });
+      this.registerDomEvent(sendButton, "click", () => {
+        const edited = editor.value.trim();
+        if (edited) void this.sendPrompt(edited);
+      });
+      this.registerDomEvent(editor, "keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          const edited = editor.value.trim();
+          if (edited) void this.sendPrompt(edited);
+        }
+      });
+      editor.focus();
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+    };
+
+    renderReadMode();
+  }
+
+  private renderLoading(text: string): void {
+    this.resultEl.querySelector(".pka-loading")?.remove();
+    const loading = this.resultEl.createDiv({ cls: "pka-loading" });
+    loading.createSpan({ text });
+  }
+
+  private createAssistantCard(): HTMLElement {
+    const card = this.resultEl.createDiv({ cls: "pka-message pka-agent-card" });
+    const meta = card.createDiv({ cls: "pka-message-meta" });
+    meta.createSpan({ text: "个人知识库 Agent" });
+    meta.createSpan({
+      cls: "pka-time",
+      text: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    });
+    return card;
+  }
+
+  private addChip(parent: HTMLElement, text: string): void {
+    const chip = parent.createDiv({ cls: "pka-chip" });
+    chip.createSpan({ text });
   }
 }

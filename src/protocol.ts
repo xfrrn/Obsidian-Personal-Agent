@@ -8,6 +8,8 @@ export interface AgentAnswer {
   citations: AgentCitation[];
 }
 
+export type AgentIntent = "ask" | "plan";
+
 export class AgentError extends Error {
   constructor(message: string) {
     super(message);
@@ -108,6 +110,12 @@ export function parseAgentAnswer(
   }
 
   return { answer: value.answer.trim(), citations };
+}
+
+export function parseIntent(text: string): AgentIntent {
+  const value = parseJsonObject(text);
+  if (value.intent === "ask" || value.intent === "plan") return value.intent;
+  throw new AgentError("模型没有按要求返回意图判断。");
 }
 
 export function parseJsonObject(text: string): Record<string, unknown> {
