@@ -7,16 +7,19 @@
 ## 运行
 
 ```powershell
-$env:OBSIDIAN_AGENT_VAULT_ROOT="D:\path\to\test-vault"
 $env:OBSIDIAN_AGENT_PORT="8765"
 python apps/local-agent/src/main.py
 ```
+
+Vault 路径由 Obsidian 插件通过 `/handshake` 自动发送；手动调试时也可以设置
+`OBSIDIAN_AGENT_VAULT_ROOT` 跳过握手。
 
 接口：
 
 ```text
 GET  /health
 GET  /tools
+POST /handshake
 POST /chat
 ```
 

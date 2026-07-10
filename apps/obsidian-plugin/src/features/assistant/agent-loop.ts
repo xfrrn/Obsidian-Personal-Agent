@@ -1,4 +1,5 @@
 import { App } from "obsidian";
+import { askLocalAgent } from "../../api/local-agent-client";
 import { callModel } from "../../api/model-client";
 import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/vault-reader";
 import type { AgentSettings } from "../../settings/settings";
@@ -40,6 +41,12 @@ export async function askAgent(
 ): Promise<AgentAnswer> {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("请输入问题。");
+
+  try {
+    return await askLocalAgent(app, settings, cleanQuestion, scope);
+  } catch {
+    // ponytail: local-agent is optional until plugin/backend protocol is stable.
+  }
 
   const tool = await chooseReadTool(app, settings, cleanQuestion, scope);
   if (tool === "list_tasks") return answerWithTasks(app, cleanQuestion, scope);

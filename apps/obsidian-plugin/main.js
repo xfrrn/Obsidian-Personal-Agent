@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => PersonalKnowledgeAgentPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts
 var import_obsidian4 = require("obsidian");
@@ -957,7 +957,178 @@ function registerCommands(plugin) {
 }
 
 // apps/obsidian-plugin/src/settings/settings.ts
+var import_obsidian6 = require("obsidian");
+
+// apps/obsidian-plugin/src/api/local-agent-client.ts
 var import_obsidian5 = require("obsidian");
+async function askLocalAgent(app, settings, question, scope) {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
+  const activeFile = app.workspace.getActiveFile();
+  const response = await (0, import_obsidian5.requestUrl)({
+    url: `http://127.0.0.1:${port}/chat`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Token": settings.localAgentToken
+    },
+    body: JSON.stringify({
+      userInput: question,
+      conversationId: "obsidian-plugin",
+      scope,
+      activeFilePath: activeFile == null ? void 0 : activeFile.path
+    }),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AgentError(`\u672C\u5730 Agent \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
+  }
+  return toAgentAnswer(response.json);
+}
+async function testLocalAgent(settings) {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
+  const response = await (0, import_obsidian5.requestUrl)({
+    url: `http://127.0.0.1:${port}/health`,
+    method: "GET",
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AgentError(`\u672C\u5730 Agent \u4E0D\u53EF\u7528\uFF08HTTP ${response.status}\uFF09\u3002`);
+  }
+}
+async function discoverLocalAgent(app, settings) {
+  const vaultPath = vaultBasePath(app);
+  const ports = candidatePorts(settings);
+  for (const port of ports) {
+    try {
+      await withTimeout((0, import_obsidian5.requestUrl)({
+        url: `http://127.0.0.1:${port}/health`,
+        method: "GET",
+        throw: false
+      }), 400);
+      const response = await withTimeout((0, import_obsidian5.requestUrl)({
+        url: `http://127.0.0.1:${port}/handshake`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vaultPath }),
+        throw: false
+      }), 1500);
+      if (response.status < 200 || response.status >= 300) continue;
+      const payload = response.json;
+      if (!isRecord3(payload) || typeof payload.token !== "string") continue;
+      return {
+        port: String(port),
+        token: payload.token,
+        vaultRoot: typeof payload.vaultRoot === "string" ? payload.vaultRoot : vaultPath
+      };
+    } catch (e) {
+    }
+  }
+  throw new AgentError("\u6CA1\u6709\u53D1\u73B0\u53EF\u7528\u7684\u672C\u5730 Agent\u3002\u8BF7\u5148\u542F\u52A8 local-agent\u3002");
+}
+function localAgentPort(settings) {
+  const port = Number(settings.localAgentPort);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+function candidatePorts(settings) {
+  const result = [];
+  const configured = localAgentPort(settings);
+  if (configured) result.push(configured);
+  for (let port = 8765; port <= 8785; port += 1) {
+    if (!result.includes(port)) result.push(port);
+  }
+  return result;
+}
+function vaultBasePath(app) {
+  var _a;
+  const adapter = app.vault.adapter;
+  const path = (_a = adapter.getBasePath) == null ? void 0 : _a.call(adapter);
+  if (!path) throw new AgentError("\u5F53\u524D\u5E73\u53F0\u65E0\u6CD5\u8BFB\u53D6 Vault \u6839\u76EE\u5F55\uFF0C\u8BF7\u624B\u52A8\u914D\u7F6E local-agent\u3002");
+  return path;
+}
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error("timeout")), ms);
+    })
+  ]);
+}
+function toAgentAnswer(payload) {
+  const output = unwrapToolOutput(payload);
+  if (isRecord3(output) && Array.isArray(output.tasks)) {
+    return tasksAnswer(output.tasks.filter(isLocalTask));
+  }
+  if (isRecord3(output) && Array.isArray(output.results)) {
+    return searchAnswer(output.results.filter(isLocalSearchResult));
+  }
+  if (isRecord3(output) && typeof output.message === "string") {
+    return { answer: output.message, citations: [] };
+  }
+  if (isRecord3(payload) && typeof payload.assistant_message === "string") {
+    return { answer: payload.assistant_message, citations: [] };
+  }
+  throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u54CD\u5E94\u3002");
+}
+function unwrapToolOutput(payload) {
+  if (!isRecord3(payload) || !isRecord3(payload.execution)) return payload;
+  const steps = payload.execution.step_results;
+  if (!Array.isArray(steps) || !steps.length) return payload;
+  const last = steps[steps.length - 1];
+  if (!isRecord3(last)) return payload;
+  const stepOutput = last.output;
+  if (isRecord3(stepOutput) && "output" in stepOutput) return stepOutput.output;
+  return stepOutput;
+}
+function tasksAnswer(tasks) {
+  if (!tasks.length) return { answer: "\u6CA1\u6709\u627E\u5230\u4EFB\u52A1\u3002", citations: [] };
+  const visible = tasks.slice(0, 30);
+  return {
+    answer: [
+      `\u627E\u5230 ${visible.length} \u6761\u4EFB\u52A1\uFF1A`,
+      "",
+      ...visible.map((task) => `- ${task.completed ? "[x]" : "[ ]"} ${task.title}\uFF08${task.path}:${task.line}\uFF09`)
+    ].join("\n"),
+    citations: uniqueCitations(visible.map((task) => ({ path: task.path, heading: task.heading })))
+  };
+}
+function searchAnswer(results) {
+  if (!results.length) return { answer: "\u6CA1\u6709\u627E\u5230\u76F8\u5173\u7B14\u8BB0\u3002", citations: [] };
+  const visible = results.slice(0, 10);
+  return {
+    answer: [
+      `\u627E\u5230 ${visible.length} \u7BC7\u76F8\u5173\u7B14\u8BB0\uFF1A`,
+      "",
+      ...visible.map((item) => {
+        var _a;
+        return `- ${(_a = item.title) != null ? _a : item.path}\uFF08${item.path}\uFF09${item.excerpt ? `
+  ${item.excerpt}` : ""}`;
+      })
+    ].join("\n"),
+    citations: uniqueCitations(visible.map((item) => ({ path: item.path })))
+  };
+}
+function uniqueCitations(citations) {
+  const result = [];
+  for (const citation of citations) {
+    if (!result.some((item) => item.path === citation.path && item.heading === citation.heading)) {
+      result.push(citation);
+    }
+  }
+  return result;
+}
+function isLocalTask(value) {
+  return isRecord3(value) && typeof value.path === "string" && typeof value.line === "number" && typeof value.title === "string" && typeof value.completed === "boolean";
+}
+function isLocalSearchResult(value) {
+  return isRecord3(value) && typeof value.path === "string";
+}
+function isRecord3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// apps/obsidian-plugin/src/settings/settings.ts
 var PROVIDERS = [
   {
     id: "deepseek",
@@ -976,13 +1147,15 @@ var DEFAULT_SETTINGS = {
   provider: "deepseek",
   apiBaseUrl: "https://api.deepseek.com",
   model: "deepseek-v4-flash",
-  secretId: "personal-knowledge-agent-api-key"
+  secretId: "personal-knowledge-agent-api-key",
+  localAgentPort: "8765",
+  localAgentToken: ""
 };
 function providerById(id) {
   var _a;
   return (_a = PROVIDERS.find((provider) => provider.id === id)) != null ? _a : PROVIDERS[0];
 }
-var AgentSettingTab = class extends import_obsidian5.PluginSettingTab {
+var AgentSettingTab = class extends import_obsidian6.PluginSettingTab {
   constructor(app, agentPlugin) {
     super(app, agentPlugin);
     this.agentPlugin = agentPlugin;
@@ -991,7 +1164,51 @@ var AgentSettingTab = class extends import_obsidian5.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const provider = providerById(this.agentPlugin.settings.provider);
-    new import_obsidian5.Setting(containerEl).setName("\u4F9B\u5E94\u5546").setDesc("DeepSeek \u9ED8\u8BA4\u4F7F\u7528\u5B98\u65B9 OpenAI-compatible API\u3002").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(containerEl).setName("\u672C\u5730 Agent \u7AEF\u53E3").setDesc("local-agent HTTP \u7AEF\u53E3\uFF1B\u7559\u7A7A\u5219\u53EA\u4F7F\u7528\u63D2\u4EF6\u5185\u7F6E\u6D41\u7A0B\u3002").addText(
+      (text) => text.setPlaceholder("8765").setValue(this.agentPlugin.settings.localAgentPort).onChange(async (value) => {
+        this.agentPlugin.settings.localAgentPort = value.trim();
+        await this.agentPlugin.saveSettings();
+      })
+    );
+    const localAgentSetting = new import_obsidian6.Setting(containerEl).setName("\u672C\u5730 Agent \u8FDE\u63A5\u6D4B\u8BD5").setDesc("\u81EA\u52A8\u53D1\u73B0\u672C\u5730 Agent\uFF0C\u53D1\u9001\u5F53\u524D Vault \u8DEF\u5F84\uFF0C\u5E76\u4FDD\u5B58\u8BBF\u95EE\u4EE4\u724C\u3002").addButton(
+      (button) => button.setButtonText("\u81EA\u52A8\u8FDE\u63A5").onClick(async () => {
+        button.setDisabled(true).setButtonText("\u8FDE\u63A5\u4E2D...");
+        localAgentStatusEl.setText("\u8FDE\u63A5\u4E2D...");
+        localAgentStatusEl.removeClass("is-success", "is-error");
+        try {
+          const result = await discoverLocalAgent(this.app, this.agentPlugin.settings);
+          this.agentPlugin.settings.localAgentPort = result.port;
+          this.agentPlugin.settings.localAgentToken = result.token;
+          await this.agentPlugin.saveSettings();
+          localAgentStatusEl.setText(`\u672C\u5730 Agent \u5DF2\u8FDE\u63A5\uFF1A${result.vaultRoot}`);
+          localAgentStatusEl.addClass("is-success");
+        } catch (error) {
+          localAgentStatusEl.setText(error instanceof Error ? error.message : "\u672C\u5730 Agent \u4E0D\u53EF\u7528\u3002");
+          localAgentStatusEl.addClass("is-error");
+        } finally {
+          button.setDisabled(false).setButtonText("\u81EA\u52A8\u8FDE\u63A5");
+        }
+      })
+    ).addButton(
+      (button) => button.setButtonText("\u6D4B\u8BD5").onClick(async () => {
+        button.setDisabled(true).setButtonText("\u6D4B\u8BD5\u4E2D...");
+        localAgentStatusEl.setText("\u6D4B\u8BD5\u4E2D...");
+        localAgentStatusEl.removeClass("is-success", "is-error");
+        try {
+          await testLocalAgent(this.agentPlugin.settings);
+          localAgentStatusEl.setText("\u672C\u5730 Agent health \u53EF\u7528\u3002");
+          localAgentStatusEl.addClass("is-success");
+        } catch (error) {
+          localAgentStatusEl.setText(error instanceof Error ? error.message : "\u672C\u5730 Agent \u4E0D\u53EF\u7528\u3002");
+          localAgentStatusEl.addClass("is-error");
+        } finally {
+          button.setDisabled(false).setButtonText("\u6D4B\u8BD5");
+        }
+      })
+    );
+    const localAgentStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
+    localAgentSetting.settingEl.insertAdjacentElement("afterend", localAgentStatusEl);
+    new import_obsidian6.Setting(containerEl).setName("\u4F9B\u5E94\u5546").setDesc("DeepSeek \u9ED8\u8BA4\u4F7F\u7528\u5B98\u65B9 OpenAI-compatible API\u3002").addDropdown((dropdown) => {
       for (const item of PROVIDERS) {
         dropdown.addOption(item.id, item.name);
       }
@@ -1007,16 +1224,16 @@ var AgentSettingTab = class extends import_obsidian5.PluginSettingTab {
       });
     });
     if (provider.id === "custom") {
-      new import_obsidian5.Setting(containerEl).setName("API Base URL").setDesc("OpenAI-compatible API \u5730\u5740\uFF1B\u666E\u901A HTTP \u53EA\u5141\u8BB8\u672C\u673A\u5730\u5740\u3002").addText(
+      new import_obsidian6.Setting(containerEl).setName("API Base URL").setDesc("OpenAI-compatible API \u5730\u5740\uFF1B\u666E\u901A HTTP \u53EA\u5141\u8BB8\u672C\u673A\u5730\u5740\u3002").addText(
         (text) => text.setPlaceholder("https://api.openai.com/v1").setValue(this.agentPlugin.settings.apiBaseUrl).onChange(async (value) => {
           this.agentPlugin.settings.apiBaseUrl = value.trim();
           await this.agentPlugin.saveSettings();
         })
       );
     } else {
-      new import_obsidian5.Setting(containerEl).setName("API Base URL").setDesc(provider.apiBaseUrl);
+      new import_obsidian6.Setting(containerEl).setName("API Base URL").setDesc(provider.apiBaseUrl);
     }
-    const modelSetting = new import_obsidian5.Setting(containerEl).setName("\u6A21\u578B").setDesc(provider.models.length ? "\u9009\u62E9\u5F53\u524D\u4F9B\u5E94\u5546\u652F\u6301\u7684\u6A21\u578B\u3002" : "\u586B\u5199\u670D\u52A1\u7AEF\u5B9E\u9645\u652F\u6301\u7684\u6A21\u578B\u540D\u79F0\u3002");
+    const modelSetting = new import_obsidian6.Setting(containerEl).setName("\u6A21\u578B").setDesc(provider.models.length ? "\u9009\u62E9\u5F53\u524D\u4F9B\u5E94\u5546\u652F\u6301\u7684\u6A21\u578B\u3002" : "\u586B\u5199\u670D\u52A1\u7AEF\u5B9E\u9645\u652F\u6301\u7684\u6A21\u578B\u540D\u79F0\u3002");
     if (provider.models.length) {
       modelSetting.addDropdown((dropdown) => {
         for (const model of provider.models) {
@@ -1035,7 +1252,7 @@ var AgentSettingTab = class extends import_obsidian5.PluginSettingTab {
         })
       );
     }
-    new import_obsidian5.Setting(containerEl).setName("API \u5BC6\u94A5").setDesc("\u4ECE Obsidian SecretStorage \u4E2D\u9009\u62E9\uFF1B\u672C\u5730\u65E0\u8BA4\u8BC1\u670D\u52A1\u53EF\u4EE5\u7559\u7A7A\u3002").addText(
+    new import_obsidian6.Setting(containerEl).setName("API \u5BC6\u94A5").setDesc("\u4ECE Obsidian SecretStorage \u4E2D\u9009\u62E9\uFF1B\u672C\u5730\u65E0\u8BA4\u8BC1\u670D\u52A1\u53EF\u4EE5\u7559\u7A7A\u3002").addText(
       (text) => {
         var _a;
         return text.setPlaceholder("sk-...").setValue((_a = this.app.secretStorage.getSecret(this.agentPlugin.settings.secretId)) != null ? _a : "").onChange(async (value) => {
@@ -1051,14 +1268,14 @@ var AgentSettingTab = class extends import_obsidian5.PluginSettingTab {
       ".setting-item:last-child input"
     );
     if (keyInput) keyInput.type = "password";
-    const testSetting = new import_obsidian5.Setting(containerEl).setName("\u8FDE\u63A5\u6D4B\u8BD5").setDesc("\u4F7F\u7528\u5F53\u524D\u4F9B\u5E94\u5546\u3001\u6A21\u578B\u548C\u5BC6\u94A5\u53D1\u9001\u4E00\u6B21\u6700\u5C0F\u8BF7\u6C42\u3002").addButton(
+    const testSetting = new import_obsidian6.Setting(containerEl).setName("\u8FDE\u63A5\u6D4B\u8BD5").setDesc("\u4F7F\u7528\u5F53\u524D\u4F9B\u5E94\u5546\u3001\u6A21\u578B\u548C\u5BC6\u94A5\u53D1\u9001\u4E00\u6B21\u6700\u5C0F\u8BF7\u6C42\u3002").addButton(
       (button) => button.setButtonText("\u6D4B\u8BD5\u8FDE\u63A5").onClick(async () => {
         button.setDisabled(true).setButtonText("\u6D4B\u8BD5\u4E2D...");
         const startedAt = performance.now();
         testStatusEl.setText("\u6D4B\u8BD5\u4E2D...");
         testStatusEl.removeClass("is-success", "is-error");
         try {
-          await withTimeout(
+          await withTimeout2(
             callModel(this.app, this.agentPlugin.settings, [
               { role: "system", content: "\u53EA\u8FD4\u56DE ok\u3002" },
               { role: "user", content: "ping" }
@@ -1079,7 +1296,7 @@ var AgentSettingTab = class extends import_obsidian5.PluginSettingTab {
     testSetting.settingEl.insertAdjacentElement("afterend", testStatusEl);
   }
 };
-function withTimeout(promise, ms) {
+function withTimeout2(promise, ms) {
   return Promise.race([
     promise,
     new Promise((_resolve, reject) => {
@@ -1125,7 +1342,7 @@ async function answerWithTasks(app, question, scope) {
     "",
     ...visible.map((task) => `- ${task.title}\uFF08${task.path}:${task.line}\uFF09`)
   ].join("\n");
-  return { answer, citations: uniqueCitations(visible) };
+  return { answer, citations: uniqueCitations2(visible) };
 }
 function parseMarkdownTasks(path, content) {
   const tasks = [];
@@ -1155,7 +1372,7 @@ async function collectTasks(app, scope) {
   }
   return all;
 }
-function uniqueCitations(tasks) {
+function uniqueCitations2(tasks) {
   const citations = [];
   for (const task of tasks) {
     const citation = { path: task.path, heading: task.heading };
@@ -1203,6 +1420,10 @@ async function judgeIntent(app, settings, input) {
 async function askAgent(app, settings, question, scope) {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("\u8BF7\u8F93\u5165\u95EE\u9898\u3002");
+  try {
+    return await askLocalAgent(app, settings, cleanQuestion, scope);
+  } catch (e) {
+  }
   const tool = await chooseReadTool(app, settings, cleanQuestion, scope);
   if (tool === "list_tasks") return answerWithTasks(app, cleanQuestion, scope);
   if (scope === "current") {
@@ -1239,7 +1460,7 @@ ${JSON.stringify(sources)}`
 }
 
 // apps/obsidian-plugin/src/main.ts
-var PersonalKnowledgeAgentPlugin = class extends import_obsidian6.Plugin {
+var PersonalKnowledgeAgentPlugin = class extends import_obsidian7.Plugin {
   async onload() {
     await this.loadSettings();
     initializePlugin(this);
@@ -1274,7 +1495,9 @@ var PersonalKnowledgeAgentPlugin = class extends import_obsidian6.Plugin {
       provider: provider.id,
       apiBaseUrl: provider.id === "custom" ? oldApiBaseUrl : provider.apiBaseUrl,
       model: provider.models.length && !provider.models.includes(model) ? provider.models[0] : model,
-      secretId: typeof value.secretId === "string" && value.secretId ? value.secretId : DEFAULT_SETTINGS.secretId
+      secretId: typeof value.secretId === "string" && value.secretId ? value.secretId : DEFAULT_SETTINGS.secretId,
+      localAgentPort: typeof value.localAgentPort === "string" ? value.localAgentPort : DEFAULT_SETTINGS.localAgentPort,
+      localAgentToken: typeof value.localAgentToken === "string" ? value.localAgentToken : DEFAULT_SETTINGS.localAgentToken
     };
   }
 };

@@ -47,6 +47,8 @@ class LocalAgentContainer:
 
 def build_container(settings: LocalAgentSettings) -> LocalAgentContainer:
     """Wire application tools to local adapters."""
+    if settings.vault_root is None:
+        raise RuntimeError("vault root is not configured")
     vault = LocalDirectoryVaultRepository(settings.vault_root)
     plan_store = InMemoryOperationPlanStore()
     registry = ToolRegistry(

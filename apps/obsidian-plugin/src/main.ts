@@ -72,7 +72,13 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
         : model,
       secretId: typeof value.secretId === "string" && value.secretId
         ? value.secretId
-        : DEFAULT_SETTINGS.secretId
+        : DEFAULT_SETTINGS.secretId,
+      localAgentPort: typeof value.localAgentPort === "string"
+        ? value.localAgentPort
+        : DEFAULT_SETTINGS.localAgentPort,
+      localAgentToken: typeof value.localAgentToken === "string"
+        ? value.localAgentToken
+        : DEFAULT_SETTINGS.localAgentToken
     };
   }
 }

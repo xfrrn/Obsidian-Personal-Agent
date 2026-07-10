@@ -3,6 +3,7 @@ import {
   PluginSettingTab,
   Setting
 } from "obsidian";
+import { discoverLocalAgent, testLocalAgent } from "../api/local-agent-client";
 import { callModel } from "../api/model-client";
 import type PersonalKnowledgeAgentPlugin from "../main";
 
@@ -11,6 +12,8 @@ export interface AgentSettings {
   apiBaseUrl: string;
   model: string;
   secretId: string;
+  localAgentPort: string;
+  localAgentToken: string;
 }
 
 interface ProviderPreset {
@@ -39,7 +42,9 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   provider: "deepseek",
   apiBaseUrl: "https://api.deepseek.com",
   model: "deepseek-v4-flash",
-  secretId: "personal-knowledge-agent-api-key"
+  secretId: "personal-knowledge-agent-api-key",
+  localAgentPort: "8765",
+  localAgentToken: ""
 };
 
 export function providerById(id: string): ProviderPreset {
@@ -58,6 +63,66 @@ export class AgentSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const provider = providerById(this.agentPlugin.settings.provider);
+
+    new Setting(containerEl)
+      .setName("本地 Agent 端口")
+      .setDesc("local-agent HTTP 端口；留空则只使用插件内置流程。")
+      .addText((text) =>
+        text
+          .setPlaceholder("8765")
+          .setValue(this.agentPlugin.settings.localAgentPort)
+          .onChange(async (value) => {
+            this.agentPlugin.settings.localAgentPort = value.trim();
+            await this.agentPlugin.saveSettings();
+          })
+      );
+
+    const localAgentSetting = new Setting(containerEl)
+      .setName("本地 Agent 连接测试")
+      .setDesc("自动发现本地 Agent，发送当前 Vault 路径，并保存访问令牌。")
+      .addButton((button) =>
+        button
+          .setButtonText("自动连接")
+          .onClick(async () => {
+            button.setDisabled(true).setButtonText("连接中...");
+            localAgentStatusEl.setText("连接中...");
+            localAgentStatusEl.removeClass("is-success", "is-error");
+            try {
+              const result = await discoverLocalAgent(this.app, this.agentPlugin.settings);
+              this.agentPlugin.settings.localAgentPort = result.port;
+              this.agentPlugin.settings.localAgentToken = result.token;
+              await this.agentPlugin.saveSettings();
+              localAgentStatusEl.setText(`本地 Agent 已连接：${result.vaultRoot}`);
+              localAgentStatusEl.addClass("is-success");
+            } catch (error) {
+              localAgentStatusEl.setText(error instanceof Error ? error.message : "本地 Agent 不可用。");
+              localAgentStatusEl.addClass("is-error");
+            } finally {
+              button.setDisabled(false).setButtonText("自动连接");
+            }
+          })
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("测试")
+          .onClick(async () => {
+            button.setDisabled(true).setButtonText("测试中...");
+            localAgentStatusEl.setText("测试中...");
+            localAgentStatusEl.removeClass("is-success", "is-error");
+            try {
+              await testLocalAgent(this.agentPlugin.settings);
+              localAgentStatusEl.setText("本地 Agent health 可用。");
+              localAgentStatusEl.addClass("is-success");
+            } catch (error) {
+              localAgentStatusEl.setText(error instanceof Error ? error.message : "本地 Agent 不可用。");
+              localAgentStatusEl.addClass("is-error");
+            } finally {
+              button.setDisabled(false).setButtonText("测试");
+            }
+          })
+      );
+    const localAgentStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
+    localAgentSetting.settingEl.insertAdjacentElement("afterend", localAgentStatusEl);
 
     new Setting(containerEl)
       .setName("供应商")
