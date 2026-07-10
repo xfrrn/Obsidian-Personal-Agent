@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-personal-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A safe, local-first personal knowledge agent for Obsidian.",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "check": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.13.1",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "personal-knowledge-agent",
+  "name": "Personal Knowledge Agent",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Safely query and organize a personal Obsidian knowledge base.",
+  "author": "xfrrn",
+  "authorUrl": "https://github.com/xfrrn",
+  "isDesktopOnly": true
+}

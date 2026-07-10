@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.obsidian-knowledge-agent.dev/contracts/v1/operations/operation-plan.schema.json",
+  "title": "Operation plan",
+  "description": "A versioned, reviewable and idempotent plan containing all write operations proposed by the agent.",
+  "type": "object",
+  "properties": {
+    "planId": {
+      "$ref": "../common/identity.schema.json#/$defs/planId"
+    },
+    "planVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "source": {
+      "$ref": "operation-support.schema.json#/$defs/operationSource"
+    },
+    "riskLevel": {
+      "$ref": "operation-support.schema.json#/$defs/riskLevel"
+    },
+    "status": {
+      "$ref": "operation-support.schema.json#/$defs/planStatus"
+    },
+    "requiresConfirmation": {
+      "type": "boolean"
+    },
+    "confirmationPolicy": {
+      "$ref": "operation-support.schema.json#/$defs/confirmationPolicy"
+    },
+    "createdAt": {
+      "$ref": "../common/timestamp.schema.json#/$defs/dateTime"
+    },
+    "expiresAt": {
+      "$ref": "../common/timestamp.schema.json#/$defs/dateTime"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "knowledge-operation.schema.json"
+      }
+    },
+    "affectedResources": {
+      "type": "array",
+      "items": {
+        "$ref": "operation-support.schema.json#/$defs/affectedResource"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "operation-support.schema.json#/$defs/operationWarning"
+      }
+    },
+    "rollbackPolicy": {
+      "$ref": "operation-support.schema.json#/$defs/rollbackPolicy"
+    },
+    "failurePolicy": {
+      "$ref": "operation-support.schema.json#/$defs/failurePolicy"
+    },
+    "idempotencyKey": {
+      "$ref": "../common/identity.schema.json#/$defs/idempotencyKey"
+    },
+    "integrity": {
+      "$ref": "operation-support.schema.json#/$defs/planIntegrity"
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "planId",
+    "planVersion",
+    "instruction",
+    "summary",
+    "source",
+    "riskLevel",
+    "status",
+    "requiresConfirmation",
+    "createdAt",
+    "operations",
+    "affectedResources",
+    "warnings",
+    "rollbackPolicy",
+    "failurePolicy",
+    "idempotencyKey",
+    "integrity"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "requiresConfirmation": {
+            "const": true
+          }
+        },
+        "required": [
+          "requiresConfirmation"
+        ]
+      },
+      "then": {
+        "required": [
+          "confirmationPolicy"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "riskLevel": {
+            "const": "critical"
+          }
+        },
+        "required": [
+          "riskLevel"
+        ]
+      },
+      "then": {
+        "properties": {
+          "requiresConfirmation": {
+            "const": true
+          },
+          "confirmationPolicy": {
+            "allOf": [
+              {
+                "$ref": "operation-support.schema.json#/$defs/confirmationPolicy"
+              },
+              {
+                "properties": {
+                  "mode": {
+                    "enum": [
+                      "explicit",
+                      "selected-operations"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "confirmationPolicy"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "requiresConfirmation": {
+            "const": false
+          }
+        },
+        "required": [
+          "requiresConfirmation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "confirmationPolicy": {
+            "allOf": [
+              {
+                "$ref": "operation-support.schema.json#/$defs/confirmationPolicy"
+              },
+              {
+                "properties": {
+                  "mode": {
+                    "const": "none"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

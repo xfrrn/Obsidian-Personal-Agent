@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.obsidian-knowledge-agent.dev/contracts/v1/common/envelope.schema.json",
+  "title": "Base message envelope",
+  "description": "Base envelope extended by concrete request, response and event schemas. It intentionally leaves properties open so specialized schemas can close them with unevaluatedProperties.",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "$ref": "identity.schema.json#/$defs/protocolVersion"
+    },
+    "schemaVersion": {
+      "$ref": "identity.schema.json#/$defs/schemaVersion"
+    },
+    "messageType": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$"
+    },
+    "messageId": {
+      "$ref": "identity.schema.json#/$defs/messageId"
+    },
+    "requestId": {
+      "$ref": "identity.schema.json#/$defs/requestId"
+    },
+    "sessionId": {
+      "$ref": "identity.schema.json#/$defs/sessionId"
+    },
+    "correlationId": {
+      "$ref": "identity.schema.json#/$defs/correlationId"
+    },
+    "timestamp": {
+      "$ref": "timestamp.schema.json#/$defs/dateTime"
+    },
+    "source": {
+      "$ref": "source.schema.json"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "payload": {},
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "schemaVersion",
+    "messageType",
+    "messageId",
+    "requestId",
+    "timestamp",
+    "source",
+    "payload"
+  ]
+}

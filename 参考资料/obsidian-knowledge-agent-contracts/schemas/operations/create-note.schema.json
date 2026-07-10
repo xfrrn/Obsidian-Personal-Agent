@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.obsidian-knowledge-agent.dev/contracts/v1/operations/create-note.schema.json",
+  "title": "Create note operation",
+  "allOf": [
+    {
+      "$ref": "operation-base.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "create-note"
+        },
+        "input": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "../common/identity.schema.json#/$defs/vaultRelativePath"
+            },
+            "content": {
+              "type": "string"
+            },
+            "frontmatter": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "conflictPolicy": {
+              "type": "string",
+              "enum": [
+                "fail",
+                "rename",
+                "overwrite",
+                "merge"
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "content",
+            "conflictPolicy"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "type",
+        "input"
+      ]
+    }
+  ],
+  "unevaluatedProperties": false
+}

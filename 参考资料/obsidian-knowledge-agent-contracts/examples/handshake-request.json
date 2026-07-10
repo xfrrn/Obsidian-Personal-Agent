@@ -1,0 +1,68 @@
+{
+  "protocolVersion": "1.0",
+  "schemaVersion": "1.0",
+  "messageType": "protocol.handshake.request",
+  "messageId": "msg_handshake_001",
+  "requestId": "req_handshake_001",
+  "sessionId": "session_startup_001",
+  "timestamp": "2026-07-10T15:30:00+08:00",
+  "source": {
+    "type": "obsidian-plugin",
+    "instanceId": "plugin_device_001",
+    "version": "0.1.0"
+  },
+  "payload": {
+    "vault": {
+      "vaultId": "vault_main_001",
+      "vaultName": "个人知识库",
+      "configVersion": "1.0",
+      "rootPathHash": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "supportedProtocolVersions": [
+      "1.0"
+    ],
+    "supportedSchemaVersions": [
+      "1.0"
+    ],
+    "capabilities": [
+      {
+        "id": "vault.read",
+        "version": "1.0",
+        "available": true,
+        "riskLevel": "none"
+      },
+      {
+        "id": "operation.execute",
+        "version": "1.0",
+        "available": true,
+        "riskLevel": "high"
+      }
+    ],
+    "installedPluginAdapters": [
+      {
+        "pluginId": "dataview",
+        "pluginVersion": "0.5.68",
+        "adapterVersion": "0.1.0",
+        "available": true,
+        "capabilities": [
+          {
+            "id": "dataview.query",
+            "version": "1.0",
+            "available": true,
+            "riskLevel": "none"
+          }
+        ]
+      }
+    ],
+    "features": {
+      "websocket": true,
+      "streamingResponses": true,
+      "operationExecution": true,
+      "operationPreview": true,
+      "rollback": true,
+      "pluginInvocation": true
+    },
+    "locale": "zh-CN",
+    "timezone": "Asia/Shanghai"
+  }
+}

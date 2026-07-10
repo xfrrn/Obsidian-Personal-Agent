@@ -1,0 +1,374 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.obsidian-knowledge-agent.dev/contracts/v1/protocol/handshake.schema.json",
+  "title": "Plugin-agent handshake message",
+  "description": "Union of the initial handshake request and response messages.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/requestMessage"
+    },
+    {
+      "$ref": "#/$defs/responseMessage"
+    }
+  ],
+  "$defs": {
+    "vaultDescriptor": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "$ref": "../common/identity.schema.json#/$defs/vaultId"
+        },
+        "vaultName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "configVersion": {
+          "$ref": "../common/identity.schema.json#/$defs/schemaVersion"
+        },
+        "rootPathHash": {
+          "$ref": "../common/identity.schema.json#/$defs/sha256"
+        }
+      },
+      "required": [
+        "vaultId",
+        "vaultName"
+      ],
+      "additionalProperties": false
+    },
+    "pluginAdapter": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "$ref": "../common/identity.schema.json#/$defs/pluginId"
+        },
+        "pluginVersion": {
+          "$ref": "../common/identity.schema.json#/$defs/semanticVersion"
+        },
+        "adapterVersion": {
+          "$ref": "../common/identity.schema.json#/$defs/semanticVersion"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "capability.schema.json"
+          },
+          "uniqueItems": true
+        },
+        "unavailableReason": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "pluginId",
+        "adapterVersion",
+        "available",
+        "capabilities"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "available": {
+                "const": false
+              }
+            },
+            "required": [
+              "available"
+            ]
+          },
+          "then": {
+            "required": [
+              "unavailableReason"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "clientFeatures": {
+      "type": "object",
+      "properties": {
+        "websocket": {
+          "type": "boolean"
+        },
+        "streamingResponses": {
+          "type": "boolean"
+        },
+        "operationExecution": {
+          "type": "boolean"
+        },
+        "operationPreview": {
+          "type": "boolean"
+        },
+        "rollback": {
+          "type": "boolean"
+        },
+        "pluginInvocation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "websocket",
+        "streamingResponses",
+        "operationExecution",
+        "operationPreview",
+        "rollback",
+        "pluginInvocation"
+      ],
+      "additionalProperties": false
+    },
+    "requestPayload": {
+      "type": "object",
+      "properties": {
+        "vault": {
+          "$ref": "#/$defs/vaultDescriptor"
+        },
+        "supportedProtocolVersions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "../common/identity.schema.json#/$defs/protocolVersion"
+          }
+        },
+        "supportedSchemaVersions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "../common/identity.schema.json#/$defs/schemaVersion"
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "capability.schema.json"
+          },
+          "uniqueItems": true
+        },
+        "installedPluginAdapters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pluginAdapter"
+          },
+          "uniqueItems": true
+        },
+        "features": {
+          "$ref": "#/$defs/clientFeatures"
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "vault",
+        "supportedProtocolVersions",
+        "supportedSchemaVersions",
+        "capabilities",
+        "installedPluginAdapters",
+        "features"
+      ],
+      "additionalProperties": false
+    },
+    "transport": {
+      "type": "object",
+      "properties": {
+        "httpBasePath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "websocketPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "heartbeatIntervalMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 300000
+        },
+        "maxMessageBytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "supportsCompression": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "httpBasePath",
+        "heartbeatIntervalMs",
+        "maxMessageBytes"
+      ],
+      "additionalProperties": false
+    },
+    "limitation": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "capabilityId": {
+          "$ref": "../common/identity.schema.json#/$defs/capabilityId"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "serverInfo": {
+      "type": "object",
+      "properties": {
+        "instanceId": {
+          "$ref": "../common/identity.schema.json#/$defs/identifier"
+        },
+        "version": {
+          "$ref": "../common/identity.schema.json#/$defs/semanticVersion"
+        },
+        "build": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "instanceId",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "responsePayload": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "selectedProtocolVersion": {
+          "$ref": "../common/identity.schema.json#/$defs/protocolVersion"
+        },
+        "selectedSchemaVersion": {
+          "$ref": "../common/identity.schema.json#/$defs/schemaVersion"
+        },
+        "agentCapabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "capability.schema.json"
+          },
+          "uniqueItems": true
+        },
+        "serverInfo": {
+          "$ref": "#/$defs/serverInfo"
+        },
+        "transport": {
+          "$ref": "#/$defs/transport"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/limitation"
+          }
+        },
+        "rejection": {
+          "$ref": "../common/error.schema.json"
+        }
+      },
+      "required": [
+        "accepted",
+        "limitations"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "accepted": {
+                "const": true
+              }
+            },
+            "required": [
+              "accepted"
+            ]
+          },
+          "then": {
+            "required": [
+              "selectedProtocolVersion",
+              "selectedSchemaVersion",
+              "agentCapabilities",
+              "serverInfo",
+              "transport"
+            ]
+          },
+          "else": {
+            "required": [
+              "rejection"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "requestMessage": {
+      "allOf": [
+        {
+          "$ref": "../common/envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "messageType": {
+              "const": "protocol.handshake.request"
+            },
+            "payload": {
+              "$ref": "#/$defs/requestPayload"
+            }
+          },
+          "required": [
+            "messageType",
+            "payload"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "responseMessage": {
+      "allOf": [
+        {
+          "$ref": "../common/envelope.schema.json"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "messageType": {
+              "const": "protocol.handshake.response"
+            },
+            "payload": {
+              "$ref": "#/$defs/responsePayload"
+            }
+          },
+          "required": [
+            "messageType",
+            "payload"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.obsidian-knowledge-agent.dev/contracts/v1/operations/operation-support.schema.json",
+  "title": "Operation plan supporting types",
+  "$defs": {
+    "riskLevel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "planStatus": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "pending-confirmation",
+        "confirmed",
+        "executing",
+        "completed",
+        "failed",
+        "cancelled",
+        "rolled-back"
+      ]
+    },
+    "failurePolicy": {
+      "type": "string",
+      "enum": [
+        "stop",
+        "continue",
+        "rollback-all"
+      ]
+    },
+    "operationSource": {
+      "type": "object",
+      "properties": {
+        "actorType": {
+          "type": "string",
+          "enum": [
+            "user",
+            "agent",
+            "rule",
+            "automation",
+            "gateway",
+            "system"
+          ]
+        },
+        "actorId": {
+          "$ref": "../common/identity.schema.json#/$defs/identifier"
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "remote": {
+          "type": "boolean"
+        },
+        "instructionId": {
+          "$ref": "../common/identity.schema.json#/$defs/identifier"
+        }
+      },
+      "required": [
+        "actorType",
+        "actorId",
+        "remote"
+      ],
+      "additionalProperties": false
+    },
+    "affectedResource": {
+      "type": "object",
+      "properties": {
+        "resourceType": {
+          "type": "string",
+          "enum": [
+            "note",
+            "task",
+            "project",
+            "attachment",
+            "plugin",
+            "graph",
+            "configuration"
+          ]
+        },
+        "resourceId": {
+          "$ref": "../common/identity.schema.json#/$defs/identifier"
+        },
+        "path": {
+          "$ref": "../common/identity.schema.json#/$defs/vaultRelativePath"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "create",
+            "read",
+            "update",
+            "move",
+            "rename",
+            "delete",
+            "invoke"
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "resourceType",
+        "action"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "resourceId"
+          ]
+        },
+        {
+          "required": [
+            "path"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "operationWarning": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "operationIds": {
+          "type": "array",
+          "items": {
+            "$ref": "../common/identity.schema.json#/$defs/operationId"
+          },
+          "uniqueItems": true
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "../common/identity.schema.json#/$defs/vaultRelativePath"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "severity"
+      ],
+      "additionalProperties": false
+    },
+    "rollbackPolicy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "best-effort",
+            "required"
+          ]
+        },
+        "snapshotRequired": {
+          "type": "boolean"
+        },
+        "retentionSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        },
+        "maxRollbackAgeSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        }
+      },
+      "required": [
+        "mode",
+        "snapshotRequired",
+        "retentionSeconds"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "required"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "snapshotRequired": {
+                "const": true
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "confirmationPolicy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "explicit",
+            "selected-operations"
+          ]
+        },
+        "approverTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "local-user",
+              "remote-user",
+              "administrator"
+            ]
+          }
+        },
+        "expiresAt": {
+          "$ref": "../common/timestamp.schema.json#/$defs/dateTime"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "mode",
+        "approverTypes"
+      ],
+      "additionalProperties": false
+    },
+    "planIntegrity": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "value": {
+          "$ref": "../common/identity.schema.json#/$defs/sha256"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
