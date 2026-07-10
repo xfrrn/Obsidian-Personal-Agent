@@ -4,7 +4,9 @@ import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/va
 import type { AgentSettings } from "../../settings/settings";
 import { AgentAnswer, AgentError, parseAgentAnswer, parseIntent } from "../../utils/protocol";
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
+import { answerWithTasks } from "../task-actions/list-tasks";
 import { ANSWER_PROMPT, INTENT_PROMPT } from "./prompts";
+import { chooseReadTool } from "./tool-router";
 import type { QueryScope } from "./types";
 
 export type { QueryScope } from "./types";
@@ -38,6 +40,9 @@ export async function askAgent(
 ): Promise<AgentAnswer> {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("请输入问题。");
+
+  const tool = await chooseReadTool(app, settings, cleanQuestion, scope);
+  if (tool === "list_tasks") return answerWithTasks(app, cleanQuestion, scope);
 
   if (scope === "current") {
     const source = await getCurrentSource(app);

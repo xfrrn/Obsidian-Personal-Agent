@@ -7,7 +7,7 @@
     "dev": "node apps/obsidian-plugin/esbuild.config.mjs",
     "build": "node apps/obsidian-plugin/esbuild.config.mjs production",
     "check": "tsc --noEmit -p apps/obsidian-plugin/tsconfig.json",
-    "test": "esbuild apps/obsidian-plugin/tests/protocol.test.ts apps/obsidian-plugin/tests/operations.test.ts apps/obsidian-plugin/tests/search-notes.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/*.js"
+    "test": "esbuild apps/obsidian-plugin/tests/protocol.test.ts apps/obsidian-plugin/tests/operations.test.ts apps/obsidian-plugin/tests/search-notes.test.ts apps/obsidian-plugin/tests/list-tasks.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/*.js"
   },
   "engines": {
     "node": ">=20"

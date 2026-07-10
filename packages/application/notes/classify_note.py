@@ -1,0 +1,1 @@
+"""Classify note use case."""

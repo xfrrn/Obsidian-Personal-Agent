@@ -1,0 +1,1 @@
+"""Graph relation extractor."""

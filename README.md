@@ -7,6 +7,23 @@
 ## 结构
 
 ```text
+apps/
+  obsidian-plugin/              当前可运行 Obsidian 插件
+  local-agent/                  后续本地 Agent 服务
+  gateway/                      外部通讯网关
+  admin-web/                    管理后台
+packages/
+  contracts/                    插件 / Agent / 网关协议
+  domain/                       笔记、任务、项目等领域模型
+  application/                  业务用例
+  agent-core/                   Agent 对话、意图、规划、工具
+  rule-engine/                  确定性规则
+  knowledge-engine/             解析、索引、检索
+  graph-engine/                 知识图谱
+  integration-sdk/              扩展接口
+  shared/                       共享工具
+adapters/                       具体模型、存储、文件系统、插件适配器
+
 apps/obsidian-plugin/
   src/
     bootstrap/                  插件注册入口

@@ -1,6 +1,6 @@
 # Agent 设计
 
-本文基于项目结构设计文档，先定义本项目第一阶段的 Agent 边界。当前仓库已经有 Obsidian 插件内的问答、候选笔记选择、修改计划和执行器，所以第一阶段先落在插件内；后续再把推理和检索迁到 `apps/local-agent`。
+本文基于项目结构设计文档，定义本项目 Agent 的长期边界和第一阶段落点。仓库已铺开 `apps/local-agent`、`packages/*`、`adapters/*` 等结构；当前可运行能力仍先落在 Obsidian 插件内，后续逐步把推理、工具选择和检索迁到 `apps/local-agent`。
 
 ## 核心原则
 
@@ -17,9 +17,9 @@ Agent 不直接改文件。所有写操作必须先生成 `OperationPlan`，展�
   -> 回滚/审计日志
 ```
 
-## 第一阶段边界
+## 第一阶段运行边界
 
-第一阶段只有一个运行组件：Obsidian 插件。
+第一阶段只有一个真正运行组件：Obsidian 插件。其他目录已作为架构边界铺好，但先不接入运行链路。
 
 插件负责：
 
@@ -31,13 +31,34 @@ Agent 不直接改文件。所有写操作必须先生成 `OperationPlan`，展�
 - 用户确认后通过 Obsidian API 执行计划。
 - 写入审计日志并在失败时回滚已执行步骤。
 
-插件暂不负责：
+插件后续会移出的职责：
 
 - 独立本地 Agent 服务。
 - 向量索引、重排、知识图谱。
 - 外部通讯入口。
 - Headless 执行器。
 - 多模型供应商管理。
+
+已铺开的长期结构：
+
+```text
+apps/
+  obsidian-plugin/   当前运行插件
+  local-agent/       后续承接 Agent Runtime
+  gateway/           外部通讯入口
+  admin-web/         管理后台
+packages/
+  contracts/         通信协议
+  domain/            领域模型
+  application/       业务用例
+  agent-core/        Agent 对话、意图、规划、工具
+  rule-engine/       确定性规则
+  knowledge-engine/  解析、索引、检索
+  graph-engine/      知识图谱
+  integration-sdk/   扩展接口
+  shared/            共享工具
+adapters/            LLM、Embedding、存储、文件系统和插件适配器
+```
 
 ## 当前代码映射
 
@@ -73,11 +94,12 @@ AssistantView
   -> vault-reader.ts / Obsidian Vault API
 ```
 
-运行时只做三件事：
+运行时只做四件事：
 
 1. 判断用户是问答还是修改请求。
-2. 给模型提供受控上下文，并解析结构化结果。
-3. 把写操作收敛到 `OperationPlan`。
+2. 为只读问答选择工具。
+3. 给模型提供受控上下文，并解析结构化结果。
+4. 把写操作收敛到 `OperationPlan`。
 
 ## Operation Plan 合同
 
@@ -102,11 +124,11 @@ type KnowledgeOperation =
 - 插件命令必须是最后一步。
 - 路径只能是 Vault 内相对 Markdown 路径。
 
-后续拆出 local-agent 时，把这份合同迁到 `packages/contracts`，并加 `schemaVersion`、`planId`、`createdAt`、`expectedHash`。
+后续拆出 local-agent 时，把这份合同迁到 `packages/contracts`，并补齐 `schemaVersion`、`planId`、`createdAt`、`expectedHash`。
 
 ## 工具边界
 
-第一阶段不用做通用 Tool Registry，只保留现有函数即工具：
+第一阶段不用做通用 Tool Registry，只保留现有函数即工具。Agent 先选择工具，只有选择 `search_notes` 时才进入笔记检索。
 
 | 工具 | 当前实现 | 风险 |
 | --- | --- | --- |
@@ -114,11 +136,12 @@ type KnowledgeOperation =
 | `list_vault_catalog` | `getVaultCatalog` | low |
 | `read_notes` | `loadSources` | low |
 | `select_candidate_notes` | `selectCandidateNotePaths` | low |
+| `list_tasks` | `answerWithTasks` | low |
 | `build_operation_plan` | `buildOperationPlan` | medium |
 | `execute_operation_plan` | `executeOperationPlan` | high |
 | `invoke_plugin_command` | `invoke-plugin` operation | high |
 
-等 local-agent 出现后，再把这些函数包装成带 `input_schema`、`output_schema`、`permission`、`risk_level` 的工具定义。
+等 local-agent 接入后，再把这些函数包装成 `packages/agent-core/tools` 下带 `input_schema`、`output_schema`、`permission`、`risk_level` 的工具定义。
 
 ## 安全设计
 
@@ -136,7 +159,7 @@ type KnowledgeOperation =
 
 ## 后续迁移方向
 
-当插件内 Agent 满足基本工作流后，再按下面顺序拆：
+仓库结构已经铺好，运行链路按下面顺序接入：
 
 1. `packages/contracts`：沉淀 Operation Plan、Agent Response、Handshake schema。
 2. `apps/local-agent`：承接意图判断、上下文构建、计划生成。
@@ -144,4 +167,4 @@ type KnowledgeOperation =
 4. `packages/rule-engine`：确定性分类、命名、标签和归档规则优先于 AI。
 5. `adapters/llm`：把 OpenAI-compatible 调用从插件中移出。
 
-暂时跳过 gateway、admin-web、graph-engine 和 messaging adapters；等有真实远程入口或图谱需求再建。
+gateway、admin-web、graph-engine 和 messaging adapters 先只保留骨架；等有真实远程入口或图谱需求再接入运行链路。

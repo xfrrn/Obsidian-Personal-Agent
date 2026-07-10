@@ -1,0 +1,1 @@
+"""Related note recommender."""
