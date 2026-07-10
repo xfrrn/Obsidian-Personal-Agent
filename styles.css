@@ -1,0 +1,72 @@
+.pka-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+  height: 100%;
+  padding: var(--size-4-3);
+}
+
+.pka-view h2,
+.pka-view h3 {
+  margin: 0;
+}
+
+.pka-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+}
+
+.pka-field label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
+
+.pka-question {
+  min-height: 7rem;
+  resize: vertical;
+  width: 100%;
+}
+
+.pka-send {
+  align-self: flex-end;
+}
+
+.pka-result {
+  border-top: 1px solid var(--background-modifier-border);
+  min-height: 4rem;
+  overflow: auto;
+  padding-top: var(--size-4-3);
+}
+
+.pka-error {
+  color: var(--text-error);
+}
+
+.pka-citations {
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: var(--size-4-4);
+  padding-top: var(--size-4-3);
+}
+
+.pka-citations ul {
+  margin-bottom: 0;
+  padding-left: var(--size-4-5);
+}
+
+.pka-citation {
+  background: none;
+  box-shadow: none;
+  color: var(--text-accent);
+  height: auto;
+  padding: var(--size-4-1) 0;
+  text-align: left;
+  white-space: normal;
+}
+
+.pka-citation:hover {
+  background: none;
+  color: var(--text-accent-hover);
+}
+

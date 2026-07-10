@@ -17,3 +17,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.test-build/
+
+Agent.md
