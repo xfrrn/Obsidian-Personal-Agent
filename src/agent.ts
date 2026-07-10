@@ -17,7 +17,7 @@ import {
 
 export type QueryScope = "current" | "vault";
 
-interface ChatMessage {
+export interface ChatMessage {
   role: "system" | "user";
   content: string;
 }
@@ -88,7 +88,7 @@ async function answerFromSources(
   return parseAgentAnswer(response, sourcePaths, sourceHeadings);
 }
 
-async function callModel(
+export async function callModel(
   app: App,
   settings: AgentSettings,
   messages: ChatMessage[]

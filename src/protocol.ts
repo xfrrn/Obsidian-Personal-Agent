@@ -110,7 +110,7 @@ export function parseAgentAnswer(
   return { answer: value.answer.trim(), citations };
 }
 
-function parseJsonObject(text: string): Record<string, unknown> {
+export function parseJsonObject(text: string): Record<string, unknown> {
   const trimmed = text.trim();
   const withoutFence = trimmed
     .replace(/^```(?:json)?\s*/i, "")

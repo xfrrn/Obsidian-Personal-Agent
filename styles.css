@@ -55,6 +55,10 @@
   padding-left: var(--size-4-5);
 }
 
+.pka-plan {
+  padding-left: var(--size-4-5);
+}
+
 .pka-citation {
   background: none;
   box-shadow: none;
@@ -69,4 +73,3 @@
   background: none;
   color: var(--text-accent-hover);
 }
-

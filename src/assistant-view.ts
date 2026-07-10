@@ -5,12 +5,17 @@ import {
 } from "obsidian";
 import type PersonalKnowledgeAgentPlugin from "./main";
 import type { QueryScope } from "./agent";
+import {
+  describeOperation,
+  OperationPlan
+} from "./operations";
 import { AgentAnswer, AgentError } from "./protocol";
 
 export const AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
 
 export class AssistantView extends ItemView {
   private questionEl!: HTMLTextAreaElement;
+  private modeEl!: HTMLSelectElement;
   private scopeEl!: HTMLSelectElement;
   private sendButton!: HTMLButtonElement;
   private resultEl!: HTMLElement;
@@ -40,6 +45,17 @@ export class AssistantView extends ItemView {
     contentEl.empty();
     contentEl.addClass("pka-view");
     contentEl.createEl("h2", { text: "个人知识库 Agent" });
+
+    const modeRow = contentEl.createDiv({ cls: "pka-field" });
+    modeRow.createEl("label", {
+      text: "模式",
+      attr: { for: "pka-mode" }
+    });
+    this.modeEl = modeRow.createEl("select", {
+      attr: { id: "pka-mode" }
+    });
+    this.modeEl.createEl("option", { text: "问答", value: "ask" });
+    this.modeEl.createEl("option", { text: "修改计划", value: "plan" });
 
     const scopeRow = contentEl.createDiv({ cls: "pka-field" });
     scopeRow.createEl("label", {
@@ -74,7 +90,7 @@ export class AssistantView extends ItemView {
       cls: "pka-result",
       attr: { "aria-live": "polite" }
     });
-    this.resultEl.setText("输入问题后按 Ctrl/Cmd + Enter 发送。");
+    this.resultEl.setText("输入问题或修改请求后按 Ctrl/Cmd + Enter 发送。");
 
     this.registerDomEvent(this.sendButton, "click", () => void this.submit());
     this.registerDomEvent(this.questionEl, "keydown", (event) => {
@@ -93,14 +109,23 @@ export class AssistantView extends ItemView {
     if (this.busy) return;
     this.setBusy(true);
     this.resultEl.empty();
-    this.resultEl.setText("正在查找相关笔记……");
+    this.resultEl.setText(this.modeEl.value === "plan"
+      ? "正在生成修改计划……"
+      : "正在查找相关笔记……");
 
     try {
-      const answer = await this.agentPlugin.ask(
-        this.questionEl.value,
-        this.scopeEl.value as QueryScope
-      );
-      await this.renderAnswer(answer);
+      if (this.modeEl.value === "plan") {
+        this.renderPlan(await this.agentPlugin.plan(
+          this.questionEl.value,
+          this.scopeEl.value as QueryScope
+        ));
+      } else {
+        const answer = await this.agentPlugin.ask(
+          this.questionEl.value,
+          this.scopeEl.value as QueryScope
+        );
+        await this.renderAnswer(answer);
+      }
     } catch (error) {
       this.resultEl.empty();
       this.resultEl.createDiv({
@@ -148,12 +173,60 @@ export class AssistantView extends ItemView {
     }
   }
 
+  private renderPlan(plan: OperationPlan): void {
+    this.resultEl.empty();
+    this.resultEl.createEl("h3", { text: "修改预览" });
+    this.resultEl.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
+
+    const list = this.resultEl.createEl("ol", { cls: "pka-plan" });
+    for (const operation of plan.operations) {
+      list.createEl("li", { text: describeOperation(operation) });
+    }
+
+    const executeButton = this.resultEl.createEl("button", {
+      cls: "mod-cta pka-send",
+      text: "确认执行"
+    });
+    this.registerDomEvent(executeButton, "click", () =>
+      void this.executePlan(plan, executeButton)
+    );
+  }
+
+  private async executePlan(
+    plan: OperationPlan,
+    executeButton: HTMLButtonElement
+  ): Promise<void> {
+    if (this.busy) return;
+    this.setBusy(true);
+    executeButton.disabled = true;
+    executeButton.setText("执行中……");
+
+    try {
+      const results = await this.agentPlugin.executePlan(plan);
+      this.resultEl.empty();
+      this.resultEl.createEl("h3", { text: "已执行" });
+      const list = this.resultEl.createEl("ul", { cls: "pka-plan" });
+      for (const result of results) list.createEl("li", { text: result });
+    } catch (error) {
+      this.resultEl.createDiv({
+        cls: "pka-error",
+        text: error instanceof AgentError
+          ? error.message
+          : "执行失败，请检查笔记状态后重试。"
+      });
+      executeButton.disabled = false;
+      executeButton.setText("确认执行");
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.sendButton.disabled = busy;
+    this.modeEl.disabled = busy;
     this.scopeEl.disabled = busy;
     this.questionEl.disabled = busy;
     this.sendButton.setText(busy ? "处理中……" : "发送");
   }
 }
-

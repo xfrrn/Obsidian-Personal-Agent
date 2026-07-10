@@ -1,6 +1,11 @@
 import { Plugin } from "obsidian";
 import { askAgent, QueryScope } from "./agent";
 import { AssistantView, AGENT_VIEW_TYPE } from "./assistant-view";
+import {
+  buildOperationPlan,
+  executeOperationPlan,
+  OperationPlan
+} from "./operations";
 import { AgentAnswer } from "./protocol";
 import {
   AgentSettings,
@@ -34,6 +39,14 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
 
   ask(question: string, scope: QueryScope): Promise<AgentAnswer> {
     return askAgent(this.app, this.settings, question, scope);
+  }
+
+  plan(request: string, scope: QueryScope): Promise<OperationPlan> {
+    return buildOperationPlan(this.app, this.settings, request, scope);
+  }
+
+  executePlan(plan: OperationPlan): Promise<string[]> {
+    return executeOperationPlan(this.app, plan);
   }
 
   async saveSettings(): Promise<void> {
