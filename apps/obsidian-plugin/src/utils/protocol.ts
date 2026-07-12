@@ -14,6 +14,7 @@ export interface AgentTraceStep {
   toolName: string;
   status: string;
   summary: string;
+  detail?: Record<string, unknown>;
 }
 
 export type AgentIntent = "ask" | "plan";

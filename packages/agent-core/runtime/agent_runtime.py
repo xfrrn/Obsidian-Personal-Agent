@@ -55,6 +55,7 @@ class AgentTraceStep:
     tool_name: str
     status: str
     summary: str
+    detail: Mapping[str, Any]
 
 
 class AgentRuntime:
@@ -154,7 +155,13 @@ class AgentRuntime:
                     output = payload
 
                 step_results.append(PlanStepExecutionResult(call.id, status, output))
-                trace_step = AgentTraceStep(round_no, call.name, status, _trace_summary(payload))
+                trace_step = AgentTraceStep(
+                    round_no,
+                    call.name,
+                    status,
+                    _trace_summary(payload),
+                    _trace_detail(call.arguments, payload),
+                )
                 trace.append(trace_step)
                 await _emit_trace(on_trace, trace_step)
                 messages.append({
@@ -245,6 +252,43 @@ def _trace_summary(payload: Any) -> str:
             if key in payload:
                 return f"{key}: {payload[key]}"
     return _json_text(payload)[:240]
+
+
+def _trace_detail(arguments: Mapping[str, Any], payload: Any) -> Mapping[str, Any]:
+    detail: dict[str, Any] = {}
+    if arguments:
+        detail["input"] = _compact_value(arguments)
+    if isinstance(payload, dict):
+        if isinstance(payload.get("results"), (list, tuple)):
+            detail["results"] = _compact_items(payload["results"])
+        if isinstance(payload.get("notes"), (list, tuple)):
+            detail["notes"] = _compact_items(payload["notes"])
+        if isinstance(payload.get("tasks"), (list, tuple)):
+            detail["tasks"] = _compact_items(payload["tasks"])
+        for key in ("path", "query", "project", "operationPlanId"):
+            if key in payload:
+                detail[key] = _compact_value(payload[key])
+    return detail
+
+
+def _compact_items(items: Any, limit: int = 5) -> list[Any]:
+    if not isinstance(items, (list, tuple)):
+        return []
+    return [_compact_value(item) for item in items[:limit]]
+
+
+def _compact_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for key in ("path", "title", "score", "line", "heading", "project", "status", "count", "query"):
+            if key in value:
+                result[key] = _compact_value(value[key])
+        return result or {str(key): _compact_value(item) for key, item in list(value.items())[:6]}
+    if isinstance(value, (list, tuple)):
+        return [_compact_value(item) for item in value[:5]]
+    if isinstance(value, str):
+        return value[:160]
+    return value
 
 
 async def _emit_trace(callback: TraceCallback | None, step: AgentTraceStep) -> None:

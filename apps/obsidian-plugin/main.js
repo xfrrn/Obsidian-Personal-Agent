@@ -233,7 +233,8 @@ async function askLocalAgentStream(port, settings, body, onTrace) {
           round: event.data.round,
           toolName: (_c = (_b = event.data.toolName) != null ? _b : event.data.tool_name) != null ? _c : "",
           status: event.data.status,
-          summary: event.data.summary
+          summary: event.data.summary,
+          detail: isRecord2(event.data.detail) ? event.data.detail : void 0
         });
       } else if (event.event === "final") {
         finalPayload = event.data;
@@ -521,7 +522,8 @@ function agentTrace(payload) {
       round: Number(step.round),
       toolName: (_b = (_a = step.toolName) != null ? _a : step.tool_name) != null ? _b : "",
       status: step.status,
-      summary: step.summary
+      summary: step.summary,
+      detail: isRecord2(step.detail) ? step.detail : void 0
     };
   });
 }
@@ -1295,6 +1297,7 @@ var AssistantView = class extends import_obsidian5.ItemView {
     this.resultEl.empty();
     this.liveTraceCard = void 0;
     this.liveTraceList = void 0;
+    this.liveTraceSummary = void 0;
     this.liveTraceSteps = [];
     this.renderUserMessage(prompt);
     this.renderLoading(this.busyText());
@@ -1363,7 +1366,6 @@ var AssistantView = class extends import_obsidian5.ItemView {
   renderTrace(card, trace) {
     if (!(trace == null ? void 0 : trace.length)) return;
     const details = card.createEl("details", { cls: "pka-agent-trace" });
-    details.open = true;
     const summary = details.createEl("summary");
     const icon = summary.createSpan({ cls: "pka-trace-icon" });
     (0, import_obsidian5.setIcon)(icon, "activity");
@@ -1374,17 +1376,18 @@ var AssistantView = class extends import_obsidian5.ItemView {
     }
   }
   renderLiveTrace(step) {
+    var _a;
     this.liveTraceSteps.push(step);
     if (!this.liveTraceCard || !this.liveTraceList) {
       this.liveTraceCard = this.createAssistantCard();
       const details = this.liveTraceCard.createEl("details", { cls: "pka-agent-trace" });
-      details.open = true;
       const summary = details.createEl("summary");
       const icon = summary.createSpan({ cls: "pka-trace-icon" });
       (0, import_obsidian5.setIcon)(icon, "activity");
-      summary.createSpan({ text: "\u601D\u8003\u4E0E\u5DE5\u5177\u8C03\u7528" });
+      this.liveTraceSummary = summary.createSpan({ text: "\u601D\u8003\u4E0E\u5DE5\u5177\u8C03\u7528\uFF080 \u6B65\uFF09" });
       this.liveTraceList = details.createEl("ol", { cls: "pka-trace-list" });
     }
+    (_a = this.liveTraceSummary) == null ? void 0 : _a.setText(`\u601D\u8003\u4E0E\u5DE5\u5177\u8C03\u7528\uFF08${this.liveTraceSteps.length} \u6B65\uFF09`);
     this.appendTraceStep(this.liveTraceList, step);
     this.liveTraceCard.scrollIntoView({ block: "nearest" });
   }
@@ -1397,6 +1400,12 @@ var AssistantView = class extends import_obsidian5.ItemView {
     header.createSpan({ cls: "pka-trace-tool", text: step.toolName });
     header.createSpan({ cls: "pka-trace-status", text: step.status });
     if (step.summary) item.createDiv({ cls: "pka-trace-summary", text: step.summary });
+    if (step.detail && Object.keys(step.detail).length) {
+      item.createEl("pre", {
+        cls: "pka-trace-detail",
+        text: JSON.stringify(step.detail, null, 2)
+      });
+    }
   }
   renderPlan(plan) {
     var _a;

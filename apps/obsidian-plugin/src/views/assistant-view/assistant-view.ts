@@ -24,6 +24,7 @@ export class AssistantView extends ItemView {
   private busy = false;
   private liveTraceCard?: HTMLElement;
   private liveTraceList?: HTMLOListElement;
+  private liveTraceSummary?: HTMLElement;
   private liveTraceSteps: AgentTraceStep[] = [];
 
   constructor(
@@ -123,6 +124,7 @@ export class AssistantView extends ItemView {
     this.resultEl.empty();
     this.liveTraceCard = undefined;
     this.liveTraceList = undefined;
+    this.liveTraceSummary = undefined;
     this.liveTraceSteps = [];
     this.renderUserMessage(prompt);
     this.renderLoading(this.busyText());
@@ -206,7 +208,6 @@ export class AssistantView extends ItemView {
   private renderTrace(card: HTMLElement, trace: AgentAnswer["trace"]): void {
     if (!trace?.length) return;
     const details = card.createEl("details", { cls: "pka-agent-trace" });
-    details.open = true;
     const summary = details.createEl("summary");
     const icon = summary.createSpan({ cls: "pka-trace-icon" });
     setIcon(icon, "activity");
@@ -223,13 +224,13 @@ export class AssistantView extends ItemView {
     if (!this.liveTraceCard || !this.liveTraceList) {
       this.liveTraceCard = this.createAssistantCard();
       const details = this.liveTraceCard.createEl("details", { cls: "pka-agent-trace" });
-      details.open = true;
       const summary = details.createEl("summary");
       const icon = summary.createSpan({ cls: "pka-trace-icon" });
       setIcon(icon, "activity");
-      summary.createSpan({ text: "思考与工具调用" });
+      this.liveTraceSummary = summary.createSpan({ text: "思考与工具调用（0 步）" });
       this.liveTraceList = details.createEl("ol", { cls: "pka-trace-list" });
     }
+    this.liveTraceSummary?.setText(`思考与工具调用（${this.liveTraceSteps.length} 步）`);
     this.appendTraceStep(this.liveTraceList, step);
     this.liveTraceCard.scrollIntoView({ block: "nearest" });
   }
@@ -243,6 +244,12 @@ export class AssistantView extends ItemView {
     header.createSpan({ cls: "pka-trace-tool", text: step.toolName });
     header.createSpan({ cls: "pka-trace-status", text: step.status });
     if (step.summary) item.createDiv({ cls: "pka-trace-summary", text: step.summary });
+    if (step.detail && Object.keys(step.detail).length) {
+      item.createEl("pre", {
+        cls: "pka-trace-detail",
+        text: JSON.stringify(step.detail, null, 2)
+      });
+    }
   }
 
   private renderPlan(plan: OperationPlan): HTMLButtonElement {

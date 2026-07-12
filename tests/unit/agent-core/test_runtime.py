@@ -95,6 +95,9 @@ def test_agent_loop_can_call_tools_until_final_answer() -> None:
     assert result.assistant_message == "done"
     assert calls == ["search_notes", "read_note"]
     assert streamed == ["search_notes", "read_note"]
+    assert result.trace[0].detail["input"] == {"query": "agent"}
+    assert result.trace[0].detail["results"] == [{"path": "A.md"}]
+    assert result.trace[1].detail["input"] == {"path": "A.md"}
     assert result.execution is not None
     assert [item.status for item in result.execution.step_results] == ["completed", "completed"]
 

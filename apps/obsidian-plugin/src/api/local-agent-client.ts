@@ -101,7 +101,8 @@ async function askLocalAgentStream(
           round: event.data.round,
           toolName: event.data.toolName ?? event.data.tool_name ?? "",
           status: event.data.status,
-          summary: event.data.summary
+          summary: event.data.summary,
+          detail: isRecord(event.data.detail) ? event.data.detail : undefined
         });
       } else if (event.event === "final") {
         finalPayload = event.data;
@@ -442,7 +443,8 @@ function agentTrace(payload: unknown): AgentTraceStep[] {
     round: Number(step.round),
     toolName: step.toolName ?? step.tool_name ?? "",
     status: step.status,
-    summary: step.summary
+    summary: step.summary,
+    detail: isRecord(step.detail) ? step.detail : undefined
   }));
 }
 
@@ -564,6 +566,7 @@ function isTraceStep(value: unknown): value is {
   tool_name?: string;
   status: string;
   summary: string;
+  detail?: unknown;
 } {
   return isRecord(value) &&
     typeof value.round === "number" &&

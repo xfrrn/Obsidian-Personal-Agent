@@ -145,7 +145,13 @@ def test_chat_stream_sends_trace_and_final_events() -> None:
     class FakeRuntime:
         async def run(self, _request, *, on_trace=None):
             if on_trace:
-                on_trace({"round": 1, "tool_name": "list_tasks", "status": "completed", "summary": "ok"})
+                on_trace({
+                    "round": 1,
+                    "tool_name": "list_tasks",
+                    "status": "completed",
+                    "summary": "ok",
+                    "detail": {"input": {"status": "open"}},
+                })
             return {"assistant_message": "done"}
 
     LocalAgentHandler.container = SimpleNamespace(runtime=FakeRuntime())
@@ -170,6 +176,7 @@ def test_chat_stream_sends_trace_and_final_events() -> None:
             text = response.read().decode()
         assert "event: trace" in text
         assert '"tool_name": "list_tasks"' in text
+        assert '"status": "open"' in text
         assert "event: final" in text
         assert '"assistant_message": "done"' in text
     finally:
