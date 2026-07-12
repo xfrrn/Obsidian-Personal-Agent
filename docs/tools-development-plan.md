@@ -2,6 +2,8 @@
 
 更新时间：2026-07-12
 
+当前进度：P0 代码已完成，等待 Obsidian 测试 Vault 人工验收。
+
 ## 一、规划结论
 
 本项目只维护一套由 Local Agent 托管的 Tool Registry，不为每项业务能力创建独立 Obsidian 插件。
@@ -17,15 +19,16 @@
 
 ## 二、当前基线
 
-当前 Local Agent 已注册 5 个 tools：
+当前 Local Agent 已注册 6 个 tools：
 
 | Tool | 当前状态 | 主要缺口 |
 | --- | --- | --- |
 | `search_notes` | 可用 | 缺少时间、标签、项目等结构化过滤 |
 | `read_note` | 可用 | 只能读取单篇笔记 |
 | `list_tasks` | 可用 | 需要补齐 Tasks 插件日期、优先级、重复任务语法 |
-| `build_operation_plan` | 部分可用 | 当前计划存储在内存，规划器仍较简单 |
-| `execute_operation_plan` | 占位 | Local Agent 仍使用 Noop 执行器，没有接入真实写入 |
+| `build_operation_plan` | 可用 | 已持久化计划、完整性哈希、动态风险和有效期 |
+| `execute_operation_plan` | 可用 | 已接入真实文件执行、确认令牌、冲突检测、审计和失败回滚 |
+| `rollback_operation` | 可用 | 已支持执行后显式撤销和版本冲突保护 |
 
 现有 `ToolDefinition` 已包含权限、风险、影响类型、调用策略和确认标记；现有 `ToolRegistry` 已能在执行边界拒绝越权调用。这些结构继续复用，不再增加第二套工具框架。
 
@@ -206,7 +209,7 @@ Tool 的静态风险只是基础值，OperationPlan 的最终风险由执行器�
 
 ## 七、实施顺序
 
-### 里程碑 M0：先完成已有 5 个 tools 的闭环
+### 里程碑 M0：完成已有 tools 的闭环（代码已完成）
 
 1. 接入真实 Local Agent OperationPlan 执行器。
 2. 把计划存储从内存改为本地持久化。
@@ -234,11 +237,10 @@ Tool 的静态风险只是基础值，OperationPlan 的最终风险由执行器�
 
 ## 八、下一批开发任务
 
-下一批只做 M0，不同时开发更多业务 tools：
+先在测试 Vault 完成 M0 人工验收：
 
-- 用真实执行器替换 `NoopOperationPlanExecutor`。
-- 持久化 OperationPlan、确认状态和执行结果。
-- 增加 `confirm_all`、`risk_based`、`unattended` 配置与执行边界测试。
-- 增加 `rollback_operation`。
+- 分别验证创建、替换、移动、Frontmatter、任务操作。
+- 验证三种权限模式、预览后冲突拒绝、失败回滚和显式撤销。
+- 检查 SQLite 状态和 JSONL 审计记录。
 
-M0 验收通过后，再开始增强 `read_note`、实现 `inspect_note` 和 Tasks adapter。
+验收通过后，再开始增强 `read_note`、实现 `inspect_note` 和 Tasks adapter。

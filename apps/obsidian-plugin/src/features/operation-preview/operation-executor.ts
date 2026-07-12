@@ -5,6 +5,7 @@ import {
   TFolder
 } from "obsidian";
 import { callModel } from "../../api/model-client";
+import { stageLocalOperationPlan } from "../../api/local-agent-client";
 import type { QueryScope } from "../assistant/types";
 import {
   PLAN_GENERATION_PROMPT,
@@ -61,12 +62,16 @@ export async function buildOperationPlan(
 
   const plan = parseOperationPlan(response, existingPaths, sourcePaths);
   assertPlanMatchesSources(plan, sources);
-  return {
+  const versionedPlan: OperationPlan = {
     ...plan,
     planId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     expectedHashes: await hashPaths(app, operationSourcePaths(plan))
   };
+  if (settings.localAgentToken && !plan.operations.some((operation) => operation.type === "invoke-plugin")) {
+    return stageLocalOperationPlan(settings, versionedPlan, [...sourcePaths]);
+  }
+  return versionedPlan;
 }
 
 export async function executeOperationPlan(

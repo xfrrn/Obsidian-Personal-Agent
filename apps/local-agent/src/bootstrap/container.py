@@ -31,8 +31,11 @@ from adapters.filesystem.local_directory.vault import LocalDirectoryVaultReposit
 from application.tool_provider import ApplicationToolDependencies, build_application_tools  # noqa: E402
 from intent import IntentClassifierOptions, RuleBasedIntentClassifier  # noqa: E402
 from infrastructure.operation_plans import (  # noqa: E402
-    InMemoryOperationPlanStore,
-    NoopOperationPlanExecutor,
+    ExecutionMode,
+    ExecutionPolicy,
+    FilesystemOperationPlanExecutor,
+    OperationManager,
+    PersistentOperationPlanStore,
     SimpleOperationPlanner,
 )
 from runtime import AgentRuntime  # noqa: E402
@@ -43,6 +46,7 @@ from tools import ToolPermission, ToolPolicy, ToolRegistry, ToolRiskLevel  # noq
 class LocalAgentContainer:
     runtime: AgentRuntime
     registry: ToolRegistry
+    operations: OperationManager
 
 
 def build_container(settings: LocalAgentSettings) -> LocalAgentContainer:
@@ -50,7 +54,16 @@ def build_container(settings: LocalAgentSettings) -> LocalAgentContainer:
     if settings.vault_root is None:
         raise RuntimeError("vault root is not configured")
     vault = LocalDirectoryVaultRepository(settings.vault_root)
-    plan_store = InMemoryOperationPlanStore()
+    data_dir = settings.vault_root / ".obsidian-agent-data"
+    policy = ExecutionPolicy(ExecutionMode(settings.execution_mode))
+    plan_store = PersistentOperationPlanStore(data_dir / "state.sqlite3")
+    planner = SimpleOperationPlanner(settings.vault_root, policy)
+    executor = FilesystemOperationPlanExecutor(
+        settings.vault_root,
+        plan_store,
+        data_dir / "audit.jsonl",
+    )
+    operations = OperationManager(planner, plan_store, executor, policy)
     registry = ToolRegistry(
         ToolPolicy.allow({ToolPermission.READ, ToolPermission.WRITE}, ToolRiskLevel.HIGH)
     )
@@ -59,13 +72,17 @@ def build_container(settings: LocalAgentSettings) -> LocalAgentContainer:
             ApplicationToolDependencies(
                 notes=vault,
                 tasks=vault,
-                operation_planner=SimpleOperationPlanner(),
+                operation_planner=planner,
                 operation_plan_store=plan_store,
-                operation_executor=NoopOperationPlanExecutor(),
+                operation_executor=executor,
             )
         )
     )
     intent_classifier = RuleBasedIntentClassifier(
         options=IntentClassifierOptions(confirmation_threshold=0.5)
     )
-    return LocalAgentContainer(runtime=AgentRuntime(registry, intent_classifier=intent_classifier), registry=registry)
+    return LocalAgentContainer(
+        runtime=AgentRuntime(registry, intent_classifier=intent_classifier),
+        registry=registry,
+        operations=operations,
+    )

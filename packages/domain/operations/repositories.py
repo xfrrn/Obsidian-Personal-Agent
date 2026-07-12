@@ -35,3 +35,7 @@ class OperationPlanExecutor(Protocol):
     async def execute(self, plan: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
         """Execute a confirmed plan and return operation results."""
         ...
+
+    async def rollback(self, plan: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
+        """Restore a succeeded plan after verifying the current file versions."""
+        ...

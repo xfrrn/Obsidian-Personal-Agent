@@ -7,6 +7,7 @@ import {
   discoverLocalAgent,
   listLocalAgentTools,
   testLocalAgent,
+  updateLocalAgentPolicy,
   type LocalAgentTool
 } from "../api/local-agent-client";
 import { callModel } from "../api/model-client";
@@ -19,7 +20,10 @@ export interface AgentSettings {
   secretId: string;
   localAgentPort: string;
   localAgentToken: string;
+  executionMode: ExecutionMode;
 }
+
+export type ExecutionMode = "confirm_all" | "risk_based" | "unattended";
 
 interface ProviderPreset {
   id: string;
@@ -49,7 +53,8 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   model: "deepseek-v4-flash",
   secretId: "personal-knowledge-agent-api-key",
   localAgentPort: "8765",
-  localAgentToken: ""
+  localAgentToken: "",
+  executionMode: "confirm_all"
 };
 
 export function providerById(id: string): ProviderPreset {
@@ -97,6 +102,7 @@ export class AgentSettingTab extends PluginSettingTab {
               this.agentPlugin.settings.localAgentPort = result.port;
               this.agentPlugin.settings.localAgentToken = result.token;
               await this.agentPlugin.saveSettings();
+              await updateLocalAgentPolicy(this.agentPlugin.settings);
               localAgentStatusEl.setText(`本地 Agent 已连接：${result.vaultRoot}`);
               localAgentStatusEl.addClass("is-success");
             } catch (error) {
@@ -128,6 +134,23 @@ export class AgentSettingTab extends PluginSettingTab {
       );
     const localAgentStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
     localAgentSetting.settingEl.insertAdjacentElement("afterend", localAgentStatusEl);
+
+    new Setting(containerEl)
+      .setName("执行权限模式")
+      .setDesc("全部确认最安全；风险分级仅自动执行白名单低风险操作；无人值守只允许可信定时任务自动执行低风险操作。")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("confirm_all", "全部确认")
+          .addOption("risk_based", "风险分级")
+          .addOption("unattended", "无人值守")
+          .setValue(this.agentPlugin.settings.executionMode)
+          .onChange(async (value) => {
+            if (!isExecutionMode(value)) return;
+            this.agentPlugin.settings.executionMode = value;
+            await this.agentPlugin.saveSettings();
+            await updateLocalAgentPolicy(this.agentPlugin.settings);
+          })
+      );
 
     const toolsSetting = new Setting(containerEl)
       .setName("工具展示")
@@ -337,4 +360,8 @@ function inputNames(schema: Record<string, unknown> | undefined): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isExecutionMode(value: unknown): value is ExecutionMode {
+  return value === "confirm_all" || value === "risk_based" || value === "unattended";
 }

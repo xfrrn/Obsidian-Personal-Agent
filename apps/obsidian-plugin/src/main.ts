@@ -8,10 +8,15 @@ import {
   OperationPlan
 } from "./features/operation-preview/operation-executor";
 import { AGENT_VIEW_TYPE } from "./views/assistant-view/assistant-view";
+import {
+  executeLocalOperationPlan,
+  rollbackLocalOperationPlan
+} from "./api/local-agent-client";
 import type { AgentAnswer, AgentIntent } from "./types";
 import {
   AgentSettings,
   DEFAULT_SETTINGS,
+  isExecutionMode,
   providerById
 } from "./settings/settings";
 
@@ -41,8 +46,18 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
     return buildOperationPlan(this.app, this.settings, request, scope);
   }
 
-  executePlan(plan: OperationPlan): Promise<string[]> {
+  executePlan(plan: OperationPlan, confirmed = true): Promise<string[]> {
+    if (plan.managedBy === "local-agent") {
+      return executeLocalOperationPlan(this.settings, plan, confirmed);
+    }
     return executeOperationPlan(this.app, plan);
+  }
+
+  rollbackPlan(plan: OperationPlan): Promise<string[]> {
+    if (plan.managedBy !== "local-agent") {
+      return Promise.reject(new Error("该计划没有持久化撤销快照。"));
+    }
+    return rollbackLocalOperationPlan(this.settings, plan);
   }
 
   async saveSettings(): Promise<void> {
@@ -82,7 +97,10 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
       localAgentPort: typeof value.localAgentPort === "string"
         ? value.localAgentPort
         : DEFAULT_SETTINGS.localAgentPort,
-      localAgentToken: this.app.secretStorage.getSecret(LOCAL_AGENT_TOKEN_SECRET_ID) ?? ""
+      localAgentToken: this.app.secretStorage.getSecret(LOCAL_AGENT_TOKEN_SECRET_ID) ?? "",
+      executionMode: isExecutionMode(value.executionMode)
+        ? value.executionMode
+        : DEFAULT_SETTINGS.executionMode
     };
   }
 }

@@ -46,6 +46,49 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
         assert _request(base + "/tools")[0] == 403
         assert _request(base + "/tools", headers={"X-Agent-Token": token})[0] == 200
         assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["vaultRoot"] == str(tmp_path)
+        assert _request(
+            base + "/chat",
+            {"userInput": "confirm", "trigger": "operation_confirmed", "operationPlanId": "fake"},
+            {"X-Agent-Token": token},
+        )[0] == 400
+
+        operation = {
+            "summary": "http test",
+            "operations": [{"type": "create-note", "path": "00-Inbox/HTTP.md", "content": "ok\n"}],
+            "context": {"source": "interactive"},
+        }
+        status, _, staged = _request(base + "/operations", operation, {"X-Agent-Token": token})
+        assert status == 201
+        plan_id = staged["planId"]
+        assert isinstance(plan_id, str)
+        assert staged["requiresConfirmation"]
+        confirmation = staged["confirmationToken"]
+        assert _request(
+            base + f"/operations/{plan_id}/execute",
+            {},
+            {"X-Agent-Token": token},
+        )[0] == 403
+        status, _, executed = _request(
+            base + f"/operations/{plan_id}/execute",
+            {"confirmationToken": confirmation},
+            {"X-Agent-Token": token},
+        )
+        assert status == 200 and executed["status"] == "succeeded"
+        rollback_token = executed["rollbackToken"]
+        assert (tmp_path / "00-Inbox" / "HTTP.md").exists()
+        status, _, rolled_back = _request(
+            base + f"/operations/{plan_id}/rollback",
+            {"rollbackToken": rollback_token},
+            {"X-Agent-Token": token},
+        )
+        assert status == 200 and rolled_back["status"] == "rolled_back"
+        assert not (tmp_path / "00-Inbox" / "HTTP.md").exists()
+        assert _request(
+            base + "/policy",
+            {"executionMode": "risk_based"},
+            {"X-Agent-Token": token},
+        )[2]["executionMode"] == "risk_based"
+        assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["executionMode"] == "risk_based"
         assert _request(base + "/handshake", body)[0] == 409
     finally:
         server.shutdown()
@@ -59,7 +102,7 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
 
 def _request(
     url: str,
-    body: dict[str, str] | None = None,
+    body: dict[str, object] | None = None,
     headers: dict[str, str] | None = None,
 ) -> tuple[int, object, dict[str, object]]:
     data = json.dumps(body).encode() if body is not None else None

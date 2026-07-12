@@ -131,10 +131,15 @@ export class AssistantView extends ItemView {
         : "意图判断：问答。正在查找相关笔记...");
 
       if (intent === "plan") {
-        this.renderPlan(await this.agentPlugin.plan(
+        const plan = await this.agentPlugin.plan(
           prompt,
           this.scopeEl.value as QueryScope
-        ));
+        );
+        const executeButton = this.renderPlan(plan);
+        if (mode === "auto" && plan.requiresConfirmation === false) {
+          this.setBusy(false);
+          await this.executePlan(plan, executeButton, false);
+        }
       } else {
         await this.renderAnswer(await this.agentPlugin.ask(
           prompt,
@@ -189,7 +194,7 @@ export class AssistantView extends ItemView {
     }
   }
 
-  private renderPlan(plan: OperationPlan): void {
+  private renderPlan(plan: OperationPlan): HTMLButtonElement {
     this.resultEl.querySelector(".pka-loading")?.remove();
     const card = this.createAssistantCard();
     card.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
@@ -211,11 +216,13 @@ export class AssistantView extends ItemView {
     this.registerDomEvent(executeButton, "click", () =>
       void this.executePlan(plan, executeButton)
     );
+    return executeButton;
   }
 
   private async executePlan(
     plan: OperationPlan,
-    executeButton: HTMLButtonElement
+    executeButton: HTMLButtonElement,
+    confirmed = true
   ): Promise<void> {
     if (this.busy) return;
     this.setBusy(true);
@@ -223,12 +230,19 @@ export class AssistantView extends ItemView {
     executeButton.setText("执行中...");
 
     try {
-      const results = await this.agentPlugin.executePlan(plan);
+      const results = await this.agentPlugin.executePlan(plan, confirmed);
       const log = this.resultEl.createDiv({ cls: "pka-execution-log" });
       const title = log.createDiv({ cls: "pka-section-title" });
       title.createSpan({ text: `执行日志（已执行 ${results.length} 次）` });
       const list = log.createEl("ul", { cls: "pka-plan" });
       for (const result of results) list.createEl("li", { text: result });
+      executeButton.setText("已执行");
+      if (plan.managedBy === "local-agent" && executeButton.parentElement) {
+        const rollbackButton = executeButton.parentElement.createEl("button", { text: "撤销" });
+        this.registerDomEvent(rollbackButton, "click", () =>
+          void this.rollbackPlan(plan, rollbackButton)
+        );
+      }
     } catch (error) {
       this.resultEl.createDiv({
         cls: "pka-error",
@@ -238,6 +252,28 @@ export class AssistantView extends ItemView {
       });
       executeButton.disabled = false;
       executeButton.setText("确认执行");
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  private async rollbackPlan(plan: OperationPlan, button: HTMLButtonElement): Promise<void> {
+    if (this.busy) return;
+    this.setBusy(true);
+    button.disabled = true;
+    button.setText("撤销中...");
+    try {
+      const results = await this.agentPlugin.rollbackPlan(plan);
+      const log = this.resultEl.createDiv({ cls: "pka-execution-log" });
+      for (const result of results) log.createDiv({ text: result });
+      button.setText("已撤销");
+    } catch (error) {
+      this.resultEl.createDiv({
+        cls: "pka-error",
+        text: error instanceof Error ? error.message : "撤销失败。"
+      });
+      button.disabled = false;
+      button.setText("撤销");
     } finally {
       this.setBusy(false);
     }

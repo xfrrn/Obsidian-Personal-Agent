@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .notes.read_note import ReadNoteUseCase
 from .operations.build_operation_plan import BuildOperationPlanUseCase
 from .operations.execute_operation_plan import ExecuteOperationPlanUseCase
+from .operations.rollback_operation import RollbackOperationUseCase
 from .search.search_notes import SearchNotesUseCase
 from .tasks.list_tasks import ListTasksUseCase
 from tools import (
@@ -36,6 +37,7 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
     list_tasks = ListTasksUseCase(deps.tasks)
     build_plan = BuildOperationPlanUseCase(deps.operation_planner, deps.operation_plan_store)
     execute_plan = ExecuteOperationPlanUseCase(deps.operation_plan_store, deps.operation_executor)
+    rollback_plan = RollbackOperationUseCase(deps.operation_plan_store, deps.operation_executor)
 
     return (
         FunctionTool(
@@ -83,5 +85,22 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
                 requires_confirmation=True,
             ),
             lambda input_data, _context: execute_plan.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="rollback_operation",
+                description="撤销已经成功执行且当前版本未冲突的操作计划",
+                input_schema={
+                    "type": "object",
+                    "properties": {"operationPlanId": {"type": "string"}},
+                    "required": ["operationPlanId"],
+                },
+                permission=ToolPermission.WRITE,
+                risk_level=ToolRiskLevel.HIGH,
+                effect=ToolEffect.WRITE,
+                invocation_policy=ToolInvocationPolicy.SYSTEM_ONLY,
+                requires_confirmation=True,
+            ),
+            lambda input_data, _context: rollback_plan.execute(input_data),
         ),
     )

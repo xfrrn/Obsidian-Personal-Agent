@@ -13,6 +13,7 @@ import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 from typing import Any
+from urllib.parse import urlparse
 
 from bootstrap.container import LocalAgentContainer, build_container
 from bootstrap.settings import LocalAgentSettings, load_settings
@@ -35,40 +36,71 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "browser access is not allowed"}, status=403)
 
     def do_GET(self) -> None:
-        if self.path == "/health":
+        path = urlparse(self.path).path
+        if path == "/health":
             self._send_json({
                 "status": "ok",
                 "configured": self.container is not None,
             })
             return
-        if self.path == "/tools":
+        if path == "/tools":
             if not self._require_ready() or not self._require_token():
                 return
             self._send_json({"tools": [_jsonable(tool) for tool in self.container.registry.definitions()]})
             return
-        if self.path == "/identity":
+        if path == "/identity":
             if not self._require_ready() or not self._require_token():
                 return
-            self._send_json({"vaultRoot": str(self.vault_root)})
+            assert self.container is not None
+            self._send_json({
+                "vaultRoot": str(self.vault_root),
+                "executionMode": self.container.operations.policy.mode.value,
+            })
+            return
+        if path.startswith("/operations/"):
+            if not self._require_ready() or not self._require_token():
+                return
+            plan_id = _operation_id(path)
+            assert self.container is not None
+            try:
+                self._send_json(_jsonable(asyncio.run(self.container.operations.store.get(plan_id))))
+            except KeyError as exc:
+                self._send_json({"error": str(exc)}, status=404)
             return
         self._send_json({"error": "not found"}, status=404)
 
     def do_POST(self) -> None:
-        if self.path == "/handshake":
+        path = urlparse(self.path).path
+        if path == "/handshake":
             self._handshake()
             return
-        if self.path != "/chat":
+        if path == "/policy":
+            self._update_policy()
+            return
+        if path == "/operations":
+            self._stage_operation()
+            return
+        if path.startswith("/operations/") and path.endswith("/execute"):
+            self._execute_operation(path)
+            return
+        if path.startswith("/operations/") and path.endswith("/rollback"):
+            self._rollback_operation(path)
+            return
+        if path != "/chat":
             self._send_json({"error": "not found"}, status=404)
             return
         try:
             if not self._require_ready() or not self._require_token():
                 return
             payload = self._read_json()
+            trigger = RuntimeTrigger(str(payload.get("trigger") or RuntimeTrigger.USER_MESSAGE.value))
+            if trigger is not RuntimeTrigger.USER_MESSAGE:
+                raise ValueError("system operation triggers must use the authenticated /operations endpoints")
             request = RuntimeRequest(
                 user_input=_text(payload, "userInput", "question", "message"),
                 conversation_id=str(payload.get("conversationId") or "default"),
                 scope=str(payload.get("scope") or "vault"),
-                trigger=RuntimeTrigger(str(payload.get("trigger") or RuntimeTrigger.USER_MESSAGE.value)),
+                trigger=trigger,
                 operation_plan_id=_optional_text(payload.get("operationPlanId")),
                 active_file_path=_optional_text(payload.get("activeFilePath")),
                 selected_text=_optional_text(payload.get("selectedText")),
@@ -77,6 +109,8 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
             assert self.container is not None
             result = asyncio.run(self.container.runtime.run(request))
             self._send_json(_jsonable(result))
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=400)
         except Exception as exc:
             LOGGER.exception("local-agent request failed")
             self._send_json({"error": str(exc)}, status=500)
@@ -105,6 +139,7 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
                         host=self.settings.host,
                         port=self.settings.port,
                         vault_root=vault_root,
+                        execution_mode=str(payload.get("executionMode") or self.settings.execution_mode),
                     )
                     self.__class__.container = build_container(settings)
                 self.__class__.vault_root = vault_root
@@ -120,6 +155,66 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             LOGGER.exception("local-agent handshake failed")
             self._send_json({"error": str(exc)}, status=400)
+
+    def _update_policy(self) -> None:
+        try:
+            if not self._require_ready() or not self._require_token():
+                return
+            payload = self._read_json()
+            mode = _text(payload, "executionMode")
+            assert self.container is not None
+            self.container.operations.set_mode(mode)
+            self._send_json({"executionMode": self.container.operations.policy.mode.value})
+        except Exception as exc:
+            self._send_json({"error": str(exc)}, status=400)
+
+    def _stage_operation(self) -> None:
+        try:
+            if not self._require_ready() or not self._require_token():
+                return
+            payload = self._read_json()
+            assert self.container is not None
+            plan = asyncio.run(self.container.operations.stage(payload))
+            self._send_json(_jsonable(plan), status=201)
+        except Exception as exc:
+            LOGGER.exception("operation staging failed")
+            self._send_json({"error": str(exc)}, status=400)
+
+    def _execute_operation(self, path: str) -> None:
+        try:
+            if not self._require_ready() or not self._require_token():
+                return
+            payload = self._read_json()
+            plan_id = _operation_id(path, suffix="/execute")
+            token = _optional_text(payload.get("confirmationToken"))
+            assert self.container is not None
+            result = asyncio.run(self.container.operations.execute(plan_id, confirmation_token=token))
+            self._send_json(_jsonable(result))
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, status=403)
+        except (KeyError, ValueError) as exc:
+            self._send_json({"error": str(exc)}, status=409)
+        except Exception as exc:
+            LOGGER.exception("operation execution failed")
+            self._send_json({"error": str(exc)}, status=500)
+
+    def _rollback_operation(self, path: str) -> None:
+        try:
+            if not self._require_ready() or not self._require_token():
+                return
+            payload = self._read_json()
+            plan_id = _operation_id(path, suffix="/rollback")
+            token = _optional_text(payload.get("rollbackToken"))
+            assert self.container is not None
+            result = asyncio.run(self.container.operations.rollback(plan_id, confirmation_token=token))
+            self._send_json(_jsonable(result))
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, status=403)
+        except (KeyError, ValueError) as exc:
+            self._send_json({"error": str(exc)}, status=409)
+        except Exception as exc:
+            LOGGER.exception("operation rollback failed")
+            self._send_json({"error": str(exc)}, status=500)
 
     def _require_ready(self) -> bool:
         if self.container is not None:
@@ -192,6 +287,13 @@ def _text(payload: dict[str, Any], *keys: str) -> str:
 
 def _optional_text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _operation_id(path: str, *, suffix: str = "") -> str:
+    clean = path.removesuffix(suffix).removeprefix("/operations/").strip("/")
+    if not clean or "/" in clean:
+        raise ValueError("invalid operation plan path")
+    return clean
 
 
 def _jsonable(value: Any) -> Any:

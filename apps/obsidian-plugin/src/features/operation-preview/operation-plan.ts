@@ -23,6 +23,13 @@ export interface OperationPlan {
   planId?: string;
   createdAt?: string;
   expectedHashes?: Record<string, string>;
+  expiresAt?: string;
+  integrityHash?: string;
+  requiresConfirmation?: boolean;
+  confirmationToken?: string;
+  rollbackToken?: string;
+  status?: string;
+  managedBy?: "local-agent";
   summary: string;
   risk: OperationRisk;
   operations: KnowledgeOperation[];

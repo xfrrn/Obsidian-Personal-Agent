@@ -1,6 +1,7 @@
 import { App, requestUrl } from "obsidian";
 import type { QueryScope } from "../features/assistant/types";
 import type { AgentSettings } from "../settings/settings";
+import type { OperationPlan } from "../features/operation-preview/operation-plan";
 import { AgentAnswer, AgentError } from "../utils/protocol";
 
 interface LocalTask {
@@ -80,6 +81,80 @@ export async function listLocalAgentTools(settings: AgentSettings): Promise<Loca
   return payload.tools.filter(isLocalAgentTool);
 }
 
+export async function stageLocalOperationPlan(
+  settings: AgentSettings,
+  plan: OperationPlan,
+  allowedPaths: string[]
+): Promise<OperationPlan> {
+  const payload = await localAgentRequest(settings, "/operations", {
+    summary: plan.summary,
+    operations: plan.operations,
+    context: { source: "interactive", allowedPaths }
+  });
+  if (
+    !isRecord(payload) ||
+    typeof payload.planId !== "string" ||
+    typeof payload.summary !== "string" ||
+    !Array.isArray(payload.operations) ||
+    !isRisk(payload.risk)
+  ) {
+    throw new AgentError("本地 Agent 返回了无法识别的操作计划。");
+  }
+  return {
+    planId: payload.planId,
+    createdAt: optionalString(payload.createdAt),
+    expiresAt: optionalString(payload.expiresAt),
+    integrityHash: optionalString(payload.integrityHash),
+    expectedHashes: isStringMap(payload.expectedHashes) ? payload.expectedHashes : undefined,
+    requiresConfirmation: payload.requiresConfirmation !== false,
+    confirmationToken: optionalString(payload.confirmationToken),
+    status: optionalString(payload.status),
+    managedBy: "local-agent",
+    summary: payload.summary,
+    risk: payload.risk,
+    operations: payload.operations as OperationPlan["operations"]
+  };
+}
+
+export async function executeLocalOperationPlan(
+  settings: AgentSettings,
+  plan: OperationPlan,
+  confirmed: boolean
+): Promise<string[]> {
+  if (!plan.planId) throw new AgentError("操作计划缺少 ID。");
+  const payload = await localAgentRequest(
+    settings,
+    `/operations/${encodeURIComponent(plan.planId)}/execute`,
+    confirmed ? { confirmationToken: plan.confirmationToken } : {}
+  );
+  if (!isRecord(payload) || !Array.isArray(payload.results)) {
+    throw new AgentError("本地 Agent 返回了无法识别的执行结果。");
+  }
+  plan.rollbackToken = optionalString(payload.rollbackToken);
+  return payload.results.map(localOperationResultText);
+}
+
+export async function rollbackLocalOperationPlan(
+  settings: AgentSettings,
+  plan: OperationPlan
+): Promise<string[]> {
+  if (!plan.planId) throw new AgentError("操作计划缺少 ID。");
+  const payload = await localAgentRequest(
+    settings,
+    `/operations/${encodeURIComponent(plan.planId)}/rollback`,
+    { rollbackToken: plan.rollbackToken }
+  );
+  if (!isRecord(payload) || !Array.isArray(payload.results)) {
+    throw new AgentError("本地 Agent 返回了无法识别的撤销结果。");
+  }
+  return payload.results.map(() => `已撤销操作计划：${plan.planId}`);
+}
+
+export async function updateLocalAgentPolicy(settings: AgentSettings): Promise<void> {
+  if (!settings.localAgentToken) return;
+  await localAgentRequest(settings, "/policy", { executionMode: settings.executionMode });
+}
+
 export async function testLocalAgent(app: App, settings: AgentSettings): Promise<void> {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("本地 Agent 端口未配置。");
@@ -137,7 +212,7 @@ export async function discoverLocalAgent(
         url: `http://127.0.0.1:${port}/handshake`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vaultPath }),
+        body: JSON.stringify({ vaultPath, executionMode: settings.executionMode }),
         throw: false
       }), 1_500);
       if (response.status < 200 || response.status >= 300) continue;
@@ -248,6 +323,53 @@ function uniqueCitations(citations: AgentAnswer["citations"]): AgentAnswer["cita
     }
   }
   return result;
+}
+
+async function localAgentRequest(
+  settings: AgentSettings,
+  path: string,
+  body: Record<string, unknown>
+): Promise<unknown> {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("本地 Agent 端口未配置。");
+  if (!settings.localAgentToken) throw new AgentError("本地 Agent 尚未配对。");
+  const response = await requestUrl({
+    url: `http://127.0.0.1:${port}${path}`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Token": settings.localAgentToken
+    },
+    body: JSON.stringify(body),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    const payload = response.json as unknown;
+    const detail = isRecord(payload) && typeof payload.error === "string"
+      ? `：${payload.error}`
+      : "";
+    throw new AgentError(`本地 Agent 操作失败（HTTP ${response.status}）${detail}`);
+  }
+  return response.json as unknown;
+}
+
+function localOperationResultText(value: unknown): string {
+  if (!isRecord(value) || !isRecord(value.operation)) return "操作已执行。";
+  const operation = value.operation;
+  const path = typeof operation.path === "string" ? `：${operation.path}` : "";
+  return `已执行 ${String(operation.type ?? "operation")}${path}`;
+}
+
+function isRisk(value: unknown): value is OperationPlan["risk"] {
+  return value === "low" || value === "medium" || value === "high";
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((item) => typeof item === "string");
 }
 
 function isLocalTask(value: unknown): value is LocalTask {

@@ -68,6 +68,9 @@ class FakeExecutor:
     async def execute(self, plan: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
         return ({"status": "ok", "planId": plan["id"]},)
 
+    async def rollback(self, plan: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
+        return ({"status": "rolled_back", "planId": plan["id"]},)
+
 
 async def _run() -> None:
     store = FakePlanStore()
@@ -92,6 +95,7 @@ async def _run() -> None:
         "list_tasks",
         "build_operation_plan",
         "execute_operation_plan",
+        "rollback_operation",
     )
 
     search = await registry.run(ToolCall("search_notes", {"query": "agent", "limit": 1}))
@@ -127,6 +131,12 @@ async def _run() -> None:
         confirmed=True,
     )
     assert executed.output["results"][0]["status"] == "ok"
+
+    rolled_back = await registry.run(
+        ToolCall("rollback_operation", {"operationPlanId": "op_1"}),
+        confirmed=True,
+    )
+    assert rolled_back.output["results"][0]["status"] == "rolled_back"
 
 
 def test_application_tools() -> None:
