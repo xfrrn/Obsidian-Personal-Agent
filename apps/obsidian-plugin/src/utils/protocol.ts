@@ -12,10 +12,15 @@ export type AgentIntent = "ask" | "plan";
 
 export function inferIntent(input: string): AgentIntent {
   const text = input.trim();
+  if (isTaskCompletionRequest(text)) return "plan";
   if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "ask";
   return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|元数据|frontmatter|标签|任务)|(?:笔记|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text)
     ? "plan"
     : "ask";
+}
+
+export function isTaskCompletionRequest(input: string): boolean {
+  return /(?:标记|设为|改为|置为|打勾).{0,12}完成|^(?:帮我)?完成(?:一下)?(?:任务|待办)/i.test(input);
 }
 
 export function isTaskQuery(input: string): boolean {

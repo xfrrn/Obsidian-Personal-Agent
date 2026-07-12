@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from inspect import isawaitable
 import json
 import re
@@ -28,13 +28,12 @@ LlmIntentClient = Callable[[str], Any]
 class HybridIntentClassifierOptions:
     """混合识别阈值配置。"""
 
-    llm_fallback_threshold: float = 0.65
     llm_failure_fallback_to_rule: bool = True
 
 
 @dataclass
 class HybridIntentClassifier:
-    """先规则识别，低置信度时再调用 LLM。"""
+    """先调用 LLM；不可用时回到规则识别。"""
 
     llm_client: LlmIntentClient
     rule_classifier: RuleBasedIntentClassifier = field(default_factory=RuleBasedIntentClassifier)
@@ -42,17 +41,27 @@ class HybridIntentClassifier:
     options: HybridIntentClassifierOptions = field(default_factory=HybridIntentClassifierOptions)
 
     async def classify(self, input_text: str) -> IntentResult:
-        """识别意图；规则不确定时使用 LLM 兜底。"""
+        """识别意图；LLM 不可用时使用规则兜底。"""
         rule_result = self.rule_classifier.classify(input_text)
-        if rule_result.confidence >= self.options.llm_fallback_threshold:
-            return rule_result
-
         try:
             return await self._classify_with_llm(input_text, rule_result)
         except Exception:
             if self.options.llm_failure_fallback_to_rule:
                 return rule_result
             raise
+
+    async def classify_multi(self, input_text: str) -> tuple[IntentResult, ...]:
+        """对每个自然分句优先使用 LLM 识别，失败则按分句回退规则。"""
+        segments = self.rule_classifier._segments(input_text)
+        if len(segments) < 2:
+            return (await self.classify(input_text),)
+
+        results: list[IntentResult] = []
+        for segment in segments:
+            result = await self.classify(segment)
+            if result.intent is not IntentType.UNKNOWN:
+                results.append(replace(result, raw_text=input_text))
+        return tuple(results) or (await self.classify(input_text),)
 
     async def _classify_with_llm(self, input_text: str, rule_result: IntentResult) -> IntentResult:
         prompt = build_intent_fallback_prompt(

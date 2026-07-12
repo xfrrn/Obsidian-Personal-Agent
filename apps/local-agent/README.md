@@ -58,6 +58,18 @@ $env:OBSIDIAN_AGENT_EXECUTION_MODE="confirm_all" # risk_based / unattended
 
 中高风险操作始终确认；撤销前会再次核对文件哈希，避免覆盖用户后续修改。
 
+意图识别默认使用关键词规则；插件通过 `/handshake` 会把设置页里的
+OpenAI-compatible API 地址、模型和密钥传给 Local Agent，之后优先用 LLM function call
+识别意图。调用失败、超时或返回无效 JSON 时自动回退到关键词规则。
+
+手动调试时也可以用环境变量启用同一能力：
+
+```powershell
+$env:OBSIDIAN_AGENT_INTENT_LLM_BASE_URL="https://api.example.com/v1"
+$env:OBSIDIAN_AGENT_INTENT_LLM_MODEL="model-name"
+$env:OBSIDIAN_AGENT_INTENT_LLM_API_KEY="..." # 可选
+```
+
 当前注册的只读业务 tools：
 
 ```text

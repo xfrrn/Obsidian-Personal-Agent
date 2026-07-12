@@ -7,6 +7,7 @@ import {
   parseAgentAnswer,
   parseCandidatePaths,
   inferIntent,
+  isTaskCompletionRequest,
   isLocalAnalysisQuery,
   isTaskQuery,
   parseIntent
@@ -96,8 +97,11 @@ test("意图判断只接受问答或修改计划", () => {
 
 test("本地意图判断不会把提问误当成写操作", () => {
   assert.equal(inferIntent("创建一篇项目笔记"), "plan");
+  assert.equal(inferIntent("帮我把今天需要完成的任务标记为完成"), "plan");
   assert.equal(inferIntent("如何创建一篇项目笔记？"), "ask");
   assert.equal(inferIntent("总结当前笔记"), "ask");
+  assert.equal(isTaskCompletionRequest("列出今天需要完成的任务"), false);
+  assert.equal(isTaskCompletionRequest("把今天需要完成的任务标记为完成"), true);
   assert.equal(isTaskQuery("列出未完成任务"), true);
   assert.equal(isTaskQuery("总结当前笔记"), false);
   assert.equal(isLocalAnalysisQuery("检查当前笔记是否符合规范"), true);

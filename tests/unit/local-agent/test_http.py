@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 import sys
 from threading import Thread
@@ -16,11 +17,61 @@ sys.path[:0] = [
 ]
 
 from bootstrap.settings import LocalAgentSettings  # noqa: E402
-from main import LocalAgentHandler, ThreadingHTTPServer  # noqa: E402
+from bootstrap.container import _build_intent_classifier, _chat_content  # noqa: E402
+from intent import HybridIntentClassifier, RuleBasedIntentClassifier  # noqa: E402
+from main import LocalAgentHandler, ThreadingHTTPServer, _intent_llm_settings  # noqa: E402
+
+
+def test_intent_classifier_uses_llm_when_configured() -> None:
+    assert isinstance(
+        _build_intent_classifier(LocalAgentSettings("127.0.0.1", 0)),
+        RuleBasedIntentClassifier,
+    )
+    assert isinstance(
+        _build_intent_classifier(
+            LocalAgentSettings(
+                "127.0.0.1",
+                0,
+                intent_llm_base_url="http://127.0.0.1:1/v1",
+                intent_llm_model="test-model",
+            )
+        ),
+        HybridIntentClassifier,
+    )
+
+
+def test_handshake_intent_llm_settings_override_env_fallback() -> None:
+    fallback = LocalAgentSettings(
+        "127.0.0.1",
+        0,
+        intent_llm_base_url="https://env.example/v1",
+        intent_llm_model="env-model",
+        intent_llm_api_key="env-key",
+    )
+    assert _intent_llm_settings({"intentLlm": {"baseUrl": "https://plugin.example/v1", "model": "plugin-model"}}, fallback) == {
+        "intent_llm_base_url": "https://plugin.example/v1",
+        "intent_llm_model": "plugin-model",
+        "intent_llm_api_key": "env-key",
+    }
+
+
+def test_intent_llm_reads_function_call_arguments() -> None:
+    assert _chat_content({
+        "choices": [{
+            "message": {
+                "tool_calls": [{
+                    "function": {
+                        "arguments": "{\"intent\":\"task.search\",\"confidence\":0.9,\"requiresConfirmation\":false,\"entities\":[]}"
+                    }
+                }]
+            }
+        }]
+    }).startswith("{\"intent\":\"task.search\"")
 
 
 def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
     (tmp_path / ".obsidian").mkdir()
+    (tmp_path / "Tasks.md").write_text(f"- [ ] write tests 📅 {date.today().isoformat()}\n", encoding="utf-8")
     LocalAgentHandler.container = None
     LocalAgentHandler.token = None
     LocalAgentHandler.vault_root = None
@@ -55,6 +106,13 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
             {"X-Agent-Token": token},
         )
         assert status == 200 and "知识库健康检查" in health["assistant_message"]
+        status, _, complete = _request(
+            base + "/chat",
+            {"userInput": "帮我把今天需要完成的任务标记为完成"},
+            {"X-Agent-Token": token},
+        )
+        assert status == 200
+        assert complete["assistant_message"] == "已生成操作计划，等待确认。"
         assert _request(
             base + "/chat",
             {"userInput": "confirm", "trigger": "operation_confirmed", "operationPlanId": "fake"},
@@ -94,7 +152,10 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
         assert not (tmp_path / "00-Inbox" / "HTTP.md").exists()
         assert _request(
             base + "/policy",
-            {"executionMode": "risk_based"},
+            {
+                "executionMode": "risk_based",
+                "intentLlm": {"baseUrl": "http://127.0.0.1:1/v1", "model": "test-model"},
+            },
             {"X-Agent-Token": token},
         )[2]["executionMode"] == "risk_based"
         assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["executionMode"] == "risk_based"

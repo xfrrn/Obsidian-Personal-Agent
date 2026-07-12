@@ -13,6 +13,9 @@ class LocalAgentSettings:
     port: int
     vault_root: Path | None = None
     execution_mode: str = "confirm_all"
+    intent_llm_base_url: str | None = None
+    intent_llm_model: str | None = None
+    intent_llm_api_key: str | None = None
 
 
 def load_settings() -> LocalAgentSettings:
@@ -23,4 +26,7 @@ def load_settings() -> LocalAgentSettings:
         port=int(os.environ.get("OBSIDIAN_AGENT_PORT", "8765")),
         vault_root=Path(vault_root).expanduser().resolve() if vault_root else None,
         execution_mode=os.environ.get("OBSIDIAN_AGENT_EXECUTION_MODE", "confirm_all"),
+        intent_llm_base_url=os.environ.get("OBSIDIAN_AGENT_INTENT_LLM_BASE_URL"),
+        intent_llm_model=os.environ.get("OBSIDIAN_AGENT_INTENT_LLM_MODEL"),
+        intent_llm_api_key=os.environ.get("OBSIDIAN_AGENT_INTENT_LLM_API_KEY"),
     )

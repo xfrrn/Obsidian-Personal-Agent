@@ -37,8 +37,12 @@ var import_obsidian = require("obsidian");
 // apps/obsidian-plugin/src/utils/protocol.ts
 function inferIntent(input) {
   const text = input.trim();
+  if (isTaskCompletionRequest(text)) return "plan";
   if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "ask";
   return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|元数据|frontmatter|标签|任务)|(?:笔记|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text) ? "plan" : "ask";
+}
+function isTaskCompletionRequest(input) {
+  return /(?:标记|设为|改为|置为|打勾).{0,12}完成|^(?:帮我)?完成(?:一下)?(?:任务|待办)/i.test(input);
 }
 function isTaskQuery(input) {
   return /待办|任务|todo|行动项|未完成事项|已完成事项/i.test(input);
@@ -197,6 +201,35 @@ async function askLocalAgent(app, settings, question, scope) {
   }
   return toAgentAnswer(response.json);
 }
+async function buildLocalOperationPlan(app, settings, requestText, scope) {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
+  if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
+  const activeFile = app.workspace.getActiveFile();
+  const response = await (0, import_obsidian2.requestUrl)({
+    url: `http://127.0.0.1:${port}/chat`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Token": settings.localAgentToken
+    },
+    body: JSON.stringify({
+      userInput: requestText,
+      conversationId: "obsidian-plugin",
+      scope,
+      activeFilePath: activeFile == null ? void 0 : activeFile.path
+    }),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AgentError(`\u672C\u5730 Agent \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
+  }
+  const output = unwrapToolOutput(response.json);
+  if (!isRecord2(output) || !isRecord2(output.plan)) {
+    throw new AgentError("\u672C\u5730 Agent \u6CA1\u6709\u8FD4\u56DE\u64CD\u4F5C\u8BA1\u5212\u3002");
+  }
+  return localPlanFromPayload(output.plan);
+}
 async function listLocalAgentTools(settings) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
@@ -240,6 +273,25 @@ async function stageLocalOperationPlan(settings, plan, allowedPaths) {
     operations: payload.operations
   };
 }
+function localPlanFromPayload(payload) {
+  if (typeof payload.planId !== "string" || typeof payload.summary !== "string" || !Array.isArray(payload.operations) || !isRisk(payload.risk)) {
+    throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u64CD\u4F5C\u8BA1\u5212\u3002");
+  }
+  return {
+    planId: payload.planId,
+    createdAt: optionalString(payload.createdAt),
+    expiresAt: optionalString(payload.expiresAt),
+    integrityHash: optionalString(payload.integrityHash),
+    expectedHashes: isStringMap(payload.expectedHashes) ? payload.expectedHashes : void 0,
+    requiresConfirmation: payload.requiresConfirmation !== false,
+    confirmationToken: optionalString(payload.confirmationToken),
+    status: optionalString(payload.status),
+    managedBy: "local-agent",
+    summary: payload.summary,
+    risk: payload.risk,
+    operations: payload.operations
+  };
+}
 async function executeLocalOperationPlan(settings, plan, confirmed) {
   if (!plan.planId) throw new AgentError("\u64CD\u4F5C\u8BA1\u5212\u7F3A\u5C11 ID\u3002");
   const payload = await localAgentRequest(
@@ -265,9 +317,12 @@ async function rollbackLocalOperationPlan(settings, plan) {
   }
   return payload.results.map(() => `\u5DF2\u64A4\u9500\u64CD\u4F5C\u8BA1\u5212\uFF1A${plan.planId}`);
 }
-async function updateLocalAgentPolicy(settings) {
+async function updateLocalAgentPolicy(app, settings) {
   if (!settings.localAgentToken) return;
-  await localAgentRequest(settings, "/policy", { executionMode: settings.executionMode });
+  await localAgentRequest(settings, "/policy", {
+    executionMode: settings.executionMode,
+    intentLlm: intentLlmConfig(app, settings)
+  });
 }
 async function testLocalAgent(app, settings) {
   const port = localAgentPort(settings);
@@ -318,7 +373,11 @@ async function discoverLocalAgent(app, settings) {
         url: `http://127.0.0.1:${port}/handshake`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vaultPath, executionMode: settings.executionMode }),
+        body: JSON.stringify({
+          vaultPath,
+          executionMode: settings.executionMode,
+          intentLlm: intentLlmConfig(app, settings)
+        }),
         throw: false
       }), 1500);
       if (response.status < 200 || response.status >= 300) continue;
@@ -333,6 +392,15 @@ async function discoverLocalAgent(app, settings) {
     }
   }
   throw new AgentError("\u6CA1\u6709\u53D1\u73B0\u53EF\u7528\u7684\u672C\u5730 Agent\u3002\u8BF7\u5148\u542F\u52A8 local-agent\u3002");
+}
+function intentLlmConfig(app, settings) {
+  var _a;
+  if (!settings.model.trim()) return void 0;
+  return {
+    baseUrl: chatCompletionsUrl(settings.apiBaseUrl),
+    model: settings.model.trim(),
+    apiKey: (_a = app.secretStorage.getSecret(settings.secretId)) != null ? _a : ""
+  };
 }
 function localAgentPort(settings) {
   const port = Number(settings.localAgentPort);
@@ -783,6 +851,9 @@ var executing = false;
 async function buildOperationPlan(app, settings, request, scope) {
   const cleanRequest = request.trim();
   if (!cleanRequest) throw new AgentError("\u8BF7\u8F93\u5165\u8981\u6267\u884C\u7684\u4FEE\u6539\u8BF7\u6C42\u3002");
+  if (settings.localAgentToken && isTaskCompletionRequest(cleanRequest)) {
+    return buildLocalOperationPlan(app, settings, cleanRequest, scope);
+  }
   const sources = await getPlanningSources(app, settings, cleanRequest, scope);
   const existingPaths = new Set(app.vault.getMarkdownFiles().map((file) => file.path));
   const sourcePaths = new Set(sources.map((source) => source.path));
@@ -1462,7 +1533,7 @@ var AgentSettingTab = class extends import_obsidian6.PluginSettingTab {
           this.agentPlugin.settings.localAgentPort = result.port;
           this.agentPlugin.settings.localAgentToken = result.token;
           await this.agentPlugin.saveSettings();
-          await updateLocalAgentPolicy(this.agentPlugin.settings);
+          await updateLocalAgentPolicy(this.app, this.agentPlugin.settings);
           localAgentStatusEl.setText(`\u672C\u5730 Agent \u5DF2\u8FDE\u63A5\uFF1A${result.vaultRoot}`);
           localAgentStatusEl.addClass("is-success");
         } catch (error) {
@@ -1496,7 +1567,7 @@ var AgentSettingTab = class extends import_obsidian6.PluginSettingTab {
         if (!isExecutionMode(value)) return;
         this.agentPlugin.settings.executionMode = value;
         await this.agentPlugin.saveSettings();
-        await updateLocalAgentPolicy(this.agentPlugin.settings);
+        await updateLocalAgentPolicy(this.app, this.agentPlugin.settings);
       })
     );
     const toolsSetting = new import_obsidian6.Setting(containerEl).setName("\u5DE5\u5177\u5C55\u793A").setDesc("\u67E5\u770B\u672C\u5730 Agent \u5F53\u524D\u6CE8\u518C\u7684\u5DE5\u5177\u3002").addButton(

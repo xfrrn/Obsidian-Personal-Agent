@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import re
 
 from .entity_extractor import EntityExtractor
@@ -31,6 +31,11 @@ class IntentClassifierOptions:
 
 def _patterns(*values: str) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(value) for value in values)
+
+
+INTENT_SEGMENT_SPLITTER = re.compile(
+    r"\s*(?:[，,；;。.!！？\n]+|(?:并且|然后|同时|接着|以及|再|并))\s*"
+)
 
 
 INTENT_RULES: tuple[IntentRule, ...] = (
@@ -260,6 +265,19 @@ class RuleBasedIntentClassifier:
             candidates=candidates[:3],
         )
 
+    def classify_multi(self, input_text: str) -> tuple[IntentResult, ...]:
+        """按自然分隔符识别一句话里的多个顺序意图。"""
+        segments = self._segments(input_text)
+        if len(segments) < 2:
+            return (self.classify(input_text),)
+
+        results = tuple(
+            replace(result, raw_text=input_text)
+            for segment in segments
+            if (result := self.classify(segment)).intent is not IntentType.UNKNOWN
+        )
+        return results or (self.classify(input_text),)
+
     def _evaluate_rule(self, text: str, rule: IntentRule) -> IntentCandidate:
         score = float(rule.priority)
         matched: list[str] = []
@@ -302,6 +320,19 @@ class RuleBasedIntentClassifier:
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text.strip().lower())
+
+    def _segments(self, text: str) -> tuple[str, ...]:
+        segments: list[str] = []
+        start = 0
+        for match in INTENT_SEGMENT_SPLITTER.finditer(text):
+            segment = text[start:match.start()].strip()
+            if segment:
+                segments.append(segment)
+            start = match.end()
+        tail = text[start:].strip()
+        if tail:
+            segments.append(tail)
+        return tuple(segments)
 
     def _unknown(self, raw_text: str) -> IntentResult:
         return IntentResult(

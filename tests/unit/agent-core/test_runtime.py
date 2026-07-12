@@ -26,6 +26,10 @@ def _registry() -> ToolRegistry:
         lambda _input, _context: {"message": "你有 1 个任务"},
     )
     registry.register_function(
+        ToolDefinition("list_tags", "统计标签"),
+        lambda _input, _context: {"message": "有 2 个标签"},
+    )
+    registry.register_function(
         ToolDefinition(
             "execute_operation_plan",
             "执行操作计划",
@@ -48,6 +52,17 @@ def test_runtime_runs_user_message() -> None:
     assert result.validation.valid
     assert result.execution is not None
     assert result.plan.steps[0].tool_name == "list_tasks"
+
+
+def test_runtime_plans_multiple_intents_from_one_message() -> None:
+    result = asyncio.run(AgentRuntime(_registry()).run(
+        RuntimeRequest("查询一下本周任务，然后列出标签统计", conversation_id="c1")
+    ))
+
+    assert result.validation.valid
+    assert [step.tool_name for step in result.plan.steps] == ["list_tasks", "list_tags"]
+    assert result.execution is not None
+    assert len(result.execution.step_results) == 2
 
 
 def test_runtime_runs_confirmed_operation() -> None:

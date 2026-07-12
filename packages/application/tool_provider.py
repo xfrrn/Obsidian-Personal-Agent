@@ -46,7 +46,7 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
     search_notes = SearchNotesUseCase(deps.notes)
     read_note = ReadNoteUseCase(deps.notes)
     list_tasks = ListTasksUseCase(deps.tasks)
-    build_plan = BuildOperationPlanUseCase(deps.operation_planner, deps.operation_plan_store)
+    build_plan = BuildOperationPlanUseCase(deps.operation_planner, deps.operation_plan_store, deps.tasks)
     execute_plan = ExecuteOperationPlanUseCase(deps.operation_plan_store, deps.operation_executor)
     rollback_plan = RollbackOperationUseCase(deps.operation_plan_store, deps.operation_executor)
     inspect_note = InspectNoteUseCase(deps.notes)

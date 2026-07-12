@@ -47,6 +47,12 @@ def test_greeting_is_general_chat() -> None:
     assert not result.requires_confirmation
 
 
+def test_rule_classifier_detects_multiple_ordered_intents() -> None:
+    results = RuleBasedIntentClassifier().classify_multi("查询一下本周任务，然后列出标签统计")
+    assert [result.intent for result in results] == [IntentType.TASK_SEARCH, IntentType.TAG_LIST]
+    assert "本周" in _entity_values(results[0], IntentEntityType.DATE)
+
+
 def test_p1_p2_read_intents() -> None:
     cases = {
         "检查当前笔记是否符合规范": IntentType.NOTE_INSPECT,
@@ -69,27 +75,32 @@ def test_p1_p2_read_intents() -> None:
     assert "Agent" in _entity_values(project, IntentEntityType.PROJECT_NAME)
 
 
-def test_hybrid_uses_llm_when_rule_confidence_is_low() -> None:
+def test_hybrid_uses_llm_first() -> None:
     async def fake_llm(_prompt):
         return '{"intent":"note.search","confidence":0.91,"requiresConfirmation":false,"entities":[{"type":"keyword","value":"项目结构设计"}]}'
 
-    result = asyncio.run(HybridIntentClassifier(fake_llm).classify("我记得之前写过项目结构设计，找一下"))
+    result = asyncio.run(HybridIntentClassifier(fake_llm).classify("查询一下本周还有哪些任务"))
     assert result.intent is IntentType.NOTE_SEARCH
     assert result.confidence == 0.91
     assert _entity_values(result, IntentEntityType.KEYWORD) == ["项目结构设计"]
 
 
-def test_hybrid_keeps_rule_result_when_confidence_is_high() -> None:
-    called = False
-
+def test_hybrid_falls_back_to_rule_when_llm_fails() -> None:
     async def fake_llm(_prompt):
-        nonlocal called
-        called = True
-        return "{}"
+        raise RuntimeError("llm unavailable")
 
     result = asyncio.run(HybridIntentClassifier(fake_llm).classify("查询一下本周还有哪些任务"))
     assert result.intent is IntentType.TASK_SEARCH
-    assert not called
+
+
+def test_hybrid_detects_multiple_intents() -> None:
+    async def fake_llm(prompt):
+        if "标签" in prompt:
+            return '{"intent":"tag.list","confidence":0.9,"requiresConfirmation":false,"entities":[]}'
+        return '{"intent":"task.search","confidence":0.9,"requiresConfirmation":false,"entities":[]}'
+
+    results = asyncio.run(HybridIntentClassifier(fake_llm).classify_multi("查询一下本周任务，然后列出标签统计"))
+    assert [result.intent for result in results] == [IntentType.TASK_SEARCH, IntentType.TAG_LIST]
 
 
 def test_hybrid_rejects_text_wrapped_json() -> None:
@@ -114,6 +125,7 @@ if __name__ == "__main__":
     test_note_search_intent()
     test_unknown_intent()
     test_greeting_is_general_chat()
-    test_hybrid_uses_llm_when_rule_confidence_is_low()
-    test_hybrid_keeps_rule_result_when_confidence_is_high()
+    test_hybrid_uses_llm_first()
+    test_hybrid_falls_back_to_rule_when_llm_fails()
+    test_hybrid_detects_multiple_intents()
     test_hybrid_rejects_text_wrapped_json()

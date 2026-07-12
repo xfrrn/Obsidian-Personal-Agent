@@ -56,6 +56,8 @@ class FakeTasks:
     ) -> Sequence[Mapping[str, Any]]:
         return ({
             "title": "write tests",
+            "rawTitle": "write tests 📅 2026-07-12",
+            "lineText": "- [ ] write tests 📅 2026-07-12",
             "completed": status == "completed",
             "status": status or "open",
             "query": query,
@@ -179,6 +181,35 @@ async def _run() -> None:
         )
     )
     assert plan.output["operationPlanId"] == "op_1"
+
+    complete_plan = await registry.run(
+        ToolCall(
+            "build_operation_plan",
+            {
+                "requestedOperations": ({"intent": "task.complete", "arguments": {"rawText": "把今天需要完成的任务标记为完成"}},),
+                "context": {"activeFilePath": "Today.md"},
+            },
+        )
+    )
+    complete_operation = complete_plan.output["plan"]["operations"][0]
+    assert complete_operation["type"] == "update-note"
+    assert complete_operation["oldText"] == "- [ ] write tests 📅 2026-07-12"
+    assert complete_operation["newText"] == "- [x] write tests 📅 2026-07-12"
+
+    try:
+        await registry.run(
+            ToolCall(
+                "build_operation_plan",
+                {
+                    "requestedOperations": ({"intent": "task.complete", "arguments": {"rawText": "完成任务"}},),
+                    "context": {"activeFilePath": "Today.md"},
+                },
+            )
+        )
+    except ValueError as error:
+        assert "请说明要完成哪个任务" in str(error)
+    else:
+        raise AssertionError("ambiguous task completion must not mark every open task")
 
     executed = await registry.run(
         ToolCall("execute_operation_plan", {"operationPlanId": "op_1"}),

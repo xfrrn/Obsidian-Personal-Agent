@@ -340,6 +340,7 @@ def _task(
         "path": path,
         "line": line_no,
         "title": " ".join(title.split()),
+        "lineText": match.group(0),
         "rawTitle": raw,
         "completed": match.group(1).casefold() == "x",
         "heading": heading,

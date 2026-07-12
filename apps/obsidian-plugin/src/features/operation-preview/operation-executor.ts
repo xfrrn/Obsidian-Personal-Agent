@@ -5,13 +5,13 @@ import {
   TFolder
 } from "obsidian";
 import { callModel } from "../../api/model-client";
-import { stageLocalOperationPlan } from "../../api/local-agent-client";
+import { buildLocalOperationPlan, stageLocalOperationPlan } from "../../api/local-agent-client";
 import type { QueryScope } from "../assistant/types";
 import {
   PLAN_GENERATION_PROMPT,
   PLAN_NOTE_SELECTION_PROMPT
 } from "../assistant/prompts";
-import { AgentError } from "../../utils/protocol";
+import { AgentError, isTaskCompletionRequest } from "../../utils/protocol";
 import type { AgentSettings } from "../../settings/settings";
 import {
   getCurrentSource,
@@ -45,6 +45,9 @@ export async function buildOperationPlan(
 ): Promise<OperationPlan> {
   const cleanRequest = request.trim();
   if (!cleanRequest) throw new AgentError("请输入要执行的修改请求。");
+  if (settings.localAgentToken && isTaskCompletionRequest(cleanRequest)) {
+    return buildLocalOperationPlan(app, settings, cleanRequest, scope);
+  }
 
   const sources = await getPlanningSources(app, settings, cleanRequest, scope);
   const existingPaths = new Set(app.vault.getMarkdownFiles().map((file) => file.path));

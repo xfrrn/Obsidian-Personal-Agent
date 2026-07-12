@@ -2,7 +2,7 @@ import { App, requestUrl } from "obsidian";
 import type { QueryScope } from "../features/assistant/types";
 import type { AgentSettings } from "../settings/settings";
 import type { OperationPlan } from "../features/operation-preview/operation-plan";
-import { AgentAnswer, AgentError } from "../utils/protocol";
+import { AgentAnswer, AgentError, chatCompletionsUrl } from "../utils/protocol";
 
 interface LocalTask {
   path: string;
@@ -61,6 +61,41 @@ export async function askLocalAgent(
   return toAgentAnswer(response.json as unknown);
 }
 
+export async function buildLocalOperationPlan(
+  app: App,
+  settings: AgentSettings,
+  requestText: string,
+  scope: QueryScope
+): Promise<OperationPlan> {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("本地 Agent 端口未配置。");
+  if (!settings.localAgentToken) throw new AgentError("本地 Agent 尚未配对。");
+  const activeFile = app.workspace.getActiveFile();
+  const response = await requestUrl({
+    url: `http://127.0.0.1:${port}/chat`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Token": settings.localAgentToken
+    },
+    body: JSON.stringify({
+      userInput: requestText,
+      conversationId: "obsidian-plugin",
+      scope,
+      activeFilePath: activeFile?.path
+    }),
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AgentError(`本地 Agent 请求失败（HTTP ${response.status}）。`);
+  }
+  const output = unwrapToolOutput(response.json as unknown);
+  if (!isRecord(output) || !isRecord(output.plan)) {
+    throw new AgentError("本地 Agent 没有返回操作计划。");
+  }
+  return localPlanFromPayload(output.plan);
+}
+
 export async function listLocalAgentTools(settings: AgentSettings): Promise<LocalAgentTool[]> {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("本地 Agent 端口未配置。");
@@ -93,6 +128,31 @@ export async function stageLocalOperationPlan(
   });
   if (
     !isRecord(payload) ||
+    typeof payload.planId !== "string" ||
+    typeof payload.summary !== "string" ||
+    !Array.isArray(payload.operations) ||
+    !isRisk(payload.risk)
+  ) {
+    throw new AgentError("本地 Agent 返回了无法识别的操作计划。");
+  }
+  return {
+    planId: payload.planId,
+    createdAt: optionalString(payload.createdAt),
+    expiresAt: optionalString(payload.expiresAt),
+    integrityHash: optionalString(payload.integrityHash),
+    expectedHashes: isStringMap(payload.expectedHashes) ? payload.expectedHashes : undefined,
+    requiresConfirmation: payload.requiresConfirmation !== false,
+    confirmationToken: optionalString(payload.confirmationToken),
+    status: optionalString(payload.status),
+    managedBy: "local-agent",
+    summary: payload.summary,
+    risk: payload.risk,
+    operations: payload.operations as OperationPlan["operations"]
+  };
+}
+
+function localPlanFromPayload(payload: Record<string, unknown>): OperationPlan {
+  if (
     typeof payload.planId !== "string" ||
     typeof payload.summary !== "string" ||
     !Array.isArray(payload.operations) ||
@@ -150,9 +210,12 @@ export async function rollbackLocalOperationPlan(
   return payload.results.map(() => `已撤销操作计划：${plan.planId}`);
 }
 
-export async function updateLocalAgentPolicy(settings: AgentSettings): Promise<void> {
+export async function updateLocalAgentPolicy(app: App, settings: AgentSettings): Promise<void> {
   if (!settings.localAgentToken) return;
-  await localAgentRequest(settings, "/policy", { executionMode: settings.executionMode });
+  await localAgentRequest(settings, "/policy", {
+    executionMode: settings.executionMode,
+    intentLlm: intentLlmConfig(app, settings)
+  });
 }
 
 export async function testLocalAgent(app: App, settings: AgentSettings): Promise<void> {
@@ -212,7 +275,11 @@ export async function discoverLocalAgent(
         url: `http://127.0.0.1:${port}/handshake`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vaultPath, executionMode: settings.executionMode }),
+        body: JSON.stringify({
+          vaultPath,
+          executionMode: settings.executionMode,
+          intentLlm: intentLlmConfig(app, settings)
+        }),
         throw: false
       }), 1_500);
       if (response.status < 200 || response.status >= 300) continue;
@@ -228,6 +295,15 @@ export async function discoverLocalAgent(
     }
   }
   throw new AgentError("没有发现可用的本地 Agent。请先启动 local-agent。");
+}
+
+function intentLlmConfig(app: App, settings: AgentSettings): Record<string, string> | undefined {
+  if (!settings.model.trim()) return undefined;
+  return {
+    baseUrl: chatCompletionsUrl(settings.apiBaseUrl),
+    model: settings.model.trim(),
+    apiKey: app.secretStorage.getSecret(settings.secretId) ?? ""
+  };
 }
 
 function localAgentPort(settings: AgentSettings): number | null {

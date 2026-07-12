@@ -140,6 +140,7 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
                         port=self.settings.port,
                         vault_root=vault_root,
                         execution_mode=str(payload.get("executionMode") or self.settings.execution_mode),
+                        **_intent_llm_settings(payload, self.settings),
                     )
                     self.__class__.container = build_container(settings)
                 self.__class__.vault_root = vault_root
@@ -163,7 +164,19 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
             payload = self._read_json()
             mode = _text(payload, "executionMode")
             assert self.container is not None
-            self.container.operations.set_mode(mode)
+            if "intentLlm" in payload and self.vault_root is not None:
+                self.__class__.container = build_container(
+                    LocalAgentSettings(
+                        host=self.settings.host,
+                        port=self.settings.port,
+                        vault_root=self.vault_root,
+                        execution_mode=mode,
+                        **_intent_llm_settings(payload, self.settings),
+                    )
+                )
+            else:
+                self.container.operations.set_mode(mode)
+            assert self.container is not None
             self._send_json({"executionMode": self.container.operations.policy.mode.value})
         except Exception as exc:
             self._send_json({"error": str(exc)}, status=400)
@@ -294,6 +307,21 @@ def _operation_id(path: str, *, suffix: str = "") -> str:
     if not clean or "/" in clean:
         raise ValueError("invalid operation plan path")
     return clean
+
+
+def _intent_llm_settings(payload: dict[str, Any], fallback: LocalAgentSettings) -> dict[str, str | None]:
+    config = payload.get("intentLlm")
+    if not isinstance(config, dict):
+        return {
+            "intent_llm_base_url": fallback.intent_llm_base_url,
+            "intent_llm_model": fallback.intent_llm_model,
+            "intent_llm_api_key": fallback.intent_llm_api_key,
+        }
+    return {
+        "intent_llm_base_url": _optional_text(config.get("baseUrl")) or fallback.intent_llm_base_url,
+        "intent_llm_model": _optional_text(config.get("model")) or fallback.intent_llm_model,
+        "intent_llm_api_key": _optional_text(config.get("apiKey")) or fallback.intent_llm_api_key,
+    }
 
 
 def _jsonable(value: Any) -> Any:

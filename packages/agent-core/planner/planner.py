@@ -107,7 +107,7 @@ class DefaultArgumentResolver:
         return None
 
     def _missing_fields(self, intent: IntentType, arguments: Mapping[str, Any]) -> tuple[str, ...]:
-        if intent is IntentType.TASK_COMPLETE and not arguments.get("taskName"):
+        if intent is IntentType.TASK_COMPLETE and not arguments.get("taskName") and not self._has_completion_filter(arguments):
             return ("taskName",)
         if intent in {
             IntentType.NOTE_ARCHIVE,
@@ -124,6 +124,17 @@ class DefaultArgumentResolver:
         ):
             return ("projectName",)
         return ()
+
+    def _has_completion_filter(self, arguments: Mapping[str, Any]) -> bool:
+        if arguments.get("projectName"):
+            return True
+        if arguments.get("scope") == "current" and arguments.get("activeFilePath"):
+            return True
+        entities = arguments.get("entities")
+        return isinstance(entities, list) and any(
+            isinstance(entity, Mapping) and entity.get("type") == IntentEntityType.DATE.value
+            for entity in entities
+        )
 
 
 INTENT_TOOL_RULES: tuple[IntentToolRule, ...] = (

@@ -12,6 +12,7 @@ from intent import RuleBasedIntentClassifier
 from intent.intent_types import IntentResult, IntentType
 from planner import (
     AgentPlan,
+    DetectedIntent,
     MultiIntentResult,
     PlanExecutionResult,
     PlanValidator,
@@ -73,6 +74,7 @@ class AgentRuntime:
             self._conversations.append_user_message(request.conversation_id, request.user_input)
 
         intent = await self._classify(request)
+        multi_intent = await self._classify_multi(request, intent)
         token.throw_if_cancelled()
 
         context = self._context_builder.build(
@@ -86,7 +88,7 @@ class AgentRuntime:
             metadata=request.metadata,
         )
         planner_input = PlannerInput(
-            intent_result=MultiIntentResult.from_intent_result(intent),
+            intent_result=multi_intent,
             context=context,
             tools=self._tool_registry.definitions(),
             trigger=self._planner_trigger(request),
@@ -125,6 +127,36 @@ class AgentRuntime:
         if isawaitable(value):
             value = await value
         return value
+
+    async def _classify_multi(self, request: RuntimeRequest, fallback: IntentResult) -> MultiIntentResult:
+        if request.trigger is not RuntimeTrigger.USER_MESSAGE:
+            return MultiIntentResult.from_intent_result(fallback)
+
+        classify_multi = getattr(self._intent_classifier, "classify_multi", None)
+        if classify_multi is None:
+            return MultiIntentResult.from_intent_result(fallback)
+
+        value = classify_multi(request.user_input)
+        if isawaitable(value):
+            value = await value
+        if not isinstance(value, tuple) or not value:
+            return MultiIntentResult.from_intent_result(fallback)
+
+        intents = tuple(
+            DetectedIntent(
+                id=f"intent_{index}",
+                type=result.intent,
+                confidence=result.confidence,
+                entities=result.entities,
+                order=index,
+            )
+            for index, result in enumerate(value, start=1)
+        )
+        return MultiIntentResult(
+            raw_text=request.user_input,
+            intents=intents,
+            requires_clarification=any(result.requires_confirmation for result in value),
+        )
 
     def _system_intent(self, raw_text: str) -> IntentResult:
         return IntentResult(

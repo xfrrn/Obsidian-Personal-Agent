@@ -102,7 +102,7 @@ export class AgentSettingTab extends PluginSettingTab {
               this.agentPlugin.settings.localAgentPort = result.port;
               this.agentPlugin.settings.localAgentToken = result.token;
               await this.agentPlugin.saveSettings();
-              await updateLocalAgentPolicy(this.agentPlugin.settings);
+              await updateLocalAgentPolicy(this.app, this.agentPlugin.settings);
               localAgentStatusEl.setText(`本地 Agent 已连接：${result.vaultRoot}`);
               localAgentStatusEl.addClass("is-success");
             } catch (error) {
@@ -148,7 +148,7 @@ export class AgentSettingTab extends PluginSettingTab {
             if (!isExecutionMode(value)) return;
             this.agentPlugin.settings.executionMode = value;
             await this.agentPlugin.saveSettings();
-            await updateLocalAgentPolicy(this.agentPlugin.settings);
+            await updateLocalAgentPolicy(this.app, this.agentPlugin.settings);
           })
       );
 

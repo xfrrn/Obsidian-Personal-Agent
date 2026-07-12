@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages" / "agent-core"))
 
 from conversation import ContextBuilder, ConversationManager  # noqa: E402
-from intent.intent_types import IntentResult, IntentType  # noqa: E402
+from intent.intent_types import IntentEntity, IntentEntityType, IntentResult, IntentType  # noqa: E402
 from planner import (  # noqa: E402
     DetectedIntent,
     MultiIntentResult,
@@ -106,6 +106,38 @@ def test_write_intents_are_merged_into_operation_plan() -> None:
     assert plan.steps[0].tool_name == "build_operation_plan"
     assert len(plan.steps[0].arguments["requestedOperations"]) == 2
     assert PlanValidator().validate(plan, input_data).valid
+
+
+def test_task_complete_with_date_filter_builds_operation_plan() -> None:
+    text = "\u5e2e\u6211\u628a\u4eca\u5929\u9700\u8981\u5b8c\u6210\u7684\u4efb\u52a1\u6807\u8bb0\u4e3a\u5b8c\u6210"
+    intents = MultiIntentResult(
+        raw_text=text,
+        intents=(
+            DetectedIntent(
+                "intent_1",
+                IntentType.TASK_COMPLETE,
+                0.9,
+                entities=(IntentEntity(IntentEntityType.DATE, "\u4eca\u5929"),),
+                order=1,
+            ),
+        ),
+    )
+    plan = RuleBasedPlanner().create_plan(PlannerInput(intents, _context(text), _tools()))
+
+    assert plan.contains_write_request
+    request = plan.steps[0].arguments["requestedOperations"][0]
+    assert request["intent"] == "task.complete"
+    assert "taskName" not in request["arguments"]
+
+
+def test_task_complete_without_target_asks_for_task_name() -> None:
+    text = "\u5b8c\u6210\u4efb\u52a1"
+    context = ContextBuilder(ConversationManager()).build(conversation_id="c1", user_input=text)
+    input_data = PlannerInput(_single_intent(IntentType.TASK_COMPLETE, text), context, _tools())
+    plan = RuleBasedPlanner().create_plan(input_data)
+
+    assert not plan.contains_write_request
+    assert plan.steps[0].type is PlanStepType.ASK_CLARIFICATION
 
 
 def test_confirmed_trigger_can_execute_operation_plan() -> None:
