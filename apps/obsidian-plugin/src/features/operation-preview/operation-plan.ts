@@ -1,4 +1,4 @@
-import { AgentError, parseJsonObject } from "../../utils/protocol";
+import { AgentError, AgentTraceStep, parseJsonObject } from "../../utils/protocol";
 
 export type OperationRisk = "low" | "medium" | "high";
 
@@ -30,6 +30,7 @@ export interface OperationPlan {
   rollbackToken?: string;
   status?: string;
   managedBy?: "local-agent";
+  trace?: AgentTraceStep[];
   summary: string;
   risk: OperationRisk;
   operations: KnowledgeOperation[];

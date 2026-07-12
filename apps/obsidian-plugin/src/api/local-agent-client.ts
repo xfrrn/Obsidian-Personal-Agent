@@ -2,7 +2,7 @@ import { App, requestUrl } from "obsidian";
 import type { QueryScope } from "../features/assistant/types";
 import type { AgentSettings } from "../settings/settings";
 import type { OperationPlan } from "../features/operation-preview/operation-plan";
-import { AgentAnswer, AgentError, chatCompletionsUrl } from "../utils/protocol";
+import { AgentAnswer, AgentError, AgentTraceStep, chatCompletionsUrl } from "../utils/protocol";
 
 interface LocalTask {
   path: string;
@@ -30,16 +30,22 @@ export interface LocalAgentTool {
   input_schema?: Record<string, unknown>;
 }
 
+export type LocalAgentTraceHandler = (step: AgentTraceStep) => void;
+
 export async function askLocalAgent(
   app: App,
   settings: AgentSettings,
   question: string,
-  scope: QueryScope
+  scope: QueryScope,
+  onTrace?: LocalAgentTraceHandler
 ): Promise<AgentAnswer> {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("本地 Agent 端口未配置。");
 
-  const activeFile = app.workspace.getActiveFile();
+  const body = localChatBody(app, question, scope);
+  if (onTrace && typeof fetch === "function") {
+    return askLocalAgentStream(port, settings, body, onTrace);
+  }
   const response = await requestUrl({
     url: `http://127.0.0.1:${port}/chat`,
     method: "POST",
@@ -47,18 +53,85 @@ export async function askLocalAgent(
       "Content-Type": "application/json",
       "X-Agent-Token": settings.localAgentToken
     },
-    body: JSON.stringify({
-      userInput: question,
-      conversationId: "obsidian-plugin",
-      scope,
-      activeFilePath: activeFile?.path
-    }),
+    body: JSON.stringify(body),
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
     throw new AgentError(`本地 Agent 请求失败（HTTP ${response.status}）。`);
   }
   return toAgentAnswer(response.json as unknown);
+}
+
+async function askLocalAgentStream(
+  port: number,
+  settings: AgentSettings,
+  body: Record<string, unknown>,
+  onTrace: LocalAgentTraceHandler
+): Promise<AgentAnswer> {
+  const response = await fetch(`http://127.0.0.1:${port}/chat/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Token": settings.localAgentToken
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new AgentError(`本地 Agent 流式请求失败（HTTP ${response.status}）。`);
+  }
+  if (!response.body) {
+    throw new AgentError("当前环境不支持流式响应。");
+  }
+
+  let finalPayload: unknown;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const event = parseStreamEvent(part);
+      if (!event) continue;
+      if (event.event === "trace" && isTraceStep(event.data)) {
+        onTrace({
+          round: event.data.round,
+          toolName: event.data.toolName ?? event.data.tool_name ?? "",
+          status: event.data.status,
+          summary: event.data.summary
+        });
+      } else if (event.event === "final") {
+        finalPayload = event.data;
+      } else if (event.event === "error") {
+        const message = isRecord(event.data) && typeof event.data.error === "string"
+          ? event.data.error
+          : "本地 Agent 流式请求失败。";
+        throw new AgentError(message);
+      }
+    }
+  }
+  if (!finalPayload) throw new AgentError("本地 Agent 没有返回最终结果。");
+  return toAgentAnswer(finalPayload);
+}
+
+function parseStreamEvent(raw: string): { event: string; data: unknown } | null {
+  const event = /^event:\s*(.+)$/m.exec(raw)?.[1]?.trim();
+  const data = /^data:\s*(.+)$/m.exec(raw)?.[1];
+  if (!event || !data) return null;
+  return { event, data: JSON.parse(data) };
+}
+
+function localChatBody(app: App, question: string, scope: QueryScope): Record<string, unknown> {
+  const activeFile = app.workspace.getActiveFile();
+  return {
+    userInput: question,
+    conversationId: "obsidian-plugin",
+    scope,
+    activeFilePath: activeFile?.path
+  };
 }
 
 export async function buildLocalOperationPlan(
@@ -93,7 +166,7 @@ export async function buildLocalOperationPlan(
   if (!isRecord(output) || !isRecord(output.plan)) {
     throw new AgentError("本地 Agent 没有返回操作计划。");
   }
-  return localPlanFromPayload(output.plan);
+  return localPlanFromPayload(output.plan, agentTrace(response.json as unknown));
 }
 
 export async function listLocalAgentTools(settings: AgentSettings): Promise<LocalAgentTool[]> {
@@ -151,7 +224,7 @@ export async function stageLocalOperationPlan(
   };
 }
 
-function localPlanFromPayload(payload: Record<string, unknown>): OperationPlan {
+function localPlanFromPayload(payload: Record<string, unknown>, trace: AgentTraceStep[] = []): OperationPlan {
   if (
     typeof payload.planId !== "string" ||
     typeof payload.summary !== "string" ||
@@ -170,6 +243,7 @@ function localPlanFromPayload(payload: Record<string, unknown>): OperationPlan {
     confirmationToken: optionalString(payload.confirmationToken),
     status: optionalString(payload.status),
     managedBy: "local-agent",
+    trace,
     summary: payload.summary,
     risk: payload.risk,
     operations: payload.operations as OperationPlan["operations"]
@@ -339,22 +413,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 function toAgentAnswer(payload: unknown): AgentAnswer {
   const output = unwrapToolOutput(payload);
+  const trace = agentTrace(payload);
   if (isRecord(output) && Array.isArray(output.tasks)) {
-    return tasksAnswer(output.tasks.filter(isLocalTask));
+    return withTrace(tasksAnswer(output.tasks.filter(isLocalTask)), trace);
   }
   if (isRecord(output) && typeof output.message === "string") {
     const citations = Array.isArray(output.citations)
       ? uniqueCitations(output.citations.filter(isLocalCitation))
       : [];
-    return { answer: output.message, citations };
+    return { answer: output.message, citations, trace };
   }
   if (isRecord(output) && Array.isArray(output.results)) {
-    return searchAnswer(output.results.filter(isLocalSearchResult));
+    return withTrace(searchAnswer(output.results.filter(isLocalSearchResult)), trace);
   }
   if (isRecord(payload) && typeof payload.assistant_message === "string") {
-    return { answer: payload.assistant_message, citations: [] };
+    return { answer: payload.assistant_message, citations: [], trace };
   }
   throw new AgentError("本地 Agent 返回了无法识别的响应。");
+}
+
+function withTrace(answer: AgentAnswer, trace: AgentTraceStep[]): AgentAnswer {
+  return trace.length ? { ...answer, trace } : answer;
+}
+
+function agentTrace(payload: unknown): AgentTraceStep[] {
+  if (!isRecord(payload) || !Array.isArray(payload.trace)) return [];
+  return payload.trace.filter(isTraceStep).map((step) => ({
+    round: Number(step.round),
+    toolName: step.toolName ?? step.tool_name ?? "",
+    status: step.status,
+    summary: step.summary
+  }));
 }
 
 function unwrapToolOutput(payload: unknown): unknown {
@@ -467,6 +556,20 @@ function isLocalCitation(value: unknown): value is AgentAnswer["citations"][numb
   return isRecord(value) &&
     typeof value.path === "string" &&
     (value.heading === undefined || typeof value.heading === "string");
+}
+
+function isTraceStep(value: unknown): value is {
+  round: number;
+  toolName?: string;
+  tool_name?: string;
+  status: string;
+  summary: string;
+} {
+  return isRecord(value) &&
+    typeof value.round === "number" &&
+    (typeof value.toolName === "string" || typeof value.tool_name === "string") &&
+    typeof value.status === "string" &&
+    typeof value.summary === "string";
 }
 
 function isLocalAgentTool(value: unknown): value is LocalAgentTool {

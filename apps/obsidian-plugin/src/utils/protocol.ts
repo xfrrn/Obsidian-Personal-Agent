@@ -6,6 +6,14 @@ export interface AgentCitation {
 export interface AgentAnswer {
   answer: string;
   citations: AgentCitation[];
+  trace?: AgentTraceStep[];
+}
+
+export interface AgentTraceStep {
+  round: number;
+  toolName: string;
+  status: string;
+  summary: string;
 }
 
 export type AgentIntent = "ask" | "plan";

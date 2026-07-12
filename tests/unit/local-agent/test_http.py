@@ -4,6 +4,7 @@ import json
 from datetime import date
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -130,6 +131,47 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
         )[2]["executionMode"] == "risk_based"
         assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["executionMode"] == "risk_based"
         assert _request(base + "/handshake", body)[0] == 409
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        LocalAgentHandler.container = None
+        LocalAgentHandler.token = None
+        LocalAgentHandler.vault_root = None
+        LocalAgentHandler.paired = False
+
+
+def test_chat_stream_sends_trace_and_final_events() -> None:
+    class FakeRuntime:
+        async def run(self, _request, *, on_trace=None):
+            if on_trace:
+                on_trace({"round": 1, "tool_name": "list_tasks", "status": "completed", "summary": "ok"})
+            return {"assistant_message": "done"}
+
+    LocalAgentHandler.container = SimpleNamespace(runtime=FakeRuntime())
+    LocalAgentHandler.token = "token"
+    LocalAgentHandler.vault_root = None
+    LocalAgentHandler.paired = True
+    LocalAgentHandler.settings = LocalAgentSettings("127.0.0.1", 0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LocalAgentHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    try:
+        body = json.dumps({"userInput": "query"}).encode()
+        request = Request(
+            base + "/chat/stream",
+            data=body,
+            headers={"Content-Type": "application/json", "X-Agent-Token": "token"},
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            text = response.read().decode()
+        assert "event: trace" in text
+        assert '"tool_name": "list_tasks"' in text
+        assert "event: final" in text
+        assert '"assistant_message": "done"' in text
     finally:
         server.shutdown()
         server.server_close()

@@ -177,10 +177,13 @@ async function callModel(app, settings, messages) {
 
 // apps/obsidian-plugin/src/api/local-agent-client.ts
 var import_obsidian2 = require("obsidian");
-async function askLocalAgent(app, settings, question, scope) {
+async function askLocalAgent(app, settings, question, scope, onTrace) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
-  const activeFile = app.workspace.getActiveFile();
+  const body = localChatBody(app, question, scope);
+  if (onTrace && typeof fetch === "function") {
+    return askLocalAgentStream(port, settings, body, onTrace);
+  }
   const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}/chat`,
     method: "POST",
@@ -188,18 +191,76 @@ async function askLocalAgent(app, settings, question, scope) {
       "Content-Type": "application/json",
       "X-Agent-Token": settings.localAgentToken
     },
-    body: JSON.stringify({
-      userInput: question,
-      conversationId: "obsidian-plugin",
-      scope,
-      activeFilePath: activeFile == null ? void 0 : activeFile.path
-    }),
+    body: JSON.stringify(body),
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {
     throw new AgentError(`\u672C\u5730 Agent \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
   }
   return toAgentAnswer(response.json);
+}
+async function askLocalAgentStream(port, settings, body, onTrace) {
+  var _a, _b, _c;
+  const response = await fetch(`http://127.0.0.1:${port}/chat/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Agent-Token": settings.localAgentToken
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new AgentError(`\u672C\u5730 Agent \u6D41\u5F0F\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
+  }
+  if (!response.body) {
+    throw new AgentError("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6D41\u5F0F\u54CD\u5E94\u3002");
+  }
+  let finalPayload;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = (_a = parts.pop()) != null ? _a : "";
+    for (const part of parts) {
+      const event = parseStreamEvent(part);
+      if (!event) continue;
+      if (event.event === "trace" && isTraceStep(event.data)) {
+        onTrace({
+          round: event.data.round,
+          toolName: (_c = (_b = event.data.toolName) != null ? _b : event.data.tool_name) != null ? _c : "",
+          status: event.data.status,
+          summary: event.data.summary
+        });
+      } else if (event.event === "final") {
+        finalPayload = event.data;
+      } else if (event.event === "error") {
+        const message = isRecord2(event.data) && typeof event.data.error === "string" ? event.data.error : "\u672C\u5730 Agent \u6D41\u5F0F\u8BF7\u6C42\u5931\u8D25\u3002";
+        throw new AgentError(message);
+      }
+    }
+  }
+  if (!finalPayload) throw new AgentError("\u672C\u5730 Agent \u6CA1\u6709\u8FD4\u56DE\u6700\u7EC8\u7ED3\u679C\u3002");
+  return toAgentAnswer(finalPayload);
+}
+function parseStreamEvent(raw) {
+  var _a, _b, _c;
+  const event = (_b = (_a = /^event:\s*(.+)$/m.exec(raw)) == null ? void 0 : _a[1]) == null ? void 0 : _b.trim();
+  const data = (_c = /^data:\s*(.+)$/m.exec(raw)) == null ? void 0 : _c[1];
+  if (!event || !data) return null;
+  return { event, data: JSON.parse(data) };
+}
+function localChatBody(app, question, scope) {
+  const activeFile = app.workspace.getActiveFile();
+  return {
+    userInput: question,
+    conversationId: "obsidian-plugin",
+    scope,
+    activeFilePath: activeFile == null ? void 0 : activeFile.path
+  };
 }
 async function buildLocalOperationPlan(app, settings, requestText, scope) {
   const port = localAgentPort(settings);
@@ -228,7 +289,7 @@ async function buildLocalOperationPlan(app, settings, requestText, scope) {
   if (!isRecord2(output) || !isRecord2(output.plan)) {
     throw new AgentError("\u672C\u5730 Agent \u6CA1\u6709\u8FD4\u56DE\u64CD\u4F5C\u8BA1\u5212\u3002");
   }
-  return localPlanFromPayload(output.plan);
+  return localPlanFromPayload(output.plan, agentTrace(response.json));
 }
 async function listLocalAgentTools(settings) {
   const port = localAgentPort(settings);
@@ -273,7 +334,7 @@ async function stageLocalOperationPlan(settings, plan, allowedPaths) {
     operations: payload.operations
   };
 }
-function localPlanFromPayload(payload) {
+function localPlanFromPayload(payload, trace = []) {
   if (typeof payload.planId !== "string" || typeof payload.summary !== "string" || !Array.isArray(payload.operations) || !isRisk(payload.risk)) {
     throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u64CD\u4F5C\u8BA1\u5212\u3002");
   }
@@ -287,6 +348,7 @@ function localPlanFromPayload(payload) {
     confirmationToken: optionalString(payload.confirmationToken),
     status: optionalString(payload.status),
     managedBy: "local-agent",
+    trace,
     summary: payload.summary,
     risk: payload.risk,
     operations: payload.operations
@@ -432,20 +494,36 @@ function withTimeout(promise, ms) {
 }
 function toAgentAnswer(payload) {
   const output = unwrapToolOutput(payload);
+  const trace = agentTrace(payload);
   if (isRecord2(output) && Array.isArray(output.tasks)) {
-    return tasksAnswer(output.tasks.filter(isLocalTask));
+    return withTrace(tasksAnswer(output.tasks.filter(isLocalTask)), trace);
   }
   if (isRecord2(output) && typeof output.message === "string") {
     const citations = Array.isArray(output.citations) ? uniqueCitations(output.citations.filter(isLocalCitation)) : [];
-    return { answer: output.message, citations };
+    return { answer: output.message, citations, trace };
   }
   if (isRecord2(output) && Array.isArray(output.results)) {
-    return searchAnswer(output.results.filter(isLocalSearchResult));
+    return withTrace(searchAnswer(output.results.filter(isLocalSearchResult)), trace);
   }
   if (isRecord2(payload) && typeof payload.assistant_message === "string") {
-    return { answer: payload.assistant_message, citations: [] };
+    return { answer: payload.assistant_message, citations: [], trace };
   }
   throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u54CD\u5E94\u3002");
+}
+function withTrace(answer, trace) {
+  return trace.length ? { ...answer, trace } : answer;
+}
+function agentTrace(payload) {
+  if (!isRecord2(payload) || !Array.isArray(payload.trace)) return [];
+  return payload.trace.filter(isTraceStep).map((step) => {
+    var _a, _b;
+    return {
+      round: Number(step.round),
+      toolName: (_b = (_a = step.toolName) != null ? _a : step.tool_name) != null ? _b : "",
+      status: step.status,
+      summary: step.summary
+    };
+  });
 }
 function unwrapToolOutput(payload) {
   if (!isRecord2(payload) || !isRecord2(payload.execution)) return payload;
@@ -539,6 +617,9 @@ function isLocalSearchResult(value) {
 }
 function isLocalCitation(value) {
   return isRecord2(value) && typeof value.path === "string" && (value.heading === void 0 || typeof value.heading === "string");
+}
+function isTraceStep(value) {
+  return isRecord2(value) && typeof value.round === "number" && (typeof value.toolName === "string" || typeof value.tool_name === "string") && typeof value.status === "string" && typeof value.summary === "string";
 }
 function isLocalAgentTool(value) {
   return isRecord2(value) && typeof value.name === "string" && typeof value.description === "string";
@@ -1134,6 +1215,7 @@ var AssistantView = class extends import_obsidian5.ItemView {
     super(leaf);
     this.agentPlugin = agentPlugin;
     this.busy = false;
+    this.liveTraceSteps = [];
   }
   getViewType() {
     return AGENT_VIEW_TYPE;
@@ -1211,6 +1293,9 @@ var AssistantView = class extends import_obsidian5.ItemView {
     if (this.busy) return;
     this.setBusy(true);
     this.resultEl.empty();
+    this.liveTraceCard = void 0;
+    this.liveTraceList = void 0;
+    this.liveTraceSteps = [];
     this.renderUserMessage(prompt);
     this.renderLoading(this.busyText());
     try {
@@ -1228,10 +1313,12 @@ var AssistantView = class extends import_obsidian5.ItemView {
           await this.executePlan(plan, executeButton, false);
         }
       } else {
-        await this.renderAnswer(await this.agentPlugin.ask(
+        const answer = await this.agentPlugin.ask(
           prompt,
-          this.scopeEl.value
-        ));
+          this.scopeEl.value,
+          (step) => this.renderLiveTrace(step)
+        );
+        await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
       }
     } catch (error) {
       (_a = this.resultEl.querySelector(".pka-loading")) == null ? void 0 : _a.remove();
@@ -1243,11 +1330,12 @@ var AssistantView = class extends import_obsidian5.ItemView {
       this.setBusy(false);
     }
   }
-  async renderAnswer(answer) {
+  async renderAnswer(answer, skipTrace = false) {
     var _a, _b, _c;
     (_a = this.resultEl.querySelector(".pka-loading")) == null ? void 0 : _a.remove();
     this.renderContext(answer.citations.length);
     const card = this.createAssistantCard();
+    if (!skipTrace) this.renderTrace(card, answer.trace);
     const answerEl = card.createDiv({ cls: "pka-answer markdown-rendered" });
     await import_obsidian5.MarkdownRenderer.render(
       this.app,
@@ -1272,10 +1360,49 @@ var AssistantView = class extends import_obsidian5.ItemView {
       });
     }
   }
+  renderTrace(card, trace) {
+    if (!(trace == null ? void 0 : trace.length)) return;
+    const details = card.createEl("details", { cls: "pka-agent-trace" });
+    details.open = true;
+    const summary = details.createEl("summary");
+    const icon = summary.createSpan({ cls: "pka-trace-icon" });
+    (0, import_obsidian5.setIcon)(icon, "activity");
+    summary.createSpan({ text: `\u601D\u8003\u4E0E\u5DE5\u5177\u8C03\u7528\uFF08${trace.length} \u6B65\uFF09` });
+    const list = details.createEl("ol", { cls: "pka-trace-list" });
+    for (const step of trace) {
+      this.appendTraceStep(list, step);
+    }
+  }
+  renderLiveTrace(step) {
+    this.liveTraceSteps.push(step);
+    if (!this.liveTraceCard || !this.liveTraceList) {
+      this.liveTraceCard = this.createAssistantCard();
+      const details = this.liveTraceCard.createEl("details", { cls: "pka-agent-trace" });
+      details.open = true;
+      const summary = details.createEl("summary");
+      const icon = summary.createSpan({ cls: "pka-trace-icon" });
+      (0, import_obsidian5.setIcon)(icon, "activity");
+      summary.createSpan({ text: "\u601D\u8003\u4E0E\u5DE5\u5177\u8C03\u7528" });
+      this.liveTraceList = details.createEl("ol", { cls: "pka-trace-list" });
+    }
+    this.appendTraceStep(this.liveTraceList, step);
+    this.liveTraceCard.scrollIntoView({ block: "nearest" });
+  }
+  appendTraceStep(list, step) {
+    const item = list.createEl("li", {
+      cls: step.status === "failed" ? "is-error" : "is-ok"
+    });
+    const header = item.createDiv({ cls: "pka-trace-row" });
+    header.createSpan({ cls: "pka-trace-round", text: `#${step.round}` });
+    header.createSpan({ cls: "pka-trace-tool", text: step.toolName });
+    header.createSpan({ cls: "pka-trace-status", text: step.status });
+    if (step.summary) item.createDiv({ cls: "pka-trace-summary", text: step.summary });
+  }
   renderPlan(plan) {
     var _a;
     (_a = this.resultEl.querySelector(".pka-loading")) == null ? void 0 : _a.remove();
     const card = this.createAssistantCard();
+    this.renderTrace(card, plan.trace);
     card.createEl("p", { text: `${plan.summary}\uFF08\u98CE\u9669\uFF1A${plan.risk}\uFF09` });
     const title = card.createDiv({ cls: "pka-section-title" });
     title.createSpan({ text: `\u6267\u884C\u8BA1\u5212\uFF08${plan.operations.length} \u6B65\uFF09` });
@@ -1814,11 +1941,14 @@ async function judgeIntent(_app, _settings, input) {
   if (!cleanInput) throw new AgentError("\u8BF7\u8F93\u5165\u95EE\u9898\u6216\u4FEE\u6539\u8BF7\u6C42\u3002");
   return inferIntent(cleanInput);
 }
-async function askAgent(app, settings, question, scope) {
+async function askAgent(app, settings, question, scope, onTrace) {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("\u8BF7\u8F93\u5165\u95EE\u9898\u3002");
+  if (settings.localAgentToken) {
+    return askLocalAgent(app, settings, cleanQuestion, scope, onTrace);
+  }
   if (isTaskQuery(cleanQuestion) || isLocalAnalysisQuery(cleanQuestion)) {
-    return settings.localAgentToken ? askLocalAgent(app, settings, cleanQuestion, scope) : answerWithTasks(app, cleanQuestion, scope);
+    return answerWithTasks(app, cleanQuestion, scope);
   }
   if (scope === "current") {
     const source = await getCurrentSource(app);
@@ -1863,8 +1993,8 @@ var PersonalKnowledgeAgentPlugin = class extends import_obsidian7.Plugin {
   onunload() {
     this.app.workspace.detachLeavesOfType(AGENT_VIEW_TYPE);
   }
-  ask(question, scope) {
-    return askAgent(this.app, this.settings, question, scope);
+  ask(question, scope, onTrace) {
+    return askAgent(this.app, this.settings, question, scope, onTrace);
   }
   intent(input) {
     return judgeIntent(this.app, this.settings, input);

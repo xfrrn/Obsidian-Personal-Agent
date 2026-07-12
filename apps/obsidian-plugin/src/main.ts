@@ -12,7 +12,7 @@ import {
   executeLocalOperationPlan,
   rollbackLocalOperationPlan
 } from "./api/local-agent-client";
-import type { AgentAnswer, AgentIntent } from "./types";
+import type { AgentAnswer, AgentIntent, AgentTraceStep } from "./types";
 import {
   AgentSettings,
   DEFAULT_SETTINGS,
@@ -34,8 +34,8 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(AGENT_VIEW_TYPE);
   }
 
-  ask(question: string, scope: QueryScope): Promise<AgentAnswer> {
-    return askAgent(this.app, this.settings, question, scope);
+  ask(question: string, scope: QueryScope, onTrace?: (step: AgentTraceStep) => void): Promise<AgentAnswer> {
+    return askAgent(this.app, this.settings, question, scope, onTrace);
   }
 
   intent(input: string): Promise<AgentIntent> {

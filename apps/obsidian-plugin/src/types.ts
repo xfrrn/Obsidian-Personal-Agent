@@ -1,2 +1,2 @@
-export type { AgentAnswer, AgentIntent } from "./utils/protocol";
+export type { AgentAnswer, AgentIntent, AgentTraceStep } from "./utils/protocol";
 export type { QueryScope } from "./features/assistant/types";

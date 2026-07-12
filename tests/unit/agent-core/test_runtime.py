@@ -66,6 +66,7 @@ def test_runtime_honors_cancellation() -> None:
 
 def test_agent_loop_can_call_tools_until_final_answer() -> None:
     calls: list[str] = []
+    streamed: list[str] = []
     registry = ToolRegistry(ToolPolicy.allow({ToolPermission.READ}, ToolRiskLevel.LOW))
     registry.register_function(
         ToolDefinition("search_notes", "search notes"),
@@ -86,10 +87,14 @@ def test_agent_loop_can_call_tools_until_final_answer() -> None:
             return {"tool_calls": [{"name": "read_note", "arguments": {"path": "A.md"}}]}
         return {"final_answer": "done"}
 
-    result = asyncio.run(AgentRuntime(registry, agent_client=agent).run(RuntimeRequest("deep task")))
+    result = asyncio.run(AgentRuntime(registry, agent_client=agent).run(
+        RuntimeRequest("deep task"),
+        on_trace=lambda step: streamed.append(step.tool_name),
+    ))
 
     assert result.assistant_message == "done"
     assert calls == ["search_notes", "read_note"]
+    assert streamed == ["search_notes", "read_note"]
     assert result.execution is not None
     assert [item.status for item in result.execution.step_results] == ["completed", "completed"]
 

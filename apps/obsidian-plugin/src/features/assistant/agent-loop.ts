@@ -3,7 +3,7 @@ import { askLocalAgent } from "../../api/local-agent-client";
 import { callModel } from "../../api/model-client";
 import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/vault-reader";
 import type { AgentSettings } from "../../settings/settings";
-import { AgentAnswer, AgentError, inferIntent, isLocalAnalysisQuery, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
+import { AgentAnswer, AgentError, AgentTraceStep, inferIntent, isLocalAnalysisQuery, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
 import { answerWithTasks } from "../task-actions/list-tasks";
 import { ANSWER_PROMPT } from "./prompts";
@@ -25,15 +25,18 @@ export async function askAgent(
   app: App,
   settings: AgentSettings,
   question: string,
-  scope: QueryScope
+  scope: QueryScope,
+  onTrace?: (step: AgentTraceStep) => void
 ): Promise<AgentAnswer> {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("请输入问题。");
 
+  if (settings.localAgentToken) {
+    return askLocalAgent(app, settings, cleanQuestion, scope, onTrace);
+  }
+
   if (isTaskQuery(cleanQuestion) || isLocalAnalysisQuery(cleanQuestion)) {
-    return settings.localAgentToken
-      ? askLocalAgent(app, settings, cleanQuestion, scope)
-      : answerWithTasks(app, cleanQuestion, scope);
+    return answerWithTasks(app, cleanQuestion, scope);
   }
 
   if (scope === "current") {

@@ -33,6 +33,9 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
     pairing_lock = Lock()
 
     def do_OPTIONS(self) -> None:
+        if urlparse(self.path).path == "/chat/stream":
+            self._send_stream_preflight()
+            return
         self._send_json({"error": "browser access is not allowed"}, status=403)
 
     def do_GET(self) -> None:
@@ -86,6 +89,9 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
         if path.startswith("/operations/") and path.endswith("/rollback"):
             self._rollback_operation(path)
             return
+        if path == "/chat/stream":
+            self._stream_chat()
+            return
         if path != "/chat":
             self._send_json({"error": "not found"}, status=404)
             return
@@ -93,27 +99,42 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
             if not self._require_ready() or not self._require_token():
                 return
             payload = self._read_json()
-            trigger = RuntimeTrigger(str(payload.get("trigger") or RuntimeTrigger.USER_MESSAGE.value))
-            if trigger is not RuntimeTrigger.USER_MESSAGE:
-                raise ValueError("system operation triggers must use the authenticated /operations endpoints")
-            request = RuntimeRequest(
-                user_input=_text(payload, "userInput", "question", "message"),
-                conversation_id=str(payload.get("conversationId") or "default"),
-                scope=str(payload.get("scope") or "vault"),
-                trigger=trigger,
-                operation_plan_id=_optional_text(payload.get("operationPlanId")),
-                active_file_path=_optional_text(payload.get("activeFilePath")),
-                selected_text=_optional_text(payload.get("selectedText")),
-                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
-            )
             assert self.container is not None
-            result = asyncio.run(self.container.runtime.run(request))
+            result = asyncio.run(self.container.runtime.run(_chat_request(payload)))
             self._send_json(_jsonable(result))
         except ValueError as exc:
             self._send_json({"error": str(exc)}, status=400)
         except Exception as exc:
             LOGGER.exception("local-agent request failed")
             self._send_json({"error": str(exc)}, status=500)
+
+    def _stream_chat(self) -> None:
+        streaming = False
+        try:
+            if not self._require_ready() or not self._require_token():
+                return
+            payload = self._read_json()
+            request = _chat_request(payload)
+            self._send_stream_headers()
+            streaming = True
+
+            def on_trace(step: Any) -> None:
+                self._send_stream_event("trace", _jsonable(step))
+
+            assert self.container is not None
+            result = asyncio.run(self.container.runtime.run(request, on_trace=on_trace))
+            self._send_stream_event("final", _jsonable(result))
+        except ValueError as exc:
+            if streaming:
+                self._send_stream_event("error", {"error": str(exc)})
+            else:
+                self._send_json({"error": str(exc)}, status=400)
+        except Exception as exc:
+            LOGGER.exception("local-agent stream request failed")
+            if streaming:
+                self._send_stream_event("error", {"error": str(exc)})
+            else:
+                self._send_json({"error": str(exc)}, status=500)
 
     def _handshake(self) -> None:
         try:
@@ -266,6 +287,33 @@ class LocalAgentHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _send_stream_preflight(self) -> None:
+        self.send_response(204)
+        self._send_stream_cors_headers()
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Agent-Token")
+        self.end_headers()
+
+    def _send_stream_headers(self) -> None:
+        self.send_response(200)
+        self._send_stream_cors_headers()
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+    def _send_stream_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin") or "*")
+        self.send_header("Vary", "Origin")
+
+    def _send_stream_event(self, event: str, value: Any) -> None:
+        raw = (
+            f"event: {event}\n"
+            f"data: {json.dumps(value, ensure_ascii=False)}\n\n"
+        ).encode("utf-8")
+        self.wfile.write(raw)
+        self.wfile.flush()
+
     def log_message(self, format: str, *args: Any) -> None:
         LOGGER.info(format, *args)
 
@@ -307,6 +355,22 @@ def _operation_id(path: str, *, suffix: str = "") -> str:
     if not clean or "/" in clean:
         raise ValueError("invalid operation plan path")
     return clean
+
+
+def _chat_request(payload: dict[str, Any]) -> RuntimeRequest:
+    trigger = RuntimeTrigger(str(payload.get("trigger") or RuntimeTrigger.USER_MESSAGE.value))
+    if trigger is not RuntimeTrigger.USER_MESSAGE:
+        raise ValueError("system operation triggers must use the authenticated /operations endpoints")
+    return RuntimeRequest(
+        user_input=_text(payload, "userInput", "question", "message"),
+        conversation_id=str(payload.get("conversationId") or "default"),
+        scope=str(payload.get("scope") or "vault"),
+        trigger=trigger,
+        operation_plan_id=_optional_text(payload.get("operationPlanId")),
+        active_file_path=_optional_text(payload.get("activeFilePath")),
+        selected_text=_optional_text(payload.get("selectedText")),
+        metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+    )
 
 
 def _intent_llm_settings(payload: dict[str, Any], fallback: LocalAgentSettings) -> dict[str, str | None]:

@@ -10,7 +10,7 @@ import {
   describeOperation,
   OperationPlan
 } from "../../features/operation-preview/operation-executor";
-import { AgentAnswer, AgentError } from "../../utils/protocol";
+import { AgentAnswer, AgentError, AgentTraceStep } from "../../utils/protocol";
 
 export const AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
 
@@ -22,6 +22,9 @@ export class AssistantView extends ItemView {
   private scopeEl!: HTMLSelectElement;
   private sendButton!: HTMLButtonElement;
   private busy = false;
+  private liveTraceCard?: HTMLElement;
+  private liveTraceList?: HTMLOListElement;
+  private liveTraceSteps: AgentTraceStep[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -118,6 +121,9 @@ export class AssistantView extends ItemView {
     if (this.busy) return;
     this.setBusy(true);
     this.resultEl.empty();
+    this.liveTraceCard = undefined;
+    this.liveTraceList = undefined;
+    this.liveTraceSteps = [];
     this.renderUserMessage(prompt);
     this.renderLoading(this.busyText());
 
@@ -141,10 +147,12 @@ export class AssistantView extends ItemView {
           await this.executePlan(plan, executeButton, false);
         }
       } else {
-        await this.renderAnswer(await this.agentPlugin.ask(
+        const answer = await this.agentPlugin.ask(
           prompt,
-          this.scopeEl.value as QueryScope
-        ));
+          this.scopeEl.value as QueryScope,
+          (step) => this.renderLiveTrace(step)
+        );
+        await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
       }
     } catch (error) {
       this.resultEl.querySelector(".pka-loading")?.remove();
@@ -159,10 +167,11 @@ export class AssistantView extends ItemView {
     }
   }
 
-  private async renderAnswer(answer: AgentAnswer): Promise<void> {
+  private async renderAnswer(answer: AgentAnswer, skipTrace = false): Promise<void> {
     this.resultEl.querySelector(".pka-loading")?.remove();
     this.renderContext(answer.citations.length);
     const card = this.createAssistantCard();
+    if (!skipTrace) this.renderTrace(card, answer.trace);
     const answerEl = card.createDiv({ cls: "pka-answer markdown-rendered" });
     await MarkdownRenderer.render(
       this.app,
@@ -194,9 +203,52 @@ export class AssistantView extends ItemView {
     }
   }
 
+  private renderTrace(card: HTMLElement, trace: AgentAnswer["trace"]): void {
+    if (!trace?.length) return;
+    const details = card.createEl("details", { cls: "pka-agent-trace" });
+    details.open = true;
+    const summary = details.createEl("summary");
+    const icon = summary.createSpan({ cls: "pka-trace-icon" });
+    setIcon(icon, "activity");
+    summary.createSpan({ text: `思考与工具调用（${trace.length} 步）` });
+
+    const list = details.createEl("ol", { cls: "pka-trace-list" });
+    for (const step of trace) {
+      this.appendTraceStep(list, step);
+    }
+  }
+
+  private renderLiveTrace(step: AgentTraceStep): void {
+    this.liveTraceSteps.push(step);
+    if (!this.liveTraceCard || !this.liveTraceList) {
+      this.liveTraceCard = this.createAssistantCard();
+      const details = this.liveTraceCard.createEl("details", { cls: "pka-agent-trace" });
+      details.open = true;
+      const summary = details.createEl("summary");
+      const icon = summary.createSpan({ cls: "pka-trace-icon" });
+      setIcon(icon, "activity");
+      summary.createSpan({ text: "思考与工具调用" });
+      this.liveTraceList = details.createEl("ol", { cls: "pka-trace-list" });
+    }
+    this.appendTraceStep(this.liveTraceList, step);
+    this.liveTraceCard.scrollIntoView({ block: "nearest" });
+  }
+
+  private appendTraceStep(list: HTMLOListElement, step: AgentTraceStep): void {
+    const item = list.createEl("li", {
+      cls: step.status === "failed" ? "is-error" : "is-ok"
+    });
+    const header = item.createDiv({ cls: "pka-trace-row" });
+    header.createSpan({ cls: "pka-trace-round", text: `#${step.round}` });
+    header.createSpan({ cls: "pka-trace-tool", text: step.toolName });
+    header.createSpan({ cls: "pka-trace-status", text: step.status });
+    if (step.summary) item.createDiv({ cls: "pka-trace-summary", text: step.summary });
+  }
+
   private renderPlan(plan: OperationPlan): HTMLButtonElement {
     this.resultEl.querySelector(".pka-loading")?.remove();
     const card = this.createAssistantCard();
+    this.renderTrace(card, plan.trace);
     card.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
 
     const title = card.createDiv({ cls: "pka-section-title" });

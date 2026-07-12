@@ -267,6 +267,80 @@
   line-height: 1.7;
 }
 
+.pka-agent-trace {
+  border-bottom: 1px solid var(--pka-border);
+  margin-bottom: var(--size-4-4);
+  padding-bottom: var(--size-4-3);
+}
+
+.pka-agent-trace summary {
+  align-items: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--font-ui-small);
+  font-weight: 650;
+  gap: var(--size-4-2);
+  list-style: none;
+}
+
+.pka-agent-trace summary::-webkit-details-marker {
+  display: none;
+}
+
+.pka-trace-icon {
+  align-items: center;
+  display: inline-flex;
+}
+
+.pka-trace-icon svg {
+  height: 15px;
+  width: 15px;
+}
+
+.pka-trace-list {
+  display: grid;
+  gap: var(--size-4-2);
+  list-style: none;
+  margin: var(--size-4-3) 0 0;
+  padding: 0;
+}
+
+.pka-trace-list li {
+  border-left: 2px solid var(--pka-accent);
+  padding-left: var(--size-4-3);
+}
+
+.pka-trace-list li.is-error {
+  border-left-color: var(--text-error);
+}
+
+.pka-trace-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+
+.pka-trace-round,
+.pka-trace-status {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+.pka-trace-tool {
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  font-weight: 650;
+}
+
+.pka-trace-summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-top: 2px;
+}
+
 .pka-section-title {
   color: var(--text-normal);
   font-size: var(--font-ui-medium);

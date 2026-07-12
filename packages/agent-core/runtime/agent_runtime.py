@@ -19,6 +19,7 @@ from .cancellation import CancellationToken
 from .execution_context import RuntimeRequest
 
 AgentClient = Callable[[list[dict[str, Any]], tuple[Any, ...]], Any]
+TraceCallback = Callable[["AgentTraceStep"], Any]
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class AgentRunResult:
     validation: PlanValidationResult
     execution: PlanExecutionResult | None
     assistant_message: str
+    trace: tuple["AgentTraceStep", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,14 @@ class AgentDecision:
     final_answer: str = ""
     tool_calls: tuple[AgentToolRequest, ...] = ()
     content: str = ""
+
+
+@dataclass(frozen=True)
+class AgentTraceStep:
+    round: int
+    tool_name: str
+    status: str
+    summary: str
 
 
 class AgentRuntime:
@@ -69,6 +79,7 @@ class AgentRuntime:
         request: RuntimeRequest,
         *,
         cancellation: CancellationToken | None = None,
+        on_trace: TraceCallback | None = None,
     ) -> AgentRunResult:
         """Run one Agent turn."""
         if self._agent_client is None:
@@ -79,9 +90,14 @@ class AgentRuntime:
 
         self._conversations.start_conversation(request.conversation_id)
         self._conversations.append_user_message(request.conversation_id, request.user_input)
-        return await self._run_agent_loop(request, token)
+        return await self._run_agent_loop(request, token, on_trace)
 
-    async def _run_agent_loop(self, request: RuntimeRequest, token: CancellationToken) -> AgentRunResult:
+    async def _run_agent_loop(
+        self,
+        request: RuntimeRequest,
+        token: CancellationToken,
+        on_trace: TraceCallback | None,
+    ) -> AgentRunResult:
         intent = _system_intent(request.user_input)
         context = self._context_builder.build(
             conversation_id=request.conversation_id,
@@ -102,10 +118,11 @@ class AgentRuntime:
         )
         messages = self._agent_messages(context)
         step_results: list[PlanStepExecutionResult] = []
+        trace: list[AgentTraceStep] = []
         final_answer = ""
         reached_limit = True
 
-        for _round in range(self._max_agent_rounds):
+        for round_no in range(1, self._max_agent_rounds + 1):
             token.throw_if_cancelled()
             decision = await self._agent_decision(messages)
             if decision.final_answer.strip():
@@ -137,6 +154,9 @@ class AgentRuntime:
                     output = payload
 
                 step_results.append(PlanStepExecutionResult(call.id, status, output))
+                trace_step = AgentTraceStep(round_no, call.name, status, _trace_summary(payload))
+                trace.append(trace_step)
+                await _emit_trace(on_trace, trace_step)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -161,7 +181,7 @@ class AgentRuntime:
             final_answer,
             {"planId": plan.id},
         )
-        return AgentRunResult(request, intent, plan, validation, execution, final_answer)
+        return AgentRunResult(request, intent, plan, validation, execution, final_answer, tuple(trace))
 
     def _agent_messages(self, context: Any) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [{
@@ -213,6 +233,26 @@ def _message_from_tool_payload(payload: Any) -> str:
     if isinstance(payload, dict) and isinstance(payload.get("error"), str):
         return payload["error"]
     return "已完成计划。"
+
+
+def _trace_summary(payload: Any) -> str:
+    if isinstance(payload, dict):
+        if isinstance(payload.get("message"), str):
+            return payload["message"][:240]
+        if isinstance(payload.get("error"), str):
+            return payload["error"][:240]
+        for key in ("count", "noteCount", "taskCount", "issueCount"):
+            if key in payload:
+                return f"{key}: {payload[key]}"
+    return _json_text(payload)[:240]
+
+
+async def _emit_trace(callback: TraceCallback | None, step: AgentTraceStep) -> None:
+    if callback is None:
+        return
+    value = callback(step)
+    if isawaitable(value):
+        await value
 
 
 def _agent_decision(value: Any) -> AgentDecision:
