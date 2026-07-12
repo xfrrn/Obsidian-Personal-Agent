@@ -1,36 +1,29 @@
-"""Agent Runtime 协调器。"""
+"""Codex-style Agent runtime loop."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from inspect import isawaitable
-from typing import Any
+import json
+from typing import Any, Callable, Mapping
+from uuid import uuid4
 
 from conversation import ContextBuilder, ConversationManager
 from conversation.conversation_manager import ConversationRole
-from intent import RuleBasedIntentClassifier
 from intent.intent_types import IntentResult, IntentType
-from planner import (
-    AgentPlan,
-    DetectedIntent,
-    MultiIntentResult,
-    PlanExecutionResult,
-    PlanValidator,
-    PlannerInput,
-    PlannerTrigger,
-    PlannerTriggerType,
-    PlanValidationResult,
-    RuleBasedPlanner,
-)
+from planner import AgentPlan, PlanExecutionResult, PlanStepExecutionResult, PlanValidationResult
 from tools import ToolRegistry, ToolResult
+from tools.definitions import ToolCall
 
 from .cancellation import CancellationToken
-from .execution_context import RuntimeRequest, RuntimeTrigger
+from .execution_context import RuntimeRequest
+
+AgentClient = Callable[[list[dict[str, Any]], tuple[Any, ...]], Any]
 
 
 @dataclass(frozen=True)
 class AgentRunResult:
-    """一次 Agent Runtime 运行结果。"""
+    """Result of one Agent runtime run."""
 
     request: RuntimeRequest
     intent: IntentResult
@@ -40,24 +33,36 @@ class AgentRunResult:
     assistant_message: str
 
 
+@dataclass(frozen=True)
+class AgentToolRequest:
+    id: str
+    name: str
+    arguments: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class AgentDecision:
+    final_answer: str = ""
+    tool_calls: tuple[AgentToolRequest, ...] = ()
+    content: str = ""
+
+
 class AgentRuntime:
-    """串联意图识别、上下文、规划、校验和工具执行。"""
+    """Run one observe-act loop driven by an LLM tool-calling client."""
 
     def __init__(
         self,
         tool_registry: ToolRegistry,
-        intent_classifier: Any | None = None,
         conversations: ConversationManager | None = None,
         context_builder: ContextBuilder | None = None,
-        planner: RuleBasedPlanner | None = None,
-        validator: PlanValidator | None = None,
+        agent_client: AgentClient | None = None,
+        max_agent_rounds: int = 5,
     ) -> None:
         self._tool_registry = tool_registry
-        self._intent_classifier = intent_classifier or RuleBasedIntentClassifier()
         self._conversations = conversations or ConversationManager()
         self._context_builder = context_builder or ContextBuilder(self._conversations)
-        self._planner = planner or RuleBasedPlanner()
-        self._validator = validator or PlanValidator()
+        self._agent_client = agent_client
+        self._max_agent_rounds = max(1, max_agent_rounds)
 
     async def run(
         self,
@@ -65,18 +70,19 @@ class AgentRuntime:
         *,
         cancellation: CancellationToken | None = None,
     ) -> AgentRunResult:
-        """执行一次 Agent 回合。"""
+        """Run one Agent turn."""
+        if self._agent_client is None:
+            raise RuntimeError("agent LLM is not configured")
+
         token = cancellation or CancellationToken()
         token.throw_if_cancelled()
 
         self._conversations.start_conversation(request.conversation_id)
-        if request.trigger is RuntimeTrigger.USER_MESSAGE:
-            self._conversations.append_user_message(request.conversation_id, request.user_input)
+        self._conversations.append_user_message(request.conversation_id, request.user_input)
+        return await self._run_agent_loop(request, token)
 
-        intent = await self._classify(request)
-        multi_intent = await self._classify_multi(request, intent)
-        token.throw_if_cancelled()
-
+    async def _run_agent_loop(self, request: RuntimeRequest, token: CancellationToken) -> AgentRunResult:
+        intent = _system_intent(request.user_input)
         context = self._context_builder.build(
             conversation_id=request.conversation_id,
             user_input=request.user_input,
@@ -87,109 +93,186 @@ class AgentRuntime:
             selected_text=request.selected_text,
             metadata=request.metadata,
         )
-        planner_input = PlannerInput(
-            intent_result=multi_intent,
-            context=context,
-            tools=self._tool_registry.definitions(),
-            trigger=self._planner_trigger(request),
+        plan = AgentPlan(
+            goal=request.user_input,
+            source_text=request.user_input,
+            steps=(),
+            contains_write_request=False,
+            summary="LLM agent loop",
         )
-        plan = self._planner.create_plan(planner_input)
-        validation = self._validator.validate(plan, planner_input)
-        if not validation.valid:
-            message = "计划校验失败：" + "；".join(validation.errors)
-            self._conversations.append_assistant_message(request.conversation_id, message)
-            return AgentRunResult(request, intent, plan, validation, None, message)
+        messages = self._agent_messages(context)
+        step_results: list[PlanStepExecutionResult] = []
+        final_answer = ""
+        reached_limit = True
 
-        token.throw_if_cancelled()
-        from planner import PlanExecutor
+        for _round in range(self._max_agent_rounds):
+            token.throw_if_cancelled()
+            decision = await self._agent_decision(messages)
+            if decision.final_answer.strip():
+                final_answer = decision.final_answer.strip()
+                reached_limit = False
+                break
+            if not decision.tool_calls:
+                if decision.content.startswith("Tool call parse error:"):
+                    messages.append({"role": "system", "content": decision.content})
+                    continue
+                final_answer = decision.content.strip() or "我还不能确定下一步，请补充更具体的目标。"
+                reached_limit = False
+                break
 
-        execution = await PlanExecutor(self._tool_registry).execute(
-            plan,
-            context=context,
-            confirmed=request.trigger is RuntimeTrigger.OPERATION_CONFIRMED,
-        )
-        message = self._message_from_execution(execution)
+            messages.append(_assistant_tool_message(decision))
+            for call in decision.tool_calls:
+                try:
+                    result = await self._tool_registry.run(
+                        ToolCall(call.name, call.arguments, call.id),
+                        context=context,
+                        confirmed=False,
+                    )
+                    payload = result.output if isinstance(result, ToolResult) else result
+                    status = "completed"
+                    output: Any = result
+                except Exception as exc:
+                    payload = {"error": str(exc)}
+                    status = "failed"
+                    output = payload
+
+                step_results.append(PlanStepExecutionResult(call.id, status, output))
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": _json_text(payload),
+                })
+                if call.name == "build_operation_plan" and status == "completed":
+                    final_answer = _message_from_tool_payload(payload)
+                    reached_limit = False
+                    break
+            if final_answer:
+                break
+
+        if not final_answer:
+            final_answer = "已达到本次最大思考轮数，请缩小问题或继续追问。"
+
+        execution = PlanExecutionResult(plan.id, tuple(step_results), stopped=reached_limit)
+        validation = PlanValidationResult(True)
         self._conversations.append(
             request.conversation_id,
             ConversationRole.ASSISTANT,
-            message,
+            final_answer,
             {"planId": plan.id},
         )
-        return AgentRunResult(request, intent, plan, validation, execution, message)
+        return AgentRunResult(request, intent, plan, validation, execution, final_answer)
 
-    async def _classify(self, request: RuntimeRequest) -> IntentResult:
-        if request.trigger is RuntimeTrigger.OPERATION_CONFIRMED:
-            return self._system_intent(request.user_input or "operation confirmed")
-        if request.trigger is RuntimeTrigger.OPERATION_REJECTED:
-            return self._system_intent(request.user_input or "operation rejected")
+    def _agent_messages(self, context: Any) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = [{
+            "role": "system",
+            "content": (
+                "You are a local-first Obsidian personal knowledge agent. "
+                "Use tools when notes, tasks, rules, or operation plans are needed. "
+                "Return a final answer when enough information is available. "
+                "Never call system-only write execution tools from a user message; create an OperationPlan instead."
+            ),
+        }]
+        for message in context.recent_messages:
+            if message.role in {ConversationRole.USER, ConversationRole.ASSISTANT, ConversationRole.SYSTEM}:
+                messages.append({"role": message.role.value, "content": message.content})
+        if context.active_file_path or context.selected_text or context.metadata:
+            messages.append({
+                "role": "system",
+                "content": _json_text({
+                    "scope": context.scope,
+                    "activeFilePath": context.active_file_path,
+                    "selectedText": context.selected_text,
+                    "metadata": context.metadata,
+                }),
+            })
+        return messages
 
-        value = self._intent_classifier.classify(request.user_input)
+    async def _agent_decision(self, messages: list[dict[str, Any]]) -> AgentDecision:
+        assert self._agent_client is not None
+        value = self._agent_client(messages, self._tool_registry.definitions())
         if isawaitable(value):
             value = await value
+        return _agent_decision(value)
+
+
+def _system_intent(raw_text: str) -> IntentResult:
+    return IntentResult(
+        intent=IntentType.UNKNOWN,
+        confidence=1,
+        entities=(),
+        raw_text=raw_text,
+        requires_confirmation=False,
+        candidates=(),
+    )
+
+
+def _message_from_tool_payload(payload: Any) -> str:
+    if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+        return payload["message"]
+    if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+        return payload["error"]
+    return "已完成计划。"
+
+
+def _agent_decision(value: Any) -> AgentDecision:
+    if isinstance(value, AgentDecision):
         return value
+    if not isinstance(value, Mapping):
+        return AgentDecision(final_answer=str(value))
 
-    async def _classify_multi(self, request: RuntimeRequest, fallback: IntentResult) -> MultiIntentResult:
-        if request.trigger is not RuntimeTrigger.USER_MESSAGE:
-            return MultiIntentResult.from_intent_result(fallback)
+    final = value.get("final_answer") or value.get("finalAnswer")
+    calls = value.get("tool_calls") or value.get("toolCalls") or ()
+    tool_calls: list[AgentToolRequest] = []
+    errors: list[str] = []
+    for item in calls:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            tool_calls.append(_tool_request(item))
+        except Exception as exc:
+            errors.append(str(exc))
 
-        classify_multi = getattr(self._intent_classifier, "classify_multi", None)
-        if classify_multi is None:
-            return MultiIntentResult.from_intent_result(fallback)
+    if errors and not tool_calls:
+        return AgentDecision(content="Tool call parse error: " + "; ".join(errors))
+    return AgentDecision(
+        final_answer=final if isinstance(final, str) else "",
+        content=str(value.get("content") or "") if value.get("content") is not None else "",
+        tool_calls=tuple(tool_calls),
+    )
 
-        value = classify_multi(request.user_input)
-        if isawaitable(value):
-            value = await value
-        if not isinstance(value, tuple) or not value:
-            return MultiIntentResult.from_intent_result(fallback)
 
-        intents = tuple(
-            DetectedIntent(
-                id=f"intent_{index}",
-                type=result.intent,
-                confidence=result.confidence,
-                entities=result.entities,
-                order=index,
-            )
-            for index, result in enumerate(value, start=1)
-        )
-        return MultiIntentResult(
-            raw_text=request.user_input,
-            intents=intents,
-            requires_clarification=any(result.requires_confirmation for result in value),
-        )
+def _tool_request(item: Mapping[str, Any]) -> AgentToolRequest:
+    function = item.get("function") if isinstance(item.get("function"), Mapping) else {}
+    name = item.get("name") or item.get("tool_name") or item.get("toolName") or function.get("name")
+    arguments = item.get("arguments") if "arguments" in item else function.get("arguments", {})
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments or "{}")
+    if not isinstance(arguments, Mapping):
+        raise ValueError("tool arguments must be an object")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("tool name is required")
+    return AgentToolRequest(
+        id=str(item.get("id") or f"call_{uuid4().hex}"),
+        name=name.strip(),
+        arguments=arguments,
+    )
 
-    def _system_intent(self, raw_text: str) -> IntentResult:
-        return IntentResult(
-            intent=IntentType.UNKNOWN,
-            confidence=1,
-            entities=(),
-            raw_text=raw_text,
-            requires_confirmation=False,
-            candidates=(),
-        )
 
-    def _planner_trigger(self, request: RuntimeRequest) -> PlannerTrigger:
-        if request.trigger is RuntimeTrigger.OPERATION_CONFIRMED:
-            return PlannerTrigger(
-                PlannerTriggerType.OPERATION_CONFIRMED,
-                operation_plan_id=request.operation_plan_id,
-            )
-        if request.trigger is RuntimeTrigger.OPERATION_REJECTED:
-            return PlannerTrigger(
-                PlannerTriggerType.OPERATION_REJECTED,
-                operation_plan_id=request.operation_plan_id,
-            )
-        return PlannerTrigger(PlannerTriggerType.USER_MESSAGE)
+def _assistant_tool_message(decision: AgentDecision) -> dict[str, Any]:
+    return {
+        "role": "assistant",
+        "content": decision.content or None,
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {"name": call.name, "arguments": _json_text(call.arguments)},
+            }
+            for call in decision.tool_calls
+        ],
+    }
 
-    def _message_from_execution(self, execution: PlanExecutionResult) -> str:
-        if not execution.step_results:
-            return "没有执行任何步骤。"
-        last = execution.step_results[-1]
-        output = last.output
-        if isinstance(output, ToolResult):
-            output = output.output
-        if isinstance(output, dict) and isinstance(output.get("message"), str):
-            return output["message"]
-        if isinstance(output, dict) and isinstance(output.get("error"), str):
-            return output["error"]
-        return "已完成计划。" if not execution.stopped else "计划已暂停，等待下一步。"
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)

@@ -17,30 +17,11 @@ sys.path[:0] = [
 ]
 
 from bootstrap.settings import LocalAgentSettings  # noqa: E402
-from bootstrap.container import _build_intent_classifier, _chat_content  # noqa: E402
-from intent import HybridIntentClassifier, RuleBasedIntentClassifier  # noqa: E402
+from bootstrap.container import _agent_chat_decision  # noqa: E402
 from main import LocalAgentHandler, ThreadingHTTPServer, _intent_llm_settings  # noqa: E402
 
 
-def test_intent_classifier_uses_llm_when_configured() -> None:
-    assert isinstance(
-        _build_intent_classifier(LocalAgentSettings("127.0.0.1", 0)),
-        RuleBasedIntentClassifier,
-    )
-    assert isinstance(
-        _build_intent_classifier(
-            LocalAgentSettings(
-                "127.0.0.1",
-                0,
-                intent_llm_base_url="http://127.0.0.1:1/v1",
-                intent_llm_model="test-model",
-            )
-        ),
-        HybridIntentClassifier,
-    )
-
-
-def test_handshake_intent_llm_settings_override_env_fallback() -> None:
+def test_handshake_agent_llm_settings_override_env_fallback() -> None:
     fallback = LocalAgentSettings(
         "127.0.0.1",
         0,
@@ -55,18 +36,19 @@ def test_handshake_intent_llm_settings_override_env_fallback() -> None:
     }
 
 
-def test_intent_llm_reads_function_call_arguments() -> None:
-    assert _chat_content({
+def test_agent_llm_reads_tool_calls() -> None:
+    decision = _agent_chat_decision({
         "choices": [{
             "message": {
                 "tool_calls": [{
-                    "function": {
-                        "arguments": "{\"intent\":\"task.search\",\"confidence\":0.9,\"requiresConfirmation\":false,\"entities\":[]}"
-                    }
+                    "id": "call_1",
+                    "function": {"name": "list_tasks", "arguments": "{\"status\":\"open\"}"},
                 }]
             }
         }]
-    }).startswith("{\"intent\":\"task.search\"")
+    })
+
+    assert decision["tool_calls"][0]["function"]["name"] == "list_tasks"
 
 
 def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
@@ -100,19 +82,11 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
         tool_names = {item["name"] for item in tools["tools"]}
         assert {"inspect_note", "analyze_project", "check_vault_health", "find_duplicates"} <= tool_names
         assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["vaultRoot"] == str(tmp_path)
-        status, _, health = _request(
-            base + "/chat",
-            {"userInput": "给知识库做一次健康检查"},
-            {"X-Agent-Token": token},
-        )
-        assert status == 200 and "知识库健康检查" in health["assistant_message"]
-        status, _, complete = _request(
-            base + "/chat",
-            {"userInput": "帮我把今天需要完成的任务标记为完成"},
-            {"X-Agent-Token": token},
-        )
-        assert status == 200
-        assert complete["assistant_message"] == "已生成操作计划，等待确认。"
+
+        status, _, chat = _request(base + "/chat", {"userInput": "query tasks"}, {"X-Agent-Token": token})
+        assert status == 500
+        assert "agent LLM is not configured" in chat["error"]
+
         assert _request(
             base + "/chat",
             {"userInput": "confirm", "trigger": "operation_confirmed", "operationPlanId": "fake"},
@@ -130,11 +104,7 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
         assert isinstance(plan_id, str)
         assert staged["requiresConfirmation"]
         confirmation = staged["confirmationToken"]
-        assert _request(
-            base + f"/operations/{plan_id}/execute",
-            {},
-            {"X-Agent-Token": token},
-        )[0] == 403
+        assert _request(base + f"/operations/{plan_id}/execute", {}, {"X-Agent-Token": token})[0] == 403
         status, _, executed = _request(
             base + f"/operations/{plan_id}/execute",
             {"confirmationToken": confirmation},
