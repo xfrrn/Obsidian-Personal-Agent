@@ -17,6 +17,18 @@ interface LocalSearchResult {
   excerpt?: string;
 }
 
+export interface LocalAgentTool {
+  name: string;
+  description: string;
+  permission?: string;
+  risk_level?: string;
+  timeout_seconds?: number;
+  effect?: string;
+  invocation_policy?: string;
+  requires_confirmation?: boolean;
+  input_schema?: Record<string, unknown>;
+}
+
 export async function askLocalAgent(
   app: App,
   settings: AgentSettings,
@@ -46,6 +58,26 @@ export async function askLocalAgent(
     throw new AgentError(`本地 Agent 请求失败（HTTP ${response.status}）。`);
   }
   return toAgentAnswer(response.json as unknown);
+}
+
+export async function listLocalAgentTools(settings: AgentSettings): Promise<LocalAgentTool[]> {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("本地 Agent 端口未配置。");
+  if (!settings.localAgentToken) throw new AgentError("本地 Agent 尚未配对。");
+  const response = await requestUrl({
+    url: `http://127.0.0.1:${port}/tools`,
+    method: "GET",
+    headers: { "X-Agent-Token": settings.localAgentToken },
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AgentError(`读取工具列表失败（HTTP ${response.status}）。`);
+  }
+  const payload = response.json as unknown;
+  if (!isRecord(payload) || !Array.isArray(payload.tools)) {
+    throw new AgentError("本地 Agent 返回了无法识别的工具列表。");
+  }
+  return payload.tools.filter(isLocalAgentTool);
 }
 
 export async function testLocalAgent(app: App, settings: AgentSettings): Promise<void> {
@@ -228,6 +260,12 @@ function isLocalTask(value: unknown): value is LocalTask {
 
 function isLocalSearchResult(value: unknown): value is LocalSearchResult {
   return isRecord(value) && typeof value.path === "string";
+}
+
+function isLocalAgentTool(value: unknown): value is LocalAgentTool {
+  return isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.description === "string";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

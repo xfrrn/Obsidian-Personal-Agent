@@ -3,7 +3,12 @@ import {
   PluginSettingTab,
   Setting
 } from "obsidian";
-import { discoverLocalAgent, testLocalAgent } from "../api/local-agent-client";
+import {
+  discoverLocalAgent,
+  listLocalAgentTools,
+  testLocalAgent,
+  type LocalAgentTool
+} from "../api/local-agent-client";
 import { callModel } from "../api/model-client";
 import type PersonalKnowledgeAgentPlugin from "../main";
 
@@ -123,6 +128,31 @@ export class AgentSettingTab extends PluginSettingTab {
       );
     const localAgentStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
     localAgentSetting.settingEl.insertAdjacentElement("afterend", localAgentStatusEl);
+
+    const toolsSetting = new Setting(containerEl)
+      .setName("工具展示")
+      .setDesc("查看本地 Agent 当前注册的工具。")
+      .addButton((button) =>
+        button
+          .setButtonText("刷新工具列表")
+          .onClick(async () => {
+            button.setDisabled(true).setButtonText("刷新中...");
+            renderToolsPanel(toolsPanelEl, "loading");
+            try {
+              renderToolsPanel(toolsPanelEl, await listLocalAgentTools(this.agentPlugin.settings));
+            } catch (error) {
+              renderToolsPanel(
+                toolsPanelEl,
+                error instanceof Error ? error.message : "读取工具列表失败。"
+              );
+            } finally {
+              button.setDisabled(false).setButtonText("刷新工具列表");
+            }
+          })
+      );
+    const toolsPanelEl = containerEl.createDiv({ cls: "pka-tools-panel" });
+    toolsSetting.settingEl.insertAdjacentElement("afterend", toolsPanelEl);
+    renderToolsPanel(toolsPanelEl, []);
 
     new Setting(containerEl)
       .setName("供应商")
@@ -259,4 +289,52 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 function elapsedMs(startedAt: number): number {
   return Math.round(performance.now() - startedAt);
+}
+
+function renderToolsPanel(
+  containerEl: HTMLElement,
+  toolsOrMessage: LocalAgentTool[] | "loading" | string
+): void {
+  containerEl.empty();
+  if (toolsOrMessage === "loading") {
+    containerEl.createDiv({ cls: "pka-tools-empty", text: "正在读取工具列表..." });
+    return;
+  }
+  if (typeof toolsOrMessage === "string") {
+    containerEl.createDiv({ cls: "pka-tools-empty is-error", text: toolsOrMessage });
+    return;
+  }
+  if (!toolsOrMessage.length) {
+    containerEl.createDiv({ cls: "pka-tools-empty", text: "尚未加载工具列表。" });
+    return;
+  }
+  for (const tool of toolsOrMessage) {
+    const card = containerEl.createDiv({ cls: "pka-tool-card" });
+    const header = card.createDiv({ cls: "pka-tool-card-header" });
+    header.createDiv({ cls: "pka-tool-name", text: tool.name });
+    header.createDiv({ cls: "pka-tool-meta", text: toolMeta(tool).join(" · ") });
+    card.createDiv({ cls: "pka-tool-description", text: tool.description });
+    const inputs = inputNames(tool.input_schema);
+    if (inputs) card.createDiv({ cls: "pka-tool-schema", text: `参数：${inputs}` });
+  }
+}
+
+function toolMeta(tool: LocalAgentTool): string[] {
+  return [
+    tool.permission,
+    tool.effect,
+    tool.risk_level,
+    tool.invocation_policy,
+    tool.requires_confirmation ? "需确认" : undefined,
+    typeof tool.timeout_seconds === "number" ? `${tool.timeout_seconds}s` : undefined
+  ].filter((item): item is string => Boolean(item));
+}
+
+function inputNames(schema: Record<string, unknown> | undefined): string {
+  const properties = schema?.properties;
+  return isRecord(properties) ? Object.keys(properties).join(", ") : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

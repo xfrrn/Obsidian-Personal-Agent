@@ -397,3 +397,54 @@
 .pka-setting-status.is-error {
   color: var(--text-error);
 }
+
+.pka-tools-panel {
+  display: grid;
+  gap: var(--size-4-2);
+  margin: -8px 0 var(--size-4-4);
+  padding-left: var(--size-4-4);
+}
+
+.pka-tools-empty,
+.pka-tool-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: var(--size-4-3);
+}
+
+.pka-tools-empty {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.pka-tools-empty.is-error {
+  color: var(--text-error);
+}
+
+.pka-tool-card-header {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  justify-content: space-between;
+}
+
+.pka-tool-name {
+  color: var(--text-normal);
+  font-weight: 650;
+}
+
+.pka-tool-meta,
+.pka-tool-schema {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.pka-tool-description {
+  color: var(--text-normal);
+  margin-top: var(--size-4-1);
+}
+
+.pka-tool-schema {
+  margin-top: var(--size-4-2);
+}

@@ -1086,6 +1086,25 @@ async function askLocalAgent(app, settings, question, scope) {
   }
   return toAgentAnswer(response.json);
 }
+async function listLocalAgentTools(settings) {
+  const port = localAgentPort(settings);
+  if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
+  if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
+  const response = await (0, import_obsidian5.requestUrl)({
+    url: `http://127.0.0.1:${port}/tools`,
+    method: "GET",
+    headers: { "X-Agent-Token": settings.localAgentToken },
+    throw: false
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AgentError(`\u8BFB\u53D6\u5DE5\u5177\u5217\u8868\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
+  }
+  const payload = response.json;
+  if (!isRecord3(payload) || !Array.isArray(payload.tools)) {
+    throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u5DE5\u5177\u5217\u8868\u3002");
+  }
+  return payload.tools.filter(isLocalAgentTool);
+}
 async function testLocalAgent(app, settings) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
@@ -1248,6 +1267,9 @@ function isLocalTask(value) {
 function isLocalSearchResult(value) {
   return isRecord3(value) && typeof value.path === "string";
 }
+function isLocalAgentTool(value) {
+  return isRecord3(value) && typeof value.name === "string" && typeof value.description === "string";
+}
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1332,6 +1354,25 @@ var AgentSettingTab = class extends import_obsidian6.PluginSettingTab {
     );
     const localAgentStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
     localAgentSetting.settingEl.insertAdjacentElement("afterend", localAgentStatusEl);
+    const toolsSetting = new import_obsidian6.Setting(containerEl).setName("\u5DE5\u5177\u5C55\u793A").setDesc("\u67E5\u770B\u672C\u5730 Agent \u5F53\u524D\u6CE8\u518C\u7684\u5DE5\u5177\u3002").addButton(
+      (button) => button.setButtonText("\u5237\u65B0\u5DE5\u5177\u5217\u8868").onClick(async () => {
+        button.setDisabled(true).setButtonText("\u5237\u65B0\u4E2D...");
+        renderToolsPanel(toolsPanelEl, "loading");
+        try {
+          renderToolsPanel(toolsPanelEl, await listLocalAgentTools(this.agentPlugin.settings));
+        } catch (error) {
+          renderToolsPanel(
+            toolsPanelEl,
+            error instanceof Error ? error.message : "\u8BFB\u53D6\u5DE5\u5177\u5217\u8868\u5931\u8D25\u3002"
+          );
+        } finally {
+          button.setDisabled(false).setButtonText("\u5237\u65B0\u5DE5\u5177\u5217\u8868");
+        }
+      })
+    );
+    const toolsPanelEl = containerEl.createDiv({ cls: "pka-tools-panel" });
+    toolsSetting.settingEl.insertAdjacentElement("afterend", toolsPanelEl);
+    renderToolsPanel(toolsPanelEl, []);
     new import_obsidian6.Setting(containerEl).setName("\u4F9B\u5E94\u5546").setDesc("DeepSeek \u9ED8\u8BA4\u4F7F\u7528\u5B98\u65B9 OpenAI-compatible API\u3002").addDropdown((dropdown) => {
       for (const item of PROVIDERS) {
         dropdown.addOption(item.id, item.name);
@@ -1430,6 +1471,47 @@ function withTimeout2(promise, ms) {
 }
 function elapsedMs(startedAt) {
   return Math.round(performance.now() - startedAt);
+}
+function renderToolsPanel(containerEl, toolsOrMessage) {
+  containerEl.empty();
+  if (toolsOrMessage === "loading") {
+    containerEl.createDiv({ cls: "pka-tools-empty", text: "\u6B63\u5728\u8BFB\u53D6\u5DE5\u5177\u5217\u8868..." });
+    return;
+  }
+  if (typeof toolsOrMessage === "string") {
+    containerEl.createDiv({ cls: "pka-tools-empty is-error", text: toolsOrMessage });
+    return;
+  }
+  if (!toolsOrMessage.length) {
+    containerEl.createDiv({ cls: "pka-tools-empty", text: "\u5C1A\u672A\u52A0\u8F7D\u5DE5\u5177\u5217\u8868\u3002" });
+    return;
+  }
+  for (const tool of toolsOrMessage) {
+    const card = containerEl.createDiv({ cls: "pka-tool-card" });
+    const header = card.createDiv({ cls: "pka-tool-card-header" });
+    header.createDiv({ cls: "pka-tool-name", text: tool.name });
+    header.createDiv({ cls: "pka-tool-meta", text: toolMeta(tool).join(" \xB7 ") });
+    card.createDiv({ cls: "pka-tool-description", text: tool.description });
+    const inputs = inputNames(tool.input_schema);
+    if (inputs) card.createDiv({ cls: "pka-tool-schema", text: `\u53C2\u6570\uFF1A${inputs}` });
+  }
+}
+function toolMeta(tool) {
+  return [
+    tool.permission,
+    tool.effect,
+    tool.risk_level,
+    tool.invocation_policy,
+    tool.requires_confirmation ? "\u9700\u786E\u8BA4" : void 0,
+    typeof tool.timeout_seconds === "number" ? `${tool.timeout_seconds}s` : void 0
+  ].filter((item) => Boolean(item));
+}
+function inputNames(schema) {
+  const properties = schema == null ? void 0 : schema.properties;
+  return isRecord4(properties) ? Object.keys(properties).join(", ") : "";
+}
+function isRecord4(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // apps/obsidian-plugin/src/bootstrap/register-settings.ts
