@@ -7,6 +7,7 @@ import {
   parseAgentAnswer,
   parseCandidatePaths,
   inferIntent,
+  isLocalAnalysisQuery,
   isTaskQuery,
   parseIntent
 } from "../src/utils/protocol";
@@ -99,6 +100,9 @@ test("本地意图判断不会把提问误当成写操作", () => {
   assert.equal(inferIntent("总结当前笔记"), "ask");
   assert.equal(isTaskQuery("列出未完成任务"), true);
   assert.equal(isTaskQuery("总结当前笔记"), false);
+  assert.equal(isLocalAnalysisQuery("检查当前笔记是否符合规范"), true);
+  assert.equal(isLocalAnalysisQuery("给知识库做一次健康检查"), true);
+  assert.equal(isLocalAnalysisQuery("总结当前笔记"), false);
 });
 
 test("JSON 对象外的额外文本会被拒绝", () => {

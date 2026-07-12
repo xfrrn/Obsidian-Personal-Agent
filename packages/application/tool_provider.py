@@ -5,11 +5,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .notes.read_note import ReadNoteUseCase
+from .notes.analyze_notes import (
+    CheckVaultHealthUseCase,
+    EvaluateRulesUseCase,
+    ExtractTaskCandidatesUseCase,
+    FindDuplicatesUseCase,
+    FindRelatedNotesUseCase,
+    InspectNoteUseCase,
+    ListRulesUseCase,
+    ListTagsUseCase,
+)
 from .operations.build_operation_plan import BuildOperationPlanUseCase
 from .operations.execute_operation_plan import ExecuteOperationPlanUseCase
 from .operations.rollback_operation import RollbackOperationUseCase
 from .search.search_notes import SearchNotesUseCase
 from .tasks.list_tasks import ListTasksUseCase
+from .projects.analyze_project import AnalyzeProjectUseCase
 from tools import (
     FunctionTool,
     Tool,
@@ -38,31 +49,135 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
     build_plan = BuildOperationPlanUseCase(deps.operation_planner, deps.operation_plan_store)
     execute_plan = ExecuteOperationPlanUseCase(deps.operation_plan_store, deps.operation_executor)
     rollback_plan = RollbackOperationUseCase(deps.operation_plan_store, deps.operation_executor)
+    inspect_note = InspectNoteUseCase(deps.notes)
+    analyze_project = AnalyzeProjectUseCase(deps.notes, deps.tasks)
+    check_health = CheckVaultHealthUseCase(deps.notes)
+    list_tags = ListTagsUseCase(deps.notes)
+    find_related = FindRelatedNotesUseCase(deps.notes)
+    find_duplicates = FindDuplicatesUseCase(deps.notes)
+    list_rules = ListRulesUseCase(deps.notes)
+    evaluate_rules = EvaluateRulesUseCase(deps.notes)
+    extract_tasks = ExtractTaskCandidatesUseCase(deps.notes)
 
     return (
         FunctionTool(
             ToolDefinition(
                 name="search_notes",
                 description="在知识库中搜索相关笔记",
-                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "path_prefix": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "project": {"type": "string"},
+                        "modified_after": {"type": "string"},
+                        "modified_before": {"type": "string"},
+                        "sort": {"enum": ["relevance", "modified_desc", "modified_asc", "path"]},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                    },
+                },
             ),
             lambda input_data, _context: search_notes.execute(input_data),
         ),
         FunctionTool(
             ToolDefinition(
                 name="read_note",
-                description="按知识库相对路径读取一篇笔记",
-                input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+                description="按知识库相对路径读取一篇或一组受控笔记",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "paths": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+                    },
+                },
             ),
             lambda input_data, _context: read_note.execute(input_data),
         ),
         FunctionTool(
             ToolDefinition(
                 name="list_tasks",
-                description="列出笔记中的任务和待办事项",
-                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+                description="按状态、日期、优先级、项目和笔记范围列出 Tasks 待办",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "status": {"type": "string"},
+                        "due_on": {"type": "string"},
+                        "due_after": {"type": "string"},
+                        "due_before": {"type": "string"},
+                        "priority": {"type": "string"},
+                        "project": {"type": "string"},
+                        "path_prefix": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    },
+                },
             ),
             lambda input_data, _context: list_tasks.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="inspect_note",
+                description="检查笔记规范、类型、链接、归档位置和缺失内容",
+                input_schema={"type": "object", "properties": {"path": {"type": "string"}, "activeFilePath": {"type": "string"}, "noteName": {"type": "string"}}},
+            ),
+            lambda input_data, _context: inspect_note.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="analyze_project",
+                description="汇总项目笔记、任务、状态、缺失文档和长期未更新内容",
+                input_schema={"type": "object", "properties": {"project": {"type": "string"}, "projectName": {"type": "string"}, "activeFilePath": {"type": "string"}}},
+            ),
+            lambda input_data, _context: analyze_project.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="check_vault_health",
+                description="生成知识库规范和链接健康报告",
+                input_schema={"type": "object", "properties": {"limit": {"type": "integer"}}},
+            ),
+            lambda input_data, _context: check_health.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(name="list_tags", description="统计知识库标签、分类、别名和废弃状态"),
+            lambda input_data, _context: list_tags.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="find_related_notes",
+                description="根据链接、标签、项目和词项重合查找相关笔记",
+                input_schema={"type": "object", "properties": {"path": {"type": "string"}, "activeFilePath": {"type": "string"}, "noteName": {"type": "string"}, "limit": {"type": "integer"}}},
+            ),
+            lambda input_data, _context: find_related.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="find_duplicates",
+                description="查找正文完全重复或高度相似的笔记",
+                input_schema={"type": "object", "properties": {"threshold": {"type": "number"}, "scan_limit": {"type": "integer"}, "limit": {"type": "integer"}}},
+            ),
+            lambda input_data, _context: find_duplicates.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(name="list_rules", description="列出当前知识库确定性管理规则"),
+            lambda input_data, _context: list_rules.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="evaluate_rules",
+                description="对指定笔记或目录试运行确定性规则但不写入",
+                input_schema={"type": "object", "properties": {"path": {"type": "string"}, "activeFilePath": {"type": "string"}, "path_prefix": {"type": "string"}}},
+            ),
+            lambda input_data, _context: evaluate_rules.execute(input_data),
+        ),
+        FunctionTool(
+            ToolDefinition(
+                name="extract_task_candidates",
+                description="从笔记正文中提取尚未写成 Markdown Task 的潜在任务",
+                input_schema={"type": "object", "properties": {"path": {"type": "string"}, "activeFilePath": {"type": "string"}, "noteName": {"type": "string"}, "limit": {"type": "integer"}}},
+            ),
+            lambda input_data, _context: extract_tasks.execute(input_data),
         ),
         FunctionTool(
             ToolDefinition(

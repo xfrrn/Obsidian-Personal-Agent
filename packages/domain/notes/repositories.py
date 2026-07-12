@@ -12,6 +12,20 @@ class NoteRepository(Protocol):
         """Return one note by vault-relative path."""
         ...
 
-    async def search(self, query: str, *, limit: int = 10) -> Sequence[Mapping[str, Any]]:
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        filters: Mapping[str, Any] | None = None,
+    ) -> Sequence[Mapping[str, Any]]:
         """Return notes matching the user query."""
+        ...
+
+    async def all(self, *, limit: int = 5000) -> Sequence[Mapping[str, Any]]:
+        """Return a bounded metadata-rich catalog for deterministic analysis."""
+        ...
+
+    async def rules(self) -> Sequence[Mapping[str, Any]]:
+        """Return built-in rules plus optional vault-local overrides."""
         ...

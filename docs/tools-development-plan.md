@@ -2,7 +2,7 @@
 
 更新时间：2026-07-12
 
-当前进度：P0 代码已完成，等待 Obsidian 测试 Vault 人工验收。
+当前进度：P0、P1、P2 代码已完成，等待 Obsidian 测试 Vault 人工验收；P3 暂缓。
 
 ## 一、规划结论
 
@@ -19,13 +19,13 @@
 
 ## 二、当前基线
 
-当前 Local Agent 已注册 6 个 tools：
+当前 Local Agent 已注册 15 个 tools：
 
 | Tool | 当前状态 | 主要缺口 |
 | --- | --- | --- |
-| `search_notes` | 可用 | 缺少时间、标签、项目等结构化过滤 |
-| `read_note` | 可用 | 只能读取单篇笔记 |
-| `list_tasks` | 可用 | 需要补齐 Tasks 插件日期、优先级、重复任务语法 |
+| `search_notes` | 可用 | 已支持目录、标签、项目、修改时间、排序和数量过滤 |
+| `read_note` | 可用 | 已支持最多 8 篇、总计 50,000 字符的受控批量读取 |
+| `list_tasks` | 可用 | 已支持 Tasks 日期、优先级、重复信息、项目和目录过滤 |
 | `build_operation_plan` | 可用 | 已持久化计划、完整性哈希、动态风险和有效期 |
 | `execute_operation_plan` | 可用 | 已接入真实文件执行、确认令牌、冲突检测、审计和失败回滚 |
 | `rollback_operation` | 可用 | 已支持执行后显式撤销和版本冲突保护 |
@@ -66,7 +66,7 @@ P0 不增加业务型写入 tool。`create_note`、`update_note`、`move_note`�
 - 成功、失败、回滚都有审计记录。
 - 三种权限模式均在执行边界生效，而不是只由 UI 控制。
 
-### P1：个人日常核心能力
+### P1：个人日常核心能力（代码已完成）
 
 | Tool | 用途 | 实现建议 |
 | --- | --- | --- |
@@ -75,7 +75,7 @@ P0 不增加业务型写入 tool。`create_note`、`update_note`、`move_note`�
 
 同时增强现有 tools：
 
-- `search_notes`：增加 `path`、`tags`、`project`、`modified_after`、`modified_before` 和排序参数。
+- `search_notes`：增加 `path_prefix`、`tags`、`project`、`modified_after`、`modified_before` 和排序参数。
 - `read_note`：增加受控批量读取参数，限制篇数和总字符数，返回真实引用。
 - `list_tasks`：兼容已安装的 Tasks 插件格式，支持状态、日期、优先级、项目和来源笔记过滤。
 - `build_operation_plan`：支持任务更新、项目建档、当前笔记整理和单文件移动。
@@ -93,7 +93,7 @@ P0 不增加业务型写入 tool。`create_note`、`update_note`、`move_note`�
 - 能输出项目总览、缺失内容和下一步行动。
 - 能检查当前笔记并生成可确认的整理计划。
 
-### P2：知识库治理与关系发现
+### P2：知识库治理与关系发现（代码已完成）
 
 | Tool | 用途 | 风险 |
 | --- | --- | --- |
@@ -217,13 +217,13 @@ Tool 的静态风险只是基础值，OperationPlan 的最终风险由执行器�
 4. 补充用户主动撤销和执行历史。
 5. 用测试 Vault 完成写入、冲突、失败回滚和审计验收。
 
-### 里程碑 M1：日常可用
+### 里程碑 M1：日常可用（代码已完成）
 
 1. 增加 `inspect_note`、`analyze_project`。
 2. 增强 `search_notes`、`read_note` 和 `list_tasks`，接入 Tasks adapter。
-3. 让 Planner 能进行“搜索 → 读取 → 分析 → 生成计划”的受限多轮工具调用。
+3. 用组合型只读 use case 完成“检索 → 读取 → 分析”，避免先引入通用多轮循环。
 
-### 里程碑 M2：治理能力
+### 里程碑 M2：治理能力（代码已完成）
 
 1. 增加健康检查、标签统计、重复检测和关联推荐。
 2. 增加规则读取与试运行。
@@ -237,10 +237,12 @@ Tool 的静态风险只是基础值，OperationPlan 的最终风险由执行器�
 
 ## 八、下一批开发任务
 
-先在测试 Vault 完成 M0 人工验收：
+先在测试 Vault 完成 P0-P2 人工验收：
 
 - 分别验证创建、替换、移动、Frontmatter、任务操作。
 - 验证三种权限模式、预览后冲突拒绝、失败回滚和显式撤销。
 - 检查 SQLite 状态和 JSONL 审计记录。
+- 验证结构化搜索、批量读取、Tasks 过滤、当前笔记检查和项目分析。
+- 验证健康报告、标签统计、关联推荐、重复检测、规则试运行和任务候选提取。
 
-验收通过后，再开始增强 `read_note`、实现 `inspect_note` 和 Tasks adapter。
+P3 暂不开发；验收中发现的问题优先修复，不提前接入外部网络、通讯、插件 capability 或知识图谱。

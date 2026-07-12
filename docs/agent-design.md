@@ -128,20 +128,21 @@ type KnowledgeOperation =
 
 ## 工具边界
 
-第一阶段不用做通用 Tool Registry，只保留现有函数即工具。Agent 先选择工具，只有选择 `search_notes` 时才进入笔记检索。
+Local Agent 已接入统一 Tool Registry。只读分析 tool 直接调用 Application use case；所有写操作仍统一进入 OperationPlan。
 
 | 工具 | 当前实现 | 风险 |
 | --- | --- | --- |
-| `read_current_note` | `getCurrentSource` | low |
-| `list_vault_catalog` | `getVaultCatalog` | low |
-| `read_notes` | `loadSources` | low |
-| `select_candidate_notes` | `selectCandidateNotePaths` | low |
-| `list_tasks` | `answerWithTasks` | low |
-| `build_operation_plan` | `buildOperationPlan` | medium |
-| `execute_operation_plan` | `executeOperationPlan` | high |
-| `invoke_plugin_command` | `invoke-plugin` operation | high |
+| `search_notes` / `read_note` / `list_tasks` | Local Vault repository | low |
+| `inspect_note` / `analyze_project` | Application 组合用例 | low |
+| `check_vault_health` / `list_tags` | 确定性全库分析 | low |
+| `find_related_notes` / `find_duplicates` | 链接、标签和词项分析 | low |
+| `list_rules` / `evaluate_rules` | 内置规则和 Vault 规则覆盖 | low |
+| `extract_task_candidates` | 本地启发式候选提取 | low |
+| `build_operation_plan` | 持久化计划与动态风险 | low / prepare-write |
+| `execute_operation_plan` | 真实文件执行器 | high / system-only |
+| `rollback_operation` | 版本校验后撤销 | high / system-only |
 
-等 local-agent 接入后，再把这些函数包装成 `packages/agent-core/tools` 下带 `input_schema`、`output_schema`、`permission`、`risk_level` 的工具定义。
+所有工具定义都包含 `input_schema`、`output_schema`、`permission`、`risk_level` 和调用策略；P3 外部能力暂不注册。
 
 ## 安全设计
 

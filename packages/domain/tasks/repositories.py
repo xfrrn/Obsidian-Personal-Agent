@@ -15,6 +15,7 @@ class TaskRepository(Protocol):
         status: str | None = None,
         limit: int = 50,
         path: str | None = None,
+        filters: Mapping[str, Any] | None = None,
     ) -> Sequence[Mapping[str, Any]]:
         """Return tasks filtered by text and optional status."""
         ...

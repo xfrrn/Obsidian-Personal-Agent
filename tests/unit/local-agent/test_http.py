@@ -44,8 +44,17 @@ def test_handshake_rejects_browsers_and_cannot_rebind(tmp_path: Path) -> None:
         status, _, health = _request(base + "/health")
         assert status == 200 and "vaultRoot" not in health
         assert _request(base + "/tools")[0] == 403
-        assert _request(base + "/tools", headers={"X-Agent-Token": token})[0] == 200
+        status, _, tools = _request(base + "/tools", headers={"X-Agent-Token": token})
+        assert status == 200
+        tool_names = {item["name"] for item in tools["tools"]}
+        assert {"inspect_note", "analyze_project", "check_vault_health", "find_duplicates"} <= tool_names
         assert _request(base + "/identity", headers={"X-Agent-Token": token})[2]["vaultRoot"] == str(tmp_path)
+        status, _, health = _request(
+            base + "/chat",
+            {"userInput": "给知识库做一次健康检查"},
+            {"X-Agent-Token": token},
+        )
+        assert status == 200 and "知识库健康检查" in health["assistant_message"]
         assert _request(
             base + "/chat",
             {"userInput": "confirm", "trigger": "operation_confirmed", "operationPlanId": "fake"},

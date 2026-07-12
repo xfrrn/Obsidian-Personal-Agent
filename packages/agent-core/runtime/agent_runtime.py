@@ -21,7 +21,7 @@ from planner import (
     PlanValidationResult,
     RuleBasedPlanner,
 )
-from tools import ToolRegistry
+from tools import ToolRegistry, ToolResult
 
 from .cancellation import CancellationToken
 from .execution_context import RuntimeRequest, RuntimeTrigger
@@ -154,6 +154,8 @@ class AgentRuntime:
             return "没有执行任何步骤。"
         last = execution.step_results[-1]
         output = last.output
+        if isinstance(output, ToolResult):
+            output = output.output
         if isinstance(output, dict) and isinstance(output.get("message"), str):
             return output["message"]
         if isinstance(output, dict) and isinstance(output.get("error"), str):

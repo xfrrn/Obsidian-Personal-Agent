@@ -22,6 +22,10 @@ export function isTaskQuery(input: string): boolean {
   return /待办|任务|todo|行动项|未完成事项|已完成事项/i.test(input);
 }
 
+export function isLocalAnalysisQuery(input: string): boolean {
+  return /(?:检查|分析).{0,12}(?:当前笔记|笔记规范|项目|知识库)|知识库.{0,8}(?:健康|体检)|(?:列出|统计|查看).{0,8}标签|(?:关联|相关|重复|相似).{0,8}笔记|(?:列出|查看|试运行|评估).{0,8}规则|(?:提取|找出).{0,12}(?:潜在任务|任务候选)/i.test(input);
+}
+
 export class AgentError extends Error {
   constructor(message: string) {
     super(message);

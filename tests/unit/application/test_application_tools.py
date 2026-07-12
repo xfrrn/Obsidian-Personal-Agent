@@ -15,10 +15,33 @@ from tools import ToolCall, ToolPermission, ToolPolicy, ToolRegistry, ToolRiskLe
 
 class FakeNotes:
     async def get(self, path: str) -> Mapping[str, Any]:
-        return {"path": path, "title": "Today", "content": "hello"}
+        return {
+            "path": path,
+            "title": "Today",
+            "content": "hello\n下一步：写测试",
+            "headings": (),
+            "metadata": {"project": "Agent", "status": "active"},
+            "tags": ("agent",),
+            "links": (),
+            "project": "Agent",
+            "modifiedAt": "2026-07-12T00:00:00+08:00",
+            "frontmatterError": None,
+        }
 
-    async def search(self, query: str, *, limit: int = 10) -> Sequence[Mapping[str, Any]]:
-        return ({"path": "Today.md", "score": 1, "query": query, "limit": limit},)
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        filters: Mapping[str, Any] | None = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        return ({"path": "Today.md", "title": "Today", "score": 1, "query": query, "limit": limit, "filters": filters},)
+
+    async def all(self, *, limit: int = 5000) -> Sequence[Mapping[str, Any]]:
+        return (await self.get("Today.md"),)
+
+    async def rules(self) -> Sequence[Mapping[str, Any]]:
+        return ()
 
 
 class FakeTasks:
@@ -29,8 +52,17 @@ class FakeTasks:
         status: str | None = None,
         limit: int = 50,
         path: str | None = None,
+        filters: Mapping[str, Any] | None = None,
     ) -> Sequence[Mapping[str, Any]]:
-        return ({"title": "write tests", "status": status or "open", "query": query, "limit": limit, "path": path},)
+        return ({
+            "title": "write tests",
+            "completed": status == "completed",
+            "status": status or "open",
+            "query": query,
+            "limit": limit,
+            "path": path or "Today.md",
+            "filters": filters,
+        },)
 
 
 class FakePlanner:
@@ -93,6 +125,15 @@ async def _run() -> None:
         "search_notes",
         "read_note",
         "list_tasks",
+        "inspect_note",
+        "analyze_project",
+        "check_vault_health",
+        "list_tags",
+        "find_related_notes",
+        "find_duplicates",
+        "list_rules",
+        "evaluate_rules",
+        "extract_task_candidates",
         "build_operation_plan",
         "execute_operation_plan",
         "rollback_operation",
@@ -102,7 +143,9 @@ async def _run() -> None:
     assert search.output["results"][0]["path"] == "Today.md"
 
     note = await registry.run(ToolCall("read_note", {"path": "Today.md"}))
-    assert note.output["note"]["content"] == "hello"
+    assert note.output["note"]["content"].startswith("hello")
+    batch = await registry.run(ToolCall("read_note", {"paths": ["Today.md", "Other.md"]}))
+    assert batch.output["count"] == 2
 
     tasks = await registry.run(ToolCall("list_tasks", {"rawText": "tasks"}))
     assert tasks.output["count"] == 1
@@ -114,6 +157,17 @@ async def _run() -> None:
     assert current.output["results"][0]["path"] == "Today.md"
     current_tasks = await registry.run(ToolCall("list_tasks", {"scope": "current", "activeFilePath": "Today.md"}))
     assert current_tasks.output["tasks"][0]["path"] == "Today.md"
+
+    inspection = await registry.run(ToolCall("inspect_note", {"path": "Today.md"}))
+    assert inspection.output["classification"] == "note"
+    project = await registry.run(ToolCall("analyze_project", {"project": "Agent"}))
+    assert project.output["noteCount"] == 1
+    health = await registry.run(ToolCall("check_vault_health"))
+    assert health.output["noteCount"] == 1
+    tags = await registry.run(ToolCall("list_tags"))
+    assert tags.output["tags"][0]["tag"] == "agent"
+    candidates = await registry.run(ToolCall("extract_task_candidates", {"path": "Today.md"}))
+    assert candidates.output["count"] == 1
 
     plan = await registry.run(
         ToolCall(

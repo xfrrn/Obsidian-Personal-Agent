@@ -36,7 +36,7 @@ def _context(user_input: str = "查询任务"):
         conversation_id="c1",
         user_input=user_input,
         active_file_path="Projects/A.md",
-        metadata={"pendingOperationPlanId": "op_1"},
+        metadata={"pendingOperationPlanId": "op_1", "currentProject": "Agent"},
     )
 
 
@@ -167,6 +167,26 @@ def test_scope_is_forwarded_to_read_tools() -> None:
         PlannerInput(_single_intent(IntentType.TASK_SEARCH), context, _tools())
     )
     assert plan.steps[0].arguments["scope"] == "current"
+
+
+def test_p1_p2_intents_map_to_registered_tools() -> None:
+    mappings = {
+        IntentType.NOTE_INSPECT: "inspect_note",
+        IntentType.PROJECT_ANALYZE: "analyze_project",
+        IntentType.VAULT_HEALTH: "check_vault_health",
+        IntentType.TAG_LIST: "list_tags",
+        IntentType.NOTE_RELATED: "find_related_notes",
+        IntentType.NOTE_DUPLICATES: "find_duplicates",
+        IntentType.RULE_LIST: "list_rules",
+        IntentType.RULE_EVALUATE: "evaluate_rules",
+        IntentType.TASK_EXTRACT: "extract_task_candidates",
+    }
+    tools = (*_tools(), *(ToolDefinition(name, name) for name in mappings.values()))
+    for intent, tool_name in mappings.items():
+        input_data = PlannerInput(_single_intent(intent), _context("test"), tools)
+        plan = RuleBasedPlanner().create_plan(input_data)
+        assert plan.steps[0].tool_name == tool_name
+        assert PlanValidator().validate(plan, input_data).valid
 
 
 if __name__ == "__main__":

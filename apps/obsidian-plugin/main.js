@@ -43,6 +43,9 @@ function inferIntent(input) {
 function isTaskQuery(input) {
   return /待办|任务|todo|行动项|未完成事项|已完成事项/i.test(input);
 }
+function isLocalAnalysisQuery(input) {
+  return /(?:检查|分析).{0,12}(?:当前笔记|笔记规范|项目|知识库)|知识库.{0,8}(?:健康|体检)|(?:列出|统计|查看).{0,8}标签|(?:关联|相关|重复|相似).{0,8}笔记|(?:列出|查看|试运行|评估).{0,8}规则|(?:提取|找出).{0,12}(?:潜在任务|任务候选)/i.test(input);
+}
 var AgentError = class extends Error {
   constructor(message) {
     super(message);
@@ -364,11 +367,12 @@ function toAgentAnswer(payload) {
   if (isRecord2(output) && Array.isArray(output.tasks)) {
     return tasksAnswer(output.tasks.filter(isLocalTask));
   }
+  if (isRecord2(output) && typeof output.message === "string") {
+    const citations = Array.isArray(output.citations) ? uniqueCitations(output.citations.filter(isLocalCitation)) : [];
+    return { answer: output.message, citations };
+  }
   if (isRecord2(output) && Array.isArray(output.results)) {
     return searchAnswer(output.results.filter(isLocalSearchResult));
-  }
-  if (isRecord2(output) && typeof output.message === "string") {
-    return { answer: output.message, citations: [] };
   }
   if (isRecord2(payload) && typeof payload.assistant_message === "string") {
     return { answer: payload.assistant_message, citations: [] };
@@ -464,6 +468,9 @@ function isLocalTask(value) {
 }
 function isLocalSearchResult(value) {
   return isRecord2(value) && typeof value.path === "string";
+}
+function isLocalCitation(value) {
+  return isRecord2(value) && typeof value.path === "string" && (value.heading === void 0 || typeof value.heading === "string");
 }
 function isLocalAgentTool(value) {
   return isRecord2(value) && typeof value.name === "string" && typeof value.description === "string";
@@ -1739,7 +1746,7 @@ async function judgeIntent(_app, _settings, input) {
 async function askAgent(app, settings, question, scope) {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("\u8BF7\u8F93\u5165\u95EE\u9898\u3002");
-  if (isTaskQuery(cleanQuestion)) {
+  if (isTaskQuery(cleanQuestion) || isLocalAnalysisQuery(cleanQuestion)) {
     return settings.localAgentToken ? askLocalAgent(app, settings, cleanQuestion, scope) : answerWithTasks(app, cleanQuestion, scope);
   }
   if (scope === "current") {

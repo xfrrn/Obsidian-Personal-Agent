@@ -76,6 +76,13 @@ class EntityExtractor:
                 re.compile(r"查询[“\"'《【]?(.+?)[”\"'》】]?(?:项目)"),
             ),
         ),
+        IntentType.PROJECT_ANALYZE: (
+            IntentEntityType.PROJECT_NAME,
+            (
+                re.compile(r"分析(?:一下)?[“\"'《【]?(.+?)[”\"'》】]?(?:项目)$"),
+                re.compile(r"[“\"'《【]?(.+?)[”\"'》】]?项目.*(?:还缺|缺少|健康|状态)"),
+            ),
+        ),
     }
 
     def extract(self, text: str, intent: IntentType) -> tuple[IntentEntity, ...]:

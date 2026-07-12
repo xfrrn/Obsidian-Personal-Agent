@@ -266,11 +266,14 @@ function toAgentAnswer(payload: unknown): AgentAnswer {
   if (isRecord(output) && Array.isArray(output.tasks)) {
     return tasksAnswer(output.tasks.filter(isLocalTask));
   }
+  if (isRecord(output) && typeof output.message === "string") {
+    const citations = Array.isArray(output.citations)
+      ? uniqueCitations(output.citations.filter(isLocalCitation))
+      : [];
+    return { answer: output.message, citations };
+  }
   if (isRecord(output) && Array.isArray(output.results)) {
     return searchAnswer(output.results.filter(isLocalSearchResult));
-  }
-  if (isRecord(output) && typeof output.message === "string") {
-    return { answer: output.message, citations: [] };
   }
   if (isRecord(payload) && typeof payload.assistant_message === "string") {
     return { answer: payload.assistant_message, citations: [] };
@@ -382,6 +385,12 @@ function isLocalTask(value: unknown): value is LocalTask {
 
 function isLocalSearchResult(value: unknown): value is LocalSearchResult {
   return isRecord(value) && typeof value.path === "string";
+}
+
+function isLocalCitation(value: unknown): value is AgentAnswer["citations"][number] {
+  return isRecord(value) &&
+    typeof value.path === "string" &&
+    (value.heading === undefined || typeof value.heading === "string");
 }
 
 function isLocalAgentTool(value: unknown): value is LocalAgentTool {

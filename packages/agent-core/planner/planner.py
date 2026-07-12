@@ -109,9 +109,20 @@ class DefaultArgumentResolver:
     def _missing_fields(self, intent: IntentType, arguments: Mapping[str, Any]) -> tuple[str, ...]:
         if intent is IntentType.TASK_COMPLETE and not arguments.get("taskName"):
             return ("taskName",)
-        if intent in {IntentType.NOTE_ARCHIVE, IntentType.NOTE_OPTIMIZE, IntentType.NOTE_TAG}:
+        if intent in {
+            IntentType.NOTE_ARCHIVE,
+            IntentType.NOTE_OPTIMIZE,
+            IntentType.NOTE_TAG,
+            IntentType.NOTE_INSPECT,
+            IntentType.NOTE_RELATED,
+            IntentType.TASK_EXTRACT,
+        }:
             if not (arguments.get("activeFilePath") or arguments.get("noteName")):
                 return ("notePath",)
+        if intent is IntentType.PROJECT_ANALYZE and not (
+            arguments.get("projectName") or str(arguments.get("activeFilePath", "")).startswith("01-Projects/")
+        ):
+            return ("projectName",)
         return ()
 
 
@@ -121,6 +132,15 @@ INTENT_TOOL_RULES: tuple[IntentToolRule, ...] = (
     IntentToolRule(IntentType.NOTE_SUMMARIZE, PlannerMode.READ, "search_notes"),
     IntentToolRule(IntentType.VAULT_SEARCH, PlannerMode.READ, "search_notes"),
     IntentToolRule(IntentType.PROJECT_SEARCH, PlannerMode.READ, "search_notes"),
+    IntentToolRule(IntentType.NOTE_INSPECT, PlannerMode.READ, "inspect_note"),
+    IntentToolRule(IntentType.PROJECT_ANALYZE, PlannerMode.READ, "analyze_project"),
+    IntentToolRule(IntentType.VAULT_HEALTH, PlannerMode.READ, "check_vault_health"),
+    IntentToolRule(IntentType.TAG_LIST, PlannerMode.READ, "list_tags"),
+    IntentToolRule(IntentType.NOTE_RELATED, PlannerMode.READ, "find_related_notes"),
+    IntentToolRule(IntentType.NOTE_DUPLICATES, PlannerMode.READ, "find_duplicates"),
+    IntentToolRule(IntentType.RULE_LIST, PlannerMode.READ, "list_rules"),
+    IntentToolRule(IntentType.RULE_EVALUATE, PlannerMode.READ, "evaluate_rules"),
+    IntentToolRule(IntentType.TASK_EXTRACT, PlannerMode.READ, "extract_task_candidates"),
     IntentToolRule(IntentType.NOTE_CREATE, PlannerMode.PREPARE_WRITE, "build_operation_plan"),
     IntentToolRule(IntentType.NOTE_UPDATE, PlannerMode.PREPARE_WRITE, "build_operation_plan"),
     IntentToolRule(IntentType.NOTE_ARCHIVE, PlannerMode.PREPARE_WRITE, "build_operation_plan"),

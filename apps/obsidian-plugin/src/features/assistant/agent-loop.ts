@@ -3,7 +3,7 @@ import { askLocalAgent } from "../../api/local-agent-client";
 import { callModel } from "../../api/model-client";
 import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/vault-reader";
 import type { AgentSettings } from "../../settings/settings";
-import { AgentAnswer, AgentError, inferIntent, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
+import { AgentAnswer, AgentError, inferIntent, isLocalAnalysisQuery, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
 import { answerWithTasks } from "../task-actions/list-tasks";
 import { ANSWER_PROMPT } from "./prompts";
@@ -30,7 +30,7 @@ export async function askAgent(
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("请输入问题。");
 
-  if (isTaskQuery(cleanQuestion)) {
+  if (isTaskQuery(cleanQuestion) || isLocalAnalysisQuery(cleanQuestion)) {
     return settings.localAgentToken
       ? askLocalAgent(app, settings, cleanQuestion, scope)
       : answerWithTasks(app, cleanQuestion, scope);

@@ -57,3 +57,23 @@ $env:OBSIDIAN_AGENT_EXECUTION_MODE="confirm_all" # risk_based / unattended
 - `unattended`：只有可信自动化触发的白名单低风险写入可以自动执行。
 
 中高风险操作始终确认；撤销前会再次核对文件哈希，避免覆盖用户后续修改。
+
+当前注册的只读业务 tools：
+
+```text
+search_notes              结构化笔记搜索
+read_note                 单篇或受控批量读取
+list_tasks                Tasks 语法查询
+inspect_note              当前笔记规范和链接检查
+analyze_project           项目总览、任务和缺失文档
+check_vault_health        全库健康报告
+list_tags                 标签统计
+find_related_notes        确定性关联推荐
+find_duplicates           重复和高相似笔记检测
+list_rules                查看规则
+evaluate_rules            规则试运行
+extract_task_candidates   潜在任务提取
+```
+
+可选自定义规则放在 `.obsidian-agent-data/rules.json`；文件必须是 JSON 对象数组，
+相同 `id` 会覆盖内置规则。P3 外部输入、通讯、第三方插件 capability 和知识图谱尚未接入。

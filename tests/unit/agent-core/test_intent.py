@@ -47,6 +47,28 @@ def test_greeting_is_general_chat() -> None:
     assert not result.requires_confirmation
 
 
+def test_p1_p2_read_intents() -> None:
+    cases = {
+        "检查当前笔记是否符合规范": IntentType.NOTE_INSPECT,
+        "分析一下 Agent 项目": IntentType.PROJECT_ANALYZE,
+        "给知识库做一次健康检查": IntentType.VAULT_HEALTH,
+        "列出标签统计": IntentType.TAG_LIST,
+        "查找关联笔记": IntentType.NOTE_RELATED,
+        "检查重复笔记": IntentType.NOTE_DUPLICATES,
+        "列出知识库规则": IntentType.RULE_LIST,
+        "试运行规则": IntentType.RULE_EVALUATE,
+        "从当前笔记提取潜在任务": IntentType.TASK_EXTRACT,
+    }
+    classifier = RuleBasedIntentClassifier()
+    for text, expected in cases.items():
+        result = classifier.classify(text)
+        assert result.intent is expected, (text, result.intent, result.candidates)
+        assert not result.requires_confirmation
+
+    project = classifier.classify("分析一下 Agent 项目")
+    assert "Agent" in _entity_values(project, IntentEntityType.PROJECT_NAME)
+
+
 def test_hybrid_uses_llm_when_rule_confidence_is_low() -> None:
     async def fake_llm(_prompt):
         return '{"intent":"note.search","confidence":0.91,"requiresConfirmation":false,"entities":[{"type":"keyword","value":"项目结构设计"}]}'
