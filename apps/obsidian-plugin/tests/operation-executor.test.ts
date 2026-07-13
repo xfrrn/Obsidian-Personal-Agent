@@ -4,6 +4,7 @@ import test from "node:test";
 import type { App } from "obsidian";
 import { TFile } from "obsidian";
 import {
+  buildOperationPlan,
   executeOperationPlan,
   type OperationPlan
 } from "../src/features/operation-preview/operation-executor";
@@ -32,6 +33,13 @@ test("后续步骤失败会回滚已完成的修改", async () => {
   assert.equal(app.contents.get("A.md"), "old A");
   assert.equal(app.contents.get("B.md"), "old B");
   assert.match(app.audit, /"status":"rolled-back"/);
+});
+
+test("没有 local-agent 时拒绝任务完成请求", async () => {
+  await assert.rejects(
+    () => buildOperationPlan({} as never, { localAgentToken: "" } as never, "完成任务", "vault"),
+    /local-agent/
+  );
 });
 
 class FakeApp {

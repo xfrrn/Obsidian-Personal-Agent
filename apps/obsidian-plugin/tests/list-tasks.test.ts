@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { TFile } from "obsidian";
-import { answerWithTasks, parseMarkdownTasks } from "../src/features/task-actions/list-tasks";
+import { askAgent } from "../src/features/assistant/agent-loop";
+import { collectTasks, parseMarkdownTasks } from "../src/features/task-actions/list-tasks";
 
 test("解析 Markdown 任务并保留标题位置", () => {
   const tasks = parseMarkdownTasks("Projects/A.md", [
@@ -37,27 +38,71 @@ test("解析 Markdown 任务并保留标题位置", () => {
   ]);
 });
 
-test("今天未完成任务只返回今天到期且未完成的任务", async () => {
-  const today = localDate(0);
-  const tomorrow = localDate(1);
+test("没有 local-agent 时拒绝任务查询", async () => {
+  await assert.rejects(
+    () => askAgent({} as never, { localAgentToken: "" } as never, "有什么任务", "vault"),
+    /local-agent/
+  );
+});
+
+test("收集 Markdown 任务供 local-agent 使用", async () => {
   const file = new TFile("Tasks.md");
   const app = {
     workspace: { getActiveFile: () => file },
     vault: {
       getMarkdownFiles: () => [file],
       cachedRead: async () => [
-        `- [ ] 今天要做 📅 ${today}`,
-        `- [ ] 明天再做 📅 ${tomorrow}`,
-        `- [x] 今天已做 📅 ${today}`
+        "- [ ] 今天要做 📅 2026-07-13",
+        "- [x] 今天已做 📅 2026-07-13"
       ].join("\n")
     }
   };
 
-  const answer = await answerWithTasks(app as never, "我今天还有哪些任务没有完成", "vault");
+  const tasks = await collectTasks(app as never, "vault");
 
-  assert.match(answer.answer, /今天要做/);
-  assert.doesNotMatch(answer.answer, /明天再做/);
-  assert.doesNotMatch(answer.answer, /今天已做/);
+  assert.deepEqual(tasks.map((task) => [task.title, task.completed, task.dueDate]), [
+    ["今天要做 📅 2026-07-13", false, "2026-07-13"],
+    ["今天已做 📅 2026-07-13", true, "2026-07-13"]
+  ]);
+});
+
+test("优先使用 Tasks 插件获取任务", async () => {
+  const today = localDate(0);
+  const file = new TFile("Tasks.md");
+  const app = {
+    workspace: { getActiveFile: () => file },
+    plugins: {
+      plugins: {
+        "obsidian-tasks-plugin": {
+          getTasks: () => [
+            {
+              path: "Tasks.md",
+              lineNumber: 4,
+              description: "插件任务",
+              isDone: false,
+              dueDate: { format: () => today },
+              heading: "插件标题"
+            }
+          ]
+        }
+      }
+    },
+    vault: {
+      getMarkdownFiles: () => [file],
+      cachedRead: async () => { throw new Error("should use Tasks plugin"); }
+    }
+  };
+
+  const tasks = await collectTasks(app as never, "vault");
+
+  assert.deepEqual(tasks, [{
+    path: "Tasks.md",
+    line: 5,
+    title: "插件任务",
+    completed: false,
+    dueDate: today,
+    heading: "插件标题"
+  }]);
 });
 
 function localDate(offsetDays: number): string {

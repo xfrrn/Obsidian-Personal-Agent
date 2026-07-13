@@ -30,13 +30,17 @@ class ListTasksUseCase:
             filters.setdefault("project", project)
         if priority := _priority_from_text(raw_text):
             filters.setdefault("priority", priority)
-        tasks = tuple(await self.tasks.list(
-            query,
-            status=status,
-            limit=limit,
-            path=path,
-            filters=filters,
-        ))
+        context_tasks = _context_tasks(input_data.get("contextTasks"))
+        if context_tasks is None:
+            tasks = tuple(await self.tasks.list(
+                query,
+                status=status,
+                limit=limit,
+                path=path,
+                filters=filters,
+            ))
+        else:
+            tasks = _filter_context_tasks(context_tasks, query, status, limit, path, filters)
         return {"query": query, "status": status, "filters": filters, "count": len(tasks), "tasks": tasks}
 
 
@@ -81,8 +85,91 @@ def _priority_from_text(value: str) -> str | None:
     return None
 
 
+def _completed_filter(status: str | None) -> bool | None:
+    if not status:
+        return None
+    value = status.casefold()
+    if value in {"done", "completed", "complete", "closed", "已完成"}:
+        return True
+    if value in {"open", "todo", "pending", "未完成"}:
+        return False
+    return None
+
+
 def _limit(value: Any) -> int:
     try:
         return max(1, min(int(value), 500))
     except (TypeError, ValueError) as exc:
         raise ValueError("limit must be an integer") from exc
+
+
+def _context_tasks(value: Any) -> tuple[Mapping[str, Any], ...] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    tasks: list[Mapping[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        path = _text(item.get("path"))
+        title = _text(item.get("title"))
+        line = _line(item.get("line"))
+        completed = item.get("completed")
+        if not path or not title or line is None or not isinstance(completed, bool):
+            continue
+        task = dict(item)
+        task["path"] = path
+        task["line"] = line
+        task["title"] = title
+        task["completed"] = completed
+        if "due" not in task and _text(task.get("dueDate")):
+            task["due"] = _text(task.get("dueDate"))
+        tasks.append(task)
+    return tuple(tasks)
+
+
+def _filter_context_tasks(
+    tasks: tuple[Mapping[str, Any], ...],
+    query: str,
+    status: str | None,
+    limit: int,
+    path: str | None,
+    filters: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    query_text = query.casefold().strip()
+    want_completed = _completed_filter(status)
+    path_prefix = str(filters.get("path_prefix") or "").replace("\\", "/").strip("/")
+    result: list[Mapping[str, Any]] = []
+    for task in tasks:
+        task_path = str(task["path"])
+        if path and task_path != path:
+            continue
+        if path_prefix and task_path != path_prefix and not task_path.startswith(path_prefix + "/"):
+            continue
+        if want_completed is not None and task["completed"] is not want_completed:
+            continue
+        if query_text and query_text not in f"{task_path} {task['title']} {task.get('heading') or ''}".casefold():
+            continue
+        if not _matches_task(task, filters):
+            continue
+        result.append(task)
+    result.sort(key=lambda item: (str(item.get("due") or "9999-99-99"), str(item["path"]), int(item["line"])))
+    return tuple(result[:limit])
+
+
+def _line(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def _matches_task(task: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
+    for key in ("priority", "project"):
+        value = filters.get(key)
+        if isinstance(value, str) and value.strip() and str(task.get(key) or "").casefold() != value.strip().casefold():
+            return False
+    due = task.get("due")
+    if filters.get("due_on") and due != filters["due_on"]:
+        return False
+    if filters.get("due_after") and (not due or due < filters["due_after"]):
+        return False
+    if filters.get("due_before") and (not due or due >= filters["due_before"]):
+        return False
+    return True

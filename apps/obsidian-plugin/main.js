@@ -177,10 +177,116 @@ async function callModel(app, settings, messages) {
 
 // apps/obsidian-plugin/src/api/local-agent-client.ts
 var import_obsidian2 = require("obsidian");
+
+// apps/obsidian-plugin/src/features/task-actions/list-tasks.ts
+function parseMarkdownTasks(path, content) {
+  const tasks = [];
+  let heading;
+  content.split(/\r?\n/).forEach((line, index) => {
+    const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (headingMatch) heading = headingMatch[2];
+    const taskMatch = /^\s*[-+*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
+    if (!taskMatch) return;
+    const due = dueDate(taskMatch[2]);
+    tasks.push({
+      path,
+      line: index + 1,
+      title: taskMatch[2],
+      completed: taskMatch[1].toLowerCase() === "x",
+      heading,
+      ...due ? { dueDate: due } : {}
+    });
+  });
+  return tasks;
+}
+function dueDate(title) {
+  var _a;
+  return (_a = /📅\s*(\d{4}-\d{2}-\d{2})/.exec(title)) == null ? void 0 : _a[1];
+}
+async function collectTasks(app, scope) {
+  const pluginTasks = collectTasksFromPlugin(app, scope);
+  if (pluginTasks) return pluginTasks;
+  const activeFile = app.workspace.getActiveFile();
+  const files = scope === "current" ? activeFile ? [activeFile] : [] : app.vault.getMarkdownFiles();
+  const all = [];
+  for (const file of files) {
+    const content = await app.vault.cachedRead(file);
+    all.push(...parseMarkdownTasks(file.path, content));
+  }
+  return all;
+}
+function collectTasksFromPlugin(app, scope) {
+  var _a;
+  const plugin = tasksPlugin(app);
+  if (!plugin) return null;
+  const activePath = scope === "current" ? (_a = app.workspace.getActiveFile()) == null ? void 0 : _a.path : void 0;
+  const rawTasks = plugin.getTasks();
+  if (!Array.isArray(rawTasks)) return null;
+  return rawTasks.map(taskFromPlugin).filter((task) => !!task).filter((task) => !activePath || task.path === activePath);
+}
+function tasksPlugin(app) {
+  var _a;
+  const plugins = (_a = app.plugins) == null ? void 0 : _a.plugins;
+  const plugin = plugins == null ? void 0 : plugins["obsidian-tasks-plugin"];
+  return isRecord2(plugin) && typeof plugin.getTasks === "function" ? { getTasks: plugin.getTasks.bind(plugin) } : null;
+}
+function taskFromPlugin(value) {
+  var _a, _b, _c, _d, _e;
+  if (!isRecord2(value)) return null;
+  const location = isRecord2(value.taskLocation) ? value.taskLocation : {};
+  const path = (_a = stringValue(value.path)) != null ? _a : stringValue(location.path);
+  const lineNumber = (_b = numberValue(value.lineNumber)) != null ? _b : numberValue(location.lineNumber);
+  const title = (_c = stringValue(value.description)) != null ? _c : titleFromMarkdown(stringValue(value.originalMarkdown));
+  const completed = completedValue(value);
+  if (!path || lineNumber === void 0 || !title || completed === void 0) return null;
+  const heading = (_e = (_d = stringValue(value.heading)) != null ? _d : stringValue(value.precedingHeader)) != null ? _e : stringValue(location.precedingHeader);
+  const due = isoDate(value.dueDate);
+  return {
+    path,
+    line: lineNumber + 1,
+    title,
+    completed,
+    ...heading ? { heading } : {},
+    ...due ? { dueDate: due } : {}
+  };
+}
+function completedValue(task) {
+  if (typeof task.isDone === "boolean") return task.isDone;
+  const status = isRecord2(task.status) ? task.status : {};
+  if (typeof status.isCompleted === "function") {
+    const value = status.isCompleted();
+    return typeof value === "boolean" ? value : void 0;
+  }
+  return void 0;
+}
+function titleFromMarkdown(value) {
+  var _a;
+  return (_a = value == null ? void 0 : value.match(/^\s*[-+*]\s+\[[^\]]\]\s+(.+?)\s*$/)) == null ? void 0 : _a[1];
+}
+function isoDate(value) {
+  var _a;
+  if (typeof value === "string") return (_a = value.match(/^\d{4}-\d{2}-\d{2}$/)) == null ? void 0 : _a[0];
+  if (isRecord2(value) && typeof value.format === "function") {
+    const formatted = value.format("YYYY-MM-DD");
+    return typeof formatted === "string" ? formatted : void 0;
+  }
+  return void 0;
+}
+function stringValue(value) {
+  return typeof value === "string" && value ? value : void 0;
+}
+function numberValue(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// apps/obsidian-plugin/src/api/local-agent-client.ts
 async function askLocalAgent(app, settings, question, scope, onTrace) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
-  const body = localChatBody(app, question, scope);
+  const body = await localChatBody(app, question, scope);
   if (onTrace && typeof fetch === "function") {
     return askLocalAgentStream(port, settings, body, onTrace);
   }
@@ -234,12 +340,12 @@ async function askLocalAgentStream(port, settings, body, onTrace) {
           toolName: (_c = (_b = event.data.toolName) != null ? _b : event.data.tool_name) != null ? _c : "",
           status: event.data.status,
           summary: event.data.summary,
-          detail: isRecord2(event.data.detail) ? event.data.detail : void 0
+          detail: isRecord3(event.data.detail) ? event.data.detail : void 0
         });
       } else if (event.event === "final") {
         finalPayload = event.data;
       } else if (event.event === "error") {
-        const message = isRecord2(event.data) && typeof event.data.error === "string" ? event.data.error : "\u672C\u5730 Agent \u6D41\u5F0F\u8BF7\u6C42\u5931\u8D25\u3002";
+        const message = isRecord3(event.data) && typeof event.data.error === "string" ? event.data.error : "\u672C\u5730 Agent \u6D41\u5F0F\u8BF7\u6C42\u5931\u8D25\u3002";
         throw new AgentError(message);
       }
     }
@@ -254,14 +360,17 @@ function parseStreamEvent(raw) {
   if (!event || !data) return null;
   return { event, data: JSON.parse(data) };
 }
-function localChatBody(app, question, scope) {
+async function localChatBody(app, question, scope) {
   const activeFile = app.workspace.getActiveFile();
-  return {
+  const body = {
     userInput: question,
     conversationId: "obsidian-plugin",
     scope,
     activeFilePath: activeFile == null ? void 0 : activeFile.path
   };
+  const tasks = isTaskQuery(question) ? await collectTasks(app, scope) : null;
+  if (tasks) body.metadata = { tasks };
+  return body;
 }
 async function buildLocalOperationPlan(app, settings, requestText, scope) {
   const port = localAgentPort(settings);
@@ -287,7 +396,7 @@ async function buildLocalOperationPlan(app, settings, requestText, scope) {
     throw new AgentError(`\u672C\u5730 Agent \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
   }
   const output = unwrapToolOutput(response.json);
-  if (!isRecord2(output) || !isRecord2(output.plan)) {
+  if (!isRecord3(output) || !isRecord3(output.plan)) {
     throw new AgentError("\u672C\u5730 Agent \u6CA1\u6709\u8FD4\u56DE\u64CD\u4F5C\u8BA1\u5212\u3002");
   }
   return localPlanFromPayload(output.plan, agentTrace(response.json));
@@ -306,7 +415,7 @@ async function listLocalAgentTools(settings) {
     throw new AgentError(`\u8BFB\u53D6\u5DE5\u5177\u5217\u8868\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
   }
   const payload = response.json;
-  if (!isRecord2(payload) || !Array.isArray(payload.tools)) {
+  if (!isRecord3(payload) || !Array.isArray(payload.tools)) {
     throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u5DE5\u5177\u5217\u8868\u3002");
   }
   return payload.tools.filter(isLocalAgentTool);
@@ -317,7 +426,7 @@ async function stageLocalOperationPlan(settings, plan, allowedPaths) {
     operations: plan.operations,
     context: { source: "interactive", allowedPaths }
   });
-  if (!isRecord2(payload) || typeof payload.planId !== "string" || typeof payload.summary !== "string" || !Array.isArray(payload.operations) || !isRisk(payload.risk)) {
+  if (!isRecord3(payload) || typeof payload.planId !== "string" || typeof payload.summary !== "string" || !Array.isArray(payload.operations) || !isRisk(payload.risk)) {
     throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u64CD\u4F5C\u8BA1\u5212\u3002");
   }
   return {
@@ -362,7 +471,7 @@ async function executeLocalOperationPlan(settings, plan, confirmed) {
     `/operations/${encodeURIComponent(plan.planId)}/execute`,
     confirmed ? { confirmationToken: plan.confirmationToken } : {}
   );
-  if (!isRecord2(payload) || !Array.isArray(payload.results)) {
+  if (!isRecord3(payload) || !Array.isArray(payload.results)) {
     throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u6267\u884C\u7ED3\u679C\u3002");
   }
   plan.rollbackToken = optionalString(payload.rollbackToken);
@@ -375,7 +484,7 @@ async function rollbackLocalOperationPlan(settings, plan) {
     `/operations/${encodeURIComponent(plan.planId)}/rollback`,
     { rollbackToken: plan.rollbackToken }
   );
-  if (!isRecord2(payload) || !Array.isArray(payload.results)) {
+  if (!isRecord3(payload) || !Array.isArray(payload.results)) {
     throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u64A4\u9500\u7ED3\u679C\u3002");
   }
   return payload.results.map(() => `\u5DF2\u64A4\u9500\u64CD\u4F5C\u8BA1\u5212\uFF1A${plan.planId}`);
@@ -401,7 +510,7 @@ async function testLocalAgent(app, settings) {
     throw new AgentError(`\u672C\u5730 Agent \u4E0D\u53EF\u7528\uFF08HTTP ${response.status}\uFF09\u3002`);
   }
   const payload = response.json;
-  if (!isRecord2(payload) || payload.vaultRoot !== vaultBasePath(app)) {
+  if (!isRecord3(payload) || payload.vaultRoot !== vaultBasePath(app)) {
     throw new AgentError("\u672C\u5730 Agent \u7ED1\u5B9A\u7684\u4E0D\u662F\u5F53\u524D Vault\u3002");
   }
 }
@@ -418,7 +527,7 @@ async function discoverLocalAgent(app, settings) {
           throw: false
         }), 400);
         const payload = response.json;
-        if (response.status >= 200 && response.status < 300 && isRecord2(payload) && payload.vaultRoot === vaultPath) {
+        if (response.status >= 200 && response.status < 300 && isRecord3(payload) && payload.vaultRoot === vaultPath) {
           return { port: String(port), token: settings.localAgentToken, vaultRoot: vaultPath };
         }
       } catch (e) {
@@ -445,7 +554,7 @@ async function discoverLocalAgent(app, settings) {
       }), 1500);
       if (response.status < 200 || response.status >= 300) continue;
       const payload = response.json;
-      if (!isRecord2(payload) || typeof payload.token !== "string") continue;
+      if (!isRecord3(payload) || typeof payload.token !== "string") continue;
       return {
         port: String(port),
         token: payload.token,
@@ -496,17 +605,17 @@ function withTimeout(promise, ms) {
 function toAgentAnswer(payload) {
   const output = unwrapToolOutput(payload);
   const trace = agentTrace(payload);
-  if (isRecord2(output) && Array.isArray(output.tasks)) {
+  if (isRecord3(output) && Array.isArray(output.tasks)) {
     return withTrace(tasksAnswer(output.tasks.filter(isLocalTask)), trace);
   }
-  if (isRecord2(output) && typeof output.message === "string") {
+  if (isRecord3(output) && typeof output.message === "string") {
     const citations = Array.isArray(output.citations) ? uniqueCitations(output.citations.filter(isLocalCitation)) : [];
     return { answer: output.message, citations, trace };
   }
-  if (isRecord2(output) && Array.isArray(output.results)) {
+  if (isRecord3(output) && Array.isArray(output.results)) {
     return withTrace(searchAnswer(output.results.filter(isLocalSearchResult)), trace);
   }
-  if (isRecord2(payload) && typeof payload.assistant_message === "string") {
+  if (isRecord3(payload) && typeof payload.assistant_message === "string") {
     return { answer: payload.assistant_message, citations: [], trace };
   }
   throw new AgentError("\u672C\u5730 Agent \u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u54CD\u5E94\u3002");
@@ -515,7 +624,7 @@ function withTrace(answer, trace) {
   return trace.length ? { ...answer, trace } : answer;
 }
 function agentTrace(payload) {
-  if (!isRecord2(payload) || !Array.isArray(payload.trace)) return [];
+  if (!isRecord3(payload) || !Array.isArray(payload.trace)) return [];
   return payload.trace.filter(isTraceStep).map((step) => {
     var _a, _b;
     return {
@@ -523,18 +632,18 @@ function agentTrace(payload) {
       toolName: (_b = (_a = step.toolName) != null ? _a : step.tool_name) != null ? _b : "",
       status: step.status,
       summary: step.summary,
-      detail: isRecord2(step.detail) ? step.detail : void 0
+      detail: isRecord3(step.detail) ? step.detail : void 0
     };
   });
 }
 function unwrapToolOutput(payload) {
-  if (!isRecord2(payload) || !isRecord2(payload.execution)) return payload;
+  if (!isRecord3(payload) || !isRecord3(payload.execution)) return payload;
   const steps = payload.execution.step_results;
   if (!Array.isArray(steps) || !steps.length) return payload;
   const last = steps[steps.length - 1];
-  if (!isRecord2(last)) return payload;
+  if (!isRecord3(last)) return payload;
   const stepOutput = last.output;
-  if (isRecord2(stepOutput) && "output" in stepOutput) return stepOutput.output;
+  if (isRecord3(stepOutput) && "output" in stepOutput) return stepOutput.output;
   return stepOutput;
 }
 function tasksAnswer(tasks) {
@@ -590,14 +699,14 @@ async function localAgentRequest(settings, path, body) {
   });
   if (response.status < 200 || response.status >= 300) {
     const payload = response.json;
-    const detail = isRecord2(payload) && typeof payload.error === "string" ? `\uFF1A${payload.error}` : "";
+    const detail = isRecord3(payload) && typeof payload.error === "string" ? `\uFF1A${payload.error}` : "";
     throw new AgentError(`\u672C\u5730 Agent \u64CD\u4F5C\u5931\u8D25\uFF08HTTP ${response.status}\uFF09${detail}`);
   }
   return response.json;
 }
 function localOperationResultText(value) {
   var _a;
-  if (!isRecord2(value) || !isRecord2(value.operation)) return "\u64CD\u4F5C\u5DF2\u6267\u884C\u3002";
+  if (!isRecord3(value) || !isRecord3(value.operation)) return "\u64CD\u4F5C\u5DF2\u6267\u884C\u3002";
   const operation = value.operation;
   const path = typeof operation.path === "string" ? `\uFF1A${operation.path}` : "";
   return `\u5DF2\u6267\u884C ${String((_a = operation.type) != null ? _a : "operation")}${path}`;
@@ -609,24 +718,24 @@ function optionalString(value) {
   return typeof value === "string" ? value : void 0;
 }
 function isStringMap(value) {
-  return isRecord2(value) && Object.values(value).every((item) => typeof item === "string");
+  return isRecord3(value) && Object.values(value).every((item) => typeof item === "string");
 }
 function isLocalTask(value) {
-  return isRecord2(value) && typeof value.path === "string" && typeof value.line === "number" && typeof value.title === "string" && typeof value.completed === "boolean";
+  return isRecord3(value) && typeof value.path === "string" && typeof value.line === "number" && typeof value.title === "string" && typeof value.completed === "boolean";
 }
 function isLocalSearchResult(value) {
-  return isRecord2(value) && typeof value.path === "string";
+  return isRecord3(value) && typeof value.path === "string";
 }
 function isLocalCitation(value) {
-  return isRecord2(value) && typeof value.path === "string" && (value.heading === void 0 || typeof value.heading === "string");
+  return isRecord3(value) && typeof value.path === "string" && (value.heading === void 0 || typeof value.heading === "string");
 }
 function isTraceStep(value) {
-  return isRecord2(value) && typeof value.round === "number" && (typeof value.toolName === "string" || typeof value.tool_name === "string") && typeof value.status === "string" && typeof value.summary === "string";
+  return isRecord3(value) && typeof value.round === "number" && (typeof value.toolName === "string" || typeof value.tool_name === "string") && typeof value.status === "string" && typeof value.summary === "string";
 }
 function isLocalAgentTool(value) {
-  return isRecord2(value) && typeof value.name === "string" && typeof value.description === "string";
+  return isRecord3(value) && typeof value.name === "string" && typeof value.description === "string";
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -799,7 +908,7 @@ function describeOperation(operation) {
   return `\u8C03\u7528\u63D2\u4EF6\u547D\u4EE4\uFF1A${operation.commandId}`;
 }
 function parseOperation(raw, existingPaths, sourcePaths) {
-  if (!isRecord3(raw) || typeof raw.type !== "string") {
+  if (!isRecord4(raw) || typeof raw.type !== "string") {
     throw new AgentError("\u6A21\u578B\u8FD4\u56DE\u4E86\u65E0\u6CD5\u8BC6\u522B\u7684\u4FEE\u6539\u64CD\u4F5C\u3002");
   }
   if (raw.type === "create-note") {
@@ -874,7 +983,7 @@ function safeMarkdownPath(value) {
 }
 function optionalMetadataMap(value) {
   if (value === void 0) return void 0;
-  if (!isRecord3(value)) throw new AgentError("\u5143\u6570\u636E set \u5FC5\u987B\u662F\u5BF9\u8C61\u3002");
+  if (!isRecord4(value)) throw new AgentError("\u5143\u6570\u636E set \u5FC5\u987B\u662F\u5BF9\u8C61\u3002");
   const result = {};
   for (const [key, item] of Object.entries(value)) {
     result[metadataKey(key)] = metadataValue(item);
@@ -923,7 +1032,7 @@ function requiredSingleLine(value, name) {
 function unique(value, index, array) {
   return array.indexOf(value) === index;
 }
-function isRecord3(value) {
+function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -934,8 +1043,9 @@ var executing = false;
 async function buildOperationPlan(app, settings, request, scope) {
   const cleanRequest = request.trim();
   if (!cleanRequest) throw new AgentError("\u8BF7\u8F93\u5165\u8981\u6267\u884C\u7684\u4FEE\u6539\u8BF7\u6C42\u3002");
-  if (settings.localAgentToken && isTaskCompletionRequest(cleanRequest)) {
-    return buildLocalOperationPlan(app, settings, cleanRequest, scope);
+  if (isTaskCompletionRequest(cleanRequest)) {
+    if (settings.localAgentToken) return buildLocalOperationPlan(app, settings, cleanRequest, scope);
+    throw new AgentError("\u4EFB\u52A1\u4FEE\u6539\u9700\u8981\u5148\u914D\u5BF9\u5E76\u542F\u52A8 local-agent\u3002");
   }
   const sources = await getPlanningSources(app, settings, cleanRequest, scope);
   const existingPaths = new Set(app.vault.getMarkdownFiles().map((file) => file.path));
@@ -1866,9 +1976,9 @@ function toolMeta(tool) {
 }
 function inputNames(schema) {
   const properties = schema == null ? void 0 : schema.properties;
-  return isRecord4(properties) ? Object.keys(properties).join(", ") : "";
+  return isRecord5(properties) ? Object.keys(properties).join(", ") : "";
 }
-function isRecord4(value) {
+function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function isExecutionMode(value) {
@@ -1895,74 +2005,6 @@ function initializePlugin(plugin) {
   registerCommands(plugin);
 }
 
-// apps/obsidian-plugin/src/features/task-actions/list-tasks.ts
-async function answerWithTasks(app, question, scope) {
-  const tasks = await collectTasks(app, scope);
-  const wantDone = /已完成|完成了|done|completed/i.test(question);
-  const dueOn = question.includes("\u4ECA\u5929") ? todayIso() : "";
-  const visible = tasks.filter((task) => task.completed === wantDone).filter((task) => !dueOn || task.dueDate === dueOn).slice(0, 30);
-  const label = `${dueOn ? "\u4ECA\u5929\u7684" : ""}${wantDone ? "\u5DF2\u5B8C\u6210\u4EFB\u52A1" : "\u672A\u5B8C\u6210\u4EFB\u52A1"}`;
-  if (!visible.length) {
-    return { answer: `\u6CA1\u6709\u627E\u5230${label}\u3002`, citations: [] };
-  }
-  const answer = [
-    `\u627E\u5230 ${visible.length} \u6761${label}\uFF1A`,
-    "",
-    ...visible.map((task) => `- ${task.title}\uFF08${task.path}:${task.line}\uFF09`)
-  ].join("\n");
-  return { answer, citations: uniqueCitations2(visible) };
-}
-function parseMarkdownTasks(path, content) {
-  const tasks = [];
-  let heading;
-  content.split(/\r?\n/).forEach((line, index) => {
-    const headingMatch = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
-    if (headingMatch) heading = headingMatch[2];
-    const taskMatch = /^\s*[-+*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
-    if (!taskMatch) return;
-    const due = dueDate(taskMatch[2]);
-    tasks.push({
-      path,
-      line: index + 1,
-      title: taskMatch[2],
-      completed: taskMatch[1].toLowerCase() === "x",
-      heading,
-      ...due ? { dueDate: due } : {}
-    });
-  });
-  return tasks;
-}
-function dueDate(title) {
-  var _a;
-  return (_a = /📅\s*(\d{4}-\d{2}-\d{2})/.exec(title)) == null ? void 0 : _a[1];
-}
-function todayIso() {
-  const date = /* @__PURE__ */ new Date();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-async function collectTasks(app, scope) {
-  const activeFile = app.workspace.getActiveFile();
-  const files = scope === "current" ? activeFile ? [activeFile] : [] : app.vault.getMarkdownFiles();
-  const all = [];
-  for (const file of files) {
-    const content = await app.vault.cachedRead(file);
-    all.push(...parseMarkdownTasks(file.path, content));
-  }
-  return all;
-}
-function uniqueCitations2(tasks) {
-  const citations = [];
-  for (const task of tasks) {
-    const citation = { path: task.path, heading: task.heading };
-    if (!citations.some((item) => item.path === citation.path && item.heading === citation.heading)) {
-      citations.push(citation);
-    }
-  }
-  return citations;
-}
-
 // apps/obsidian-plugin/src/features/assistant/agent-loop.ts
 async function judgeIntent(_app, _settings, input) {
   const cleanInput = input.trim();
@@ -1976,7 +2018,7 @@ async function askAgent(app, settings, question, scope, history = [], onTrace) {
     return askLocalAgent(app, settings, cleanQuestion, scope, onTrace);
   }
   if (isTaskQuery(cleanQuestion) || isLocalAnalysisQuery(cleanQuestion)) {
-    return answerWithTasks(app, cleanQuestion, scope);
+    throw new AgentError("\u4EFB\u52A1\u548C\u672C\u5730\u5206\u6790\u9700\u8981\u5148\u914D\u5BF9\u5E76\u542F\u52A8 local-agent\u3002");
   }
   if (scope === "current") {
     const source = await getCurrentSource(app);

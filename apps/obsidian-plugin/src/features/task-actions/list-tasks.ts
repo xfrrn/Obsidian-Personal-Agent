@@ -1,5 +1,4 @@
 import type { App } from "obsidian";
-import type { AgentAnswer, AgentCitation } from "../../utils/protocol";
 import type { QueryScope } from "../assistant/types";
 
 export interface MarkdownTask {
@@ -11,31 +10,7 @@ export interface MarkdownTask {
   dueDate?: string;
 }
 
-export async function answerWithTasks(
-  app: App,
-  question: string,
-  scope: QueryScope
-): Promise<AgentAnswer> {
-  const tasks = await collectTasks(app, scope);
-  const wantDone = /已完成|完成了|done|completed/i.test(question);
-  const dueOn = question.includes("今天") ? todayIso() : "";
-  const visible = tasks
-    .filter((task) => task.completed === wantDone)
-    .filter((task) => !dueOn || task.dueDate === dueOn)
-    .slice(0, 30);
-  const label = `${dueOn ? "今天的" : ""}${wantDone ? "已完成任务" : "未完成任务"}`;
-
-  if (!visible.length) {
-    return { answer: `没有找到${label}。`, citations: [] };
-  }
-
-  const answer = [
-    `找到 ${visible.length} 条${label}：`,
-    "",
-    ...visible.map((task) => `- ${task.title}（${task.path}:${task.line}）`)
-  ].join("\n");
-  return { answer, citations: uniqueCitations(visible) };
-}
+type TasksPlugin = { getTasks: () => unknown };
 
 export function parseMarkdownTasks(path: string, content: string): MarkdownTask[] {
   const tasks: MarkdownTask[] = [];
@@ -65,14 +40,10 @@ function dueDate(title: string): string | undefined {
   return /📅\s*(\d{4}-\d{2}-\d{2})/.exec(title)?.[1];
 }
 
-function todayIso(): string {
-  const date = new Date();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
+export async function collectTasks(app: App, scope: QueryScope): Promise<MarkdownTask[]> {
+  const pluginTasks = collectTasksFromPlugin(app, scope);
+  if (pluginTasks) return pluginTasks;
 
-async function collectTasks(app: App, scope: QueryScope): Promise<MarkdownTask[]> {
   const activeFile = app.workspace.getActiveFile();
   const files = scope === "current"
     ? activeFile ? [activeFile] : []
@@ -86,13 +57,80 @@ async function collectTasks(app: App, scope: QueryScope): Promise<MarkdownTask[]
   return all;
 }
 
-function uniqueCitations(tasks: MarkdownTask[]): AgentCitation[] {
-  const citations: AgentCitation[] = [];
-  for (const task of tasks) {
-    const citation = { path: task.path, heading: task.heading };
-    if (!citations.some((item) => item.path === citation.path && item.heading === citation.heading)) {
-      citations.push(citation);
-    }
+export function collectTasksFromPlugin(app: App, scope: QueryScope): MarkdownTask[] | null {
+  const plugin = tasksPlugin(app);
+  if (!plugin) return null;
+
+  const activePath = scope === "current" ? app.workspace.getActiveFile()?.path : undefined;
+  const rawTasks = plugin.getTasks();
+  if (!Array.isArray(rawTasks)) return null;
+
+  return rawTasks
+    .map(taskFromPlugin)
+    .filter((task): task is MarkdownTask => !!task)
+    .filter((task) => !activePath || task.path === activePath);
+}
+
+function tasksPlugin(app: App): TasksPlugin | null {
+  const plugins = (app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins;
+  const plugin = plugins?.["obsidian-tasks-plugin"];
+  return isRecord(plugin) && typeof plugin.getTasks === "function"
+    ? { getTasks: plugin.getTasks.bind(plugin) as () => unknown }
+    : null;
+}
+
+function taskFromPlugin(value: unknown): MarkdownTask | null {
+  if (!isRecord(value)) return null;
+  const location = isRecord(value.taskLocation) ? value.taskLocation : {};
+  const path = stringValue(value.path) ?? stringValue(location.path);
+  const lineNumber = numberValue(value.lineNumber) ?? numberValue(location.lineNumber);
+  const title = stringValue(value.description) ?? titleFromMarkdown(stringValue(value.originalMarkdown));
+  const completed = completedValue(value);
+  if (!path || lineNumber === undefined || !title || completed === undefined) return null;
+
+  const heading = stringValue(value.heading) ?? stringValue(value.precedingHeader) ?? stringValue(location.precedingHeader);
+  const due = isoDate(value.dueDate);
+  return {
+    path,
+    line: lineNumber + 1,
+    title,
+    completed,
+    ...(heading ? { heading } : {}),
+    ...(due ? { dueDate: due } : {})
+  };
+}
+
+function completedValue(task: Record<string, unknown>): boolean | undefined {
+  if (typeof task.isDone === "boolean") return task.isDone;
+  const status = isRecord(task.status) ? task.status : {};
+  if (typeof status.isCompleted === "function") {
+    const value = status.isCompleted();
+    return typeof value === "boolean" ? value : undefined;
   }
-  return citations;
+  return undefined;
+}
+
+function titleFromMarkdown(value: string | undefined): string | undefined {
+  return value?.match(/^\s*[-+*]\s+\[[^\]]\]\s+(.+?)\s*$/)?.[1];
+}
+
+function isoDate(value: unknown): string | undefined {
+  if (typeof value === "string") return value.match(/^\d{4}-\d{2}-\d{2}$/)?.[0];
+  if (isRecord(value) && typeof value.format === "function") {
+    const formatted = value.format("YYYY-MM-DD");
+    return typeof formatted === "string" ? formatted : undefined;
+  }
+  return undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

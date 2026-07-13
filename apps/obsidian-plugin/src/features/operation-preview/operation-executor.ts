@@ -45,8 +45,9 @@ export async function buildOperationPlan(
 ): Promise<OperationPlan> {
   const cleanRequest = request.trim();
   if (!cleanRequest) throw new AgentError("请输入要执行的修改请求。");
-  if (settings.localAgentToken && isTaskCompletionRequest(cleanRequest)) {
-    return buildLocalOperationPlan(app, settings, cleanRequest, scope);
+  if (isTaskCompletionRequest(cleanRequest)) {
+    if (settings.localAgentToken) return buildLocalOperationPlan(app, settings, cleanRequest, scope);
+    throw new AgentError("任务修改需要先配对并启动 local-agent。");
   }
 
   const sources = await getPlanningSources(app, settings, cleanRequest, scope);

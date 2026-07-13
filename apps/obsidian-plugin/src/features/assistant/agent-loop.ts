@@ -5,7 +5,6 @@ import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/va
 import type { AgentSettings } from "../../settings/settings";
 import { AgentAnswer, AgentError, AgentTraceStep, inferIntent, isLocalAnalysisQuery, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
-import { answerWithTasks } from "../task-actions/list-tasks";
 import { ANSWER_PROMPT } from "./prompts";
 import type { ChatMessage, QueryScope } from "./types";
 
@@ -37,7 +36,7 @@ export async function askAgent(
   }
 
   if (isTaskQuery(cleanQuestion) || isLocalAnalysisQuery(cleanQuestion)) {
-    return answerWithTasks(app, cleanQuestion, scope);
+    throw new AgentError("任务和本地分析需要先配对并启动 local-agent。");
   }
 
   if (scope === "current") {

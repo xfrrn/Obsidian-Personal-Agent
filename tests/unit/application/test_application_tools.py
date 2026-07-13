@@ -167,6 +167,25 @@ async def _run() -> None:
     assert current.output["results"][0]["path"] == "Today.md"
     current_tasks = await registry.run(ToolCall("list_tasks", {"scope": "current", "activeFilePath": "Today.md"}))
     assert current_tasks.output["tasks"][0]["path"] == "Today.md"
+    plugin_tasks = await registry.run(
+        ToolCall("list_tasks", {}),
+        context=SimpleNamespace(
+            user_input="我今天还有哪些任务没有完成",
+            scope="vault",
+            metadata={
+                "tasks": [{
+                    "path": "Tasks.md",
+                    "line": 5,
+                    "title": "plugin task",
+                    "completed": False,
+                    "dueDate": date.today().isoformat(),
+                    "heading": "Tasks",
+                }]
+            },
+        ),
+    )
+    assert plugin_tasks.output["tasks"][0]["title"] == "plugin task"
+    assert plugin_tasks.output["tasks"][0]["due"] == date.today().isoformat()
 
     inspection = await registry.run(ToolCall("inspect_note", {"path": "Today.md"}))
     assert inspection.output["classification"] == "note"

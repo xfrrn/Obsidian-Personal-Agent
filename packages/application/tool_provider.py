@@ -234,4 +234,7 @@ def _with_turn_context(input_data: Mapping[str, Any], context: Any) -> Mapping[s
     active_file_path = getattr(context, "active_file_path", None)
     if "activeFilePath" not in value and isinstance(active_file_path, str) and active_file_path:
         value["activeFilePath"] = active_file_path
+    metadata = getattr(context, "metadata", {})
+    if isinstance(metadata, Mapping) and "contextTasks" not in value and "tasks" in metadata:
+        value["contextTasks"] = metadata["tasks"]
     return value

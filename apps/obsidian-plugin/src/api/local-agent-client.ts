@@ -2,7 +2,8 @@ import { App, requestUrl } from "obsidian";
 import type { QueryScope } from "../features/assistant/types";
 import type { AgentSettings } from "../settings/settings";
 import type { OperationPlan } from "../features/operation-preview/operation-plan";
-import { AgentAnswer, AgentError, AgentTraceStep, chatCompletionsUrl } from "../utils/protocol";
+import { AgentAnswer, AgentError, AgentTraceStep, chatCompletionsUrl, isTaskQuery } from "../utils/protocol";
+import { collectTasks } from "../features/task-actions/list-tasks";
 
 interface LocalTask {
   path: string;
@@ -42,7 +43,7 @@ export async function askLocalAgent(
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("本地 Agent 端口未配置。");
 
-  const body = localChatBody(app, question, scope);
+  const body = await localChatBody(app, question, scope);
   if (onTrace && typeof fetch === "function") {
     return askLocalAgentStream(port, settings, body, onTrace);
   }
@@ -125,14 +126,17 @@ function parseStreamEvent(raw: string): { event: string; data: unknown } | null 
   return { event, data: JSON.parse(data) };
 }
 
-function localChatBody(app: App, question: string, scope: QueryScope): Record<string, unknown> {
+async function localChatBody(app: App, question: string, scope: QueryScope): Promise<Record<string, unknown>> {
   const activeFile = app.workspace.getActiveFile();
-  return {
+  const body: Record<string, unknown> = {
     userInput: question,
     conversationId: "obsidian-plugin",
     scope,
     activeFilePath: activeFile?.path
   };
+  const tasks = isTaskQuery(question) ? await collectTasks(app, scope) : null;
+  if (tasks) body.metadata = { tasks };
+  return body;
 }
 
 export async function buildLocalOperationPlan(
