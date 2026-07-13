@@ -1218,6 +1218,7 @@ var AssistantView = class extends import_obsidian5.ItemView {
     this.agentPlugin = agentPlugin;
     this.busy = false;
     this.liveTraceSteps = [];
+    this.history = [];
   }
   getViewType() {
     return AGENT_VIEW_TYPE;
@@ -1291,10 +1292,10 @@ var AssistantView = class extends import_obsidian5.ItemView {
     await this.sendPrompt(prompt);
   }
   async sendPrompt(prompt) {
-    var _a;
+    var _a, _b;
     if (this.busy) return;
     this.setBusy(true);
-    this.resultEl.empty();
+    (_a = this.resultEl.querySelector(".pka-empty")) == null ? void 0 : _a.remove();
     this.liveTraceCard = void 0;
     this.liveTraceList = void 0;
     this.liveTraceSummary = void 0;
@@ -1319,12 +1320,17 @@ var AssistantView = class extends import_obsidian5.ItemView {
         const answer = await this.agentPlugin.ask(
           prompt,
           this.scopeEl.value,
+          this.history,
           (step) => this.renderLiveTrace(step)
         );
         await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
+        this.history.push(
+          { role: "user", content: prompt },
+          { role: "assistant", content: JSON.stringify({ answer: answer.answer, citations: answer.citations }) }
+        );
       }
     } catch (error) {
-      (_a = this.resultEl.querySelector(".pka-loading")) == null ? void 0 : _a.remove();
+      (_b = this.resultEl.querySelector(".pka-loading")) == null ? void 0 : _b.remove();
       this.resultEl.createDiv({
         cls: "pka-error",
         text: error instanceof AgentError ? error.message : "\u5904\u7406\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002"
@@ -1950,7 +1956,7 @@ async function judgeIntent(_app, _settings, input) {
   if (!cleanInput) throw new AgentError("\u8BF7\u8F93\u5165\u95EE\u9898\u6216\u4FEE\u6539\u8BF7\u6C42\u3002");
   return inferIntent(cleanInput);
 }
-async function askAgent(app, settings, question, scope, onTrace) {
+async function askAgent(app, settings, question, scope, history = [], onTrace) {
   const cleanQuestion = question.trim();
   if (!cleanQuestion) throw new AgentError("\u8BF7\u8F93\u5165\u95EE\u9898\u3002");
   if (settings.localAgentToken) {
@@ -1961,17 +1967,17 @@ async function askAgent(app, settings, question, scope, onTrace) {
   }
   if (scope === "current") {
     const source = await getCurrentSource(app);
-    return answerFromSources(app, settings, cleanQuestion, [source]);
+    return answerFromSources(app, settings, cleanQuestion, [source], history);
   }
-  const candidates = await selectCandidateNotePaths(app, settings, cleanQuestion);
+  const candidates = await selectCandidateNotePaths(app, settings, questionWithHistory(cleanQuestion, history));
   if (!candidates.length) {
     return { answer: "\u6CA1\u6709\u627E\u5230\u8DB3\u4EE5\u56DE\u7B54\u8FD9\u4E2A\u95EE\u9898\u7684\u76F8\u5173\u7B14\u8BB0\u3002", citations: [] };
   }
   const sources = await loadSources(app, candidates);
   if (!sources.length) throw new AgentError("\u5019\u9009\u7B14\u8BB0\u5DF2\u7ECF\u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u8BD5\u3002");
-  return answerFromSources(app, settings, cleanQuestion, sources);
+  return answerFromSources(app, settings, cleanQuestion, sources, history);
 }
-async function answerFromSources(app, settings, question, sources) {
+async function answerFromSources(app, settings, question, sources, history = []) {
   const sourcePaths = new Set(sources.map((source) => source.path));
   const sourceHeadings = new Map(
     sources.map((source) => [source.path, new Set(source.headings)])
@@ -1981,6 +1987,7 @@ async function answerFromSources(app, settings, question, sources) {
       role: "system",
       content: ANSWER_PROMPT
     },
+    ...history.slice(-12),
     {
       role: "user",
       content: `\u95EE\u9898\uFF1A${question}
@@ -1990,6 +1997,11 @@ ${JSON.stringify(sources)}`
     }
   ]);
   return parseAgentAnswer(response, sourcePaths, sourceHeadings);
+}
+function questionWithHistory(question, history) {
+  const recent = history.slice(-6).filter((message) => message.role !== "system").map((message) => `${message.role}: ${message.content}`).join("\n");
+  return recent ? `${recent}
+user: ${question}` : question;
 }
 
 // apps/obsidian-plugin/src/main.ts
@@ -2002,8 +2014,8 @@ var PersonalKnowledgeAgentPlugin = class extends import_obsidian7.Plugin {
   onunload() {
     this.app.workspace.detachLeavesOfType(AGENT_VIEW_TYPE);
   }
-  ask(question, scope, onTrace) {
-    return askAgent(this.app, this.settings, question, scope, onTrace);
+  ask(question, scope, history = [], onTrace) {
+    return askAgent(this.app, this.settings, question, scope, history, onTrace);
   }
   intent(input) {
     return judgeIntent(this.app, this.settings, input);

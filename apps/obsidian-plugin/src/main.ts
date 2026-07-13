@@ -1,7 +1,7 @@
 import { Plugin } from "obsidian";
 import { initializePlugin } from "./bootstrap/initialize-plugin";
 import { askAgent, judgeIntent } from "./features/assistant/agent-loop";
-import type { QueryScope } from "./features/assistant/types";
+import type { ChatMessage, QueryScope } from "./features/assistant/types";
 import {
   buildOperationPlan,
   executeOperationPlan,
@@ -34,8 +34,13 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(AGENT_VIEW_TYPE);
   }
 
-  ask(question: string, scope: QueryScope, onTrace?: (step: AgentTraceStep) => void): Promise<AgentAnswer> {
-    return askAgent(this.app, this.settings, question, scope, onTrace);
+  ask(
+    question: string,
+    scope: QueryScope,
+    history: ChatMessage[] = [],
+    onTrace?: (step: AgentTraceStep) => void
+  ): Promise<AgentAnswer> {
+    return askAgent(this.app, this.settings, question, scope, history, onTrace);
   }
 
   intent(input: string): Promise<AgentIntent> {

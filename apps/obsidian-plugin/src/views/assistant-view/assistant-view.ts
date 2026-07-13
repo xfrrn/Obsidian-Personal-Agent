@@ -4,7 +4,7 @@ import {
   setIcon,
   WorkspaceLeaf
 } from "obsidian";
-import type { QueryScope } from "../../features/assistant/types";
+import type { ChatMessage, QueryScope } from "../../features/assistant/types";
 import type PersonalKnowledgeAgentPlugin from "../../main";
 import {
   describeOperation,
@@ -26,6 +26,7 @@ export class AssistantView extends ItemView {
   private liveTraceList?: HTMLOListElement;
   private liveTraceSummary?: HTMLElement;
   private liveTraceSteps: AgentTraceStep[] = [];
+  private history: ChatMessage[] = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -121,7 +122,7 @@ export class AssistantView extends ItemView {
   private async sendPrompt(prompt: string): Promise<void> {
     if (this.busy) return;
     this.setBusy(true);
-    this.resultEl.empty();
+    this.resultEl.querySelector(".pka-empty")?.remove();
     this.liveTraceCard = undefined;
     this.liveTraceList = undefined;
     this.liveTraceSummary = undefined;
@@ -152,9 +153,14 @@ export class AssistantView extends ItemView {
         const answer = await this.agentPlugin.ask(
           prompt,
           this.scopeEl.value as QueryScope,
+          this.history,
           (step) => this.renderLiveTrace(step)
         );
         await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
+        this.history.push(
+          { role: "user", content: prompt },
+          { role: "assistant", content: JSON.stringify({ answer: answer.answer, citations: answer.citations }) }
+        );
       }
     } catch (error) {
       this.resultEl.querySelector(".pka-loading")?.remove();

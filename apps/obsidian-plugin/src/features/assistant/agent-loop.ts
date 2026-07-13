@@ -7,7 +7,7 @@ import { AgentAnswer, AgentError, AgentTraceStep, inferIntent, isLocalAnalysisQu
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
 import { answerWithTasks } from "../task-actions/list-tasks";
 import { ANSWER_PROMPT } from "./prompts";
-import type { QueryScope } from "./types";
+import type { ChatMessage, QueryScope } from "./types";
 
 export type { QueryScope } from "./types";
 
@@ -26,6 +26,7 @@ export async function askAgent(
   settings: AgentSettings,
   question: string,
   scope: QueryScope,
+  history: ChatMessage[] = [],
   onTrace?: (step: AgentTraceStep) => void
 ): Promise<AgentAnswer> {
   const cleanQuestion = question.trim();
@@ -41,24 +42,25 @@ export async function askAgent(
 
   if (scope === "current") {
     const source = await getCurrentSource(app);
-    return answerFromSources(app, settings, cleanQuestion, [source]);
+    return answerFromSources(app, settings, cleanQuestion, [source], history);
   }
 
-  const candidates = await selectCandidateNotePaths(app, settings, cleanQuestion);
+  const candidates = await selectCandidateNotePaths(app, settings, questionWithHistory(cleanQuestion, history));
   if (!candidates.length) {
     return { answer: "没有找到足以回答这个问题的相关笔记。", citations: [] };
   }
 
   const sources = await loadSources(app, candidates);
   if (!sources.length) throw new AgentError("候选笔记已经不存在，请重试。");
-  return answerFromSources(app, settings, cleanQuestion, sources);
+  return answerFromSources(app, settings, cleanQuestion, sources, history);
 }
 
 async function answerFromSources(
   app: App,
   settings: AgentSettings,
   question: string,
-  sources: SourceDocument[]
+  sources: SourceDocument[],
+  history: ChatMessage[] = []
 ): Promise<AgentAnswer> {
   const sourcePaths = new Set(sources.map((source) => source.path));
   const sourceHeadings = new Map(
@@ -69,10 +71,20 @@ async function answerFromSources(
       role: "system",
       content: ANSWER_PROMPT
     },
+    ...history.slice(-12),
     {
       role: "user",
       content: `问题：${question}\n\n可用笔记：\n${JSON.stringify(sources)}`
     }
   ]);
   return parseAgentAnswer(response, sourcePaths, sourceHeadings);
+}
+
+function questionWithHistory(question: string, history: ChatMessage[]): string {
+  const recent = history
+    .slice(-6)
+    .filter((message) => message.role !== "system")
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
+  return recent ? `${recent}\nuser: ${question}` : question;
 }
