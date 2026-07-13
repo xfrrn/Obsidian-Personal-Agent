@@ -222,32 +222,45 @@ function collectTasksFromPlugin(app, scope) {
   const activePath = scope === "current" ? (_a = app.workspace.getActiveFile()) == null ? void 0 : _a.path : void 0;
   const rawTasks = plugin.getTasks();
   if (!Array.isArray(rawTasks)) return null;
-  return rawTasks.map(taskFromPlugin).filter((task) => !!task).filter((task) => !activePath || task.path === activePath);
+  return rawTasks.map((task) => taskFromPlugin(task, plugin)).filter((task) => !!task).filter((task) => !activePath || task.path === activePath);
 }
 function tasksPlugin(app) {
   var _a;
   const plugins = (_a = app.plugins) == null ? void 0 : _a.plugins;
   const plugin = plugins == null ? void 0 : plugins["obsidian-tasks-plugin"];
-  return isRecord2(plugin) && typeof plugin.getTasks === "function" ? { getTasks: plugin.getTasks.bind(plugin) } : null;
+  if (!isRecord2(plugin) || typeof plugin.getTasks !== "function") return null;
+  const api = isRecord2(plugin.apiV1) ? plugin.apiV1 : {};
+  const toggle = typeof api.executeToggleTaskDoneCommand === "function" ? api.executeToggleTaskDoneCommand.bind(api) : void 0;
+  return {
+    getTasks: plugin.getTasks.bind(plugin),
+    completeLine: toggle ? (line, path) => {
+      const value = toggle(line, path);
+      return typeof value === "string" ? value : void 0;
+    } : void 0
+  };
 }
-function taskFromPlugin(value) {
-  var _a, _b, _c, _d, _e;
+function taskFromPlugin(value, plugin) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
   if (!isRecord2(value)) return null;
   const location = isRecord2(value.taskLocation) ? value.taskLocation : {};
   const path = (_a = stringValue(value.path)) != null ? _a : stringValue(location.path);
   const lineNumber = (_b = numberValue(value.lineNumber)) != null ? _b : numberValue(location.lineNumber);
-  const title = (_c = stringValue(value.description)) != null ? _c : titleFromMarkdown(stringValue(value.originalMarkdown));
+  const lineText = (_d = (_c = stringValue(value.originalMarkdown)) != null ? _c : stringValue(value.lineText)) != null ? _d : stringValue(value.markdown);
+  const title = (_e = stringValue(value.description)) != null ? _e : titleFromMarkdown(lineText);
   const completed = completedValue(value);
   if (!path || lineNumber === void 0 || !title || completed === void 0) return null;
-  const heading = (_e = (_d = stringValue(value.heading)) != null ? _d : stringValue(value.precedingHeader)) != null ? _e : stringValue(location.precedingHeader);
+  const heading = (_g = (_f = stringValue(value.heading)) != null ? _f : stringValue(value.precedingHeader)) != null ? _g : stringValue(location.precedingHeader);
   const due = isoDate(value.dueDate);
+  const completedLineText = !completed && lineText ? (_h = plugin.completeLine) == null ? void 0 : _h.call(plugin, lineText, path) : void 0;
   return {
     path,
     line: lineNumber + 1,
     title,
     completed,
     ...heading ? { heading } : {},
-    ...due ? { dueDate: due } : {}
+    ...due ? { dueDate: due } : {},
+    ...lineText ? { lineText } : {},
+    ...completedLineText ? { completedLineText } : {}
   };
 }
 function completedValue(task) {
@@ -376,7 +389,7 @@ async function buildLocalOperationPlan(app, settings, requestText, scope) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
   if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
-  const activeFile = app.workspace.getActiveFile();
+  const body = await localChatBody(app, requestText, scope);
   const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}/chat`,
     method: "POST",
@@ -384,12 +397,7 @@ async function buildLocalOperationPlan(app, settings, requestText, scope) {
       "Content-Type": "application/json",
       "X-Agent-Token": settings.localAgentToken
     },
-    body: JSON.stringify({
-      userInput: requestText,
-      conversationId: "obsidian-plugin",
-      scope,
-      activeFilePath: activeFile == null ? void 0 : activeFile.path
-    }),
+    body: JSON.stringify(body),
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {

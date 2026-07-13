@@ -189,7 +189,7 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
                 risk_level=ToolRiskLevel.LOW,
                 effect=ToolEffect.PREPARE_WRITE,
             ),
-            lambda input_data, _context: build_plan.execute(input_data),
+            lambda input_data, context: build_plan.execute(_with_operation_context(input_data, context)),
         ),
         FunctionTool(
             ToolDefinition(
@@ -237,4 +237,17 @@ def _with_turn_context(input_data: Mapping[str, Any], context: Any) -> Mapping[s
     metadata = getattr(context, "metadata", {})
     if isinstance(metadata, Mapping) and "contextTasks" not in value and "tasks" in metadata:
         value["contextTasks"] = metadata["tasks"]
+    return value
+
+
+def _with_operation_context(input_data: Mapping[str, Any], context: Any) -> Mapping[str, Any]:
+    value = dict(input_data)
+    metadata = getattr(context, "metadata", {})
+    if not isinstance(metadata, Mapping) or "tasks" not in metadata:
+        return value
+    operation_context = value.get("context")
+    if not isinstance(operation_context, Mapping):
+        operation_context = {}
+    if "contextTasks" not in operation_context:
+        value["context"] = {**operation_context, "contextTasks": metadata["tasks"]}
     return value

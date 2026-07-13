@@ -148,7 +148,7 @@ export async function buildLocalOperationPlan(
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("本地 Agent 端口未配置。");
   if (!settings.localAgentToken) throw new AgentError("本地 Agent 尚未配对。");
-  const activeFile = app.workspace.getActiveFile();
+  const body = await localChatBody(app, requestText, scope);
   const response = await requestUrl({
     url: `http://127.0.0.1:${port}/chat`,
     method: "POST",
@@ -156,12 +156,7 @@ export async function buildLocalOperationPlan(
       "Content-Type": "application/json",
       "X-Agent-Token": settings.localAgentToken
     },
-    body: JSON.stringify({
-      userInput: requestText,
-      conversationId: "obsidian-plugin",
-      scope,
-      activeFilePath: activeFile?.path
-    }),
+    body: JSON.stringify(body),
     throw: false
   });
   if (response.status < 200 || response.status >= 300) {

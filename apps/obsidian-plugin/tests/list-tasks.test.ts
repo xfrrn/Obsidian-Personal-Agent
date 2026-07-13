@@ -74,11 +74,15 @@ test("优先使用 Tasks 插件获取任务", async () => {
     plugins: {
       plugins: {
         "obsidian-tasks-plugin": {
+          apiV1: {
+            executeToggleTaskDoneCommand: (line: string, path: string) => `${line} ✅ ${path}`
+          },
           getTasks: () => [
             {
               path: "Tasks.md",
               lineNumber: 4,
               description: "插件任务",
+              originalMarkdown: "- [ ] 插件任务 📅 2026-07-13",
               isDone: false,
               dueDate: { format: () => today },
               heading: "插件标题"
@@ -101,7 +105,9 @@ test("优先使用 Tasks 插件获取任务", async () => {
     title: "插件任务",
     completed: false,
     dueDate: today,
-    heading: "插件标题"
+    heading: "插件标题",
+    lineText: "- [ ] 插件任务 📅 2026-07-13",
+    completedLineText: "- [ ] 插件任务 📅 2026-07-13 ✅ Tasks.md"
   }]);
 });
 

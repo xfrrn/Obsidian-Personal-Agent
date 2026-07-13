@@ -8,9 +8,14 @@ export interface MarkdownTask {
   completed: boolean;
   heading?: string;
   dueDate?: string;
+  lineText?: string;
+  completedLineText?: string;
 }
 
-type TasksPlugin = { getTasks: () => unknown };
+type TasksPlugin = {
+  getTasks: () => unknown;
+  completeLine?: (line: string, path: string) => string | undefined;
+};
 
 export function parseMarkdownTasks(path: string, content: string): MarkdownTask[] {
   const tasks: MarkdownTask[] = [];
@@ -66,7 +71,7 @@ export function collectTasksFromPlugin(app: App, scope: QueryScope): MarkdownTas
   if (!Array.isArray(rawTasks)) return null;
 
   return rawTasks
-    .map(taskFromPlugin)
+    .map((task) => taskFromPlugin(task, plugin))
     .filter((task): task is MarkdownTask => !!task)
     .filter((task) => !activePath || task.path === activePath);
 }
@@ -74,29 +79,44 @@ export function collectTasksFromPlugin(app: App, scope: QueryScope): MarkdownTas
 function tasksPlugin(app: App): TasksPlugin | null {
   const plugins = (app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins;
   const plugin = plugins?.["obsidian-tasks-plugin"];
-  return isRecord(plugin) && typeof plugin.getTasks === "function"
-    ? { getTasks: plugin.getTasks.bind(plugin) as () => unknown }
-    : null;
+  if (!isRecord(plugin) || typeof plugin.getTasks !== "function") return null;
+  const api = isRecord(plugin.apiV1) ? plugin.apiV1 : {};
+  const toggle = typeof api.executeToggleTaskDoneCommand === "function"
+    ? api.executeToggleTaskDoneCommand.bind(api) as (line: string, path: string) => unknown
+    : undefined;
+  return {
+    getTasks: plugin.getTasks.bind(plugin) as () => unknown,
+    completeLine: toggle
+      ? (line, path) => {
+        const value = toggle(line, path);
+        return typeof value === "string" ? value : undefined;
+      }
+      : undefined
+  };
 }
 
-function taskFromPlugin(value: unknown): MarkdownTask | null {
+function taskFromPlugin(value: unknown, plugin: TasksPlugin): MarkdownTask | null {
   if (!isRecord(value)) return null;
   const location = isRecord(value.taskLocation) ? value.taskLocation : {};
   const path = stringValue(value.path) ?? stringValue(location.path);
   const lineNumber = numberValue(value.lineNumber) ?? numberValue(location.lineNumber);
-  const title = stringValue(value.description) ?? titleFromMarkdown(stringValue(value.originalMarkdown));
+  const lineText = stringValue(value.originalMarkdown) ?? stringValue(value.lineText) ?? stringValue(value.markdown);
+  const title = stringValue(value.description) ?? titleFromMarkdown(lineText);
   const completed = completedValue(value);
   if (!path || lineNumber === undefined || !title || completed === undefined) return null;
 
   const heading = stringValue(value.heading) ?? stringValue(value.precedingHeader) ?? stringValue(location.precedingHeader);
   const due = isoDate(value.dueDate);
+  const completedLineText = !completed && lineText ? plugin.completeLine?.(lineText, path) : undefined;
   return {
     path,
     line: lineNumber + 1,
     title,
     completed,
     ...(heading ? { heading } : {}),
-    ...(due ? { dueDate: due } : {})
+    ...(due ? { dueDate: due } : {}),
+    ...(lineText ? { lineText } : {}),
+    ...(completedLineText ? { completedLineText } : {})
   };
 }
 

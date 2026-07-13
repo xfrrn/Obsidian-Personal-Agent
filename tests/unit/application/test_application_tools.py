@@ -223,6 +223,31 @@ async def _run() -> None:
     assert complete_operation["oldText"] == "- [ ] write tests 📅 2026-07-12"
     assert complete_operation["newText"] == "- [x] write tests 📅 2026-07-12"
 
+    plugin_complete_plan = await registry.run(
+        ToolCall(
+            "build_operation_plan",
+            {
+                "requestedOperations": ({"intent": "task.complete", "arguments": {"rawText": "把今天的任务标记为完成"}},),
+            },
+        ),
+        context=SimpleNamespace(
+            metadata={
+                "tasks": [{
+                    "path": "Tasks.md",
+                    "line": 5,
+                    "title": "plugin task",
+                    "completed": False,
+                    "dueDate": date.today().isoformat(),
+                    "lineText": "- [ ] plugin task 📅 today",
+                    "completedLineText": "- [x] plugin task ✅ today\n- [ ] plugin task 📅 tomorrow",
+                }]
+            },
+        ),
+    )
+    plugin_complete_operation = plugin_complete_plan.output["plan"]["operations"][0]
+    assert plugin_complete_operation["oldText"] == "- [ ] plugin task 📅 today"
+    assert plugin_complete_operation["newText"] == "- [x] plugin task ✅ today\n- [ ] plugin task 📅 tomorrow"
+
     try:
         await registry.run(
             ToolCall(
