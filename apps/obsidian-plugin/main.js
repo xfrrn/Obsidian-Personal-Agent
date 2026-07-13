@@ -2007,9 +2007,15 @@ user: ${question}` : question;
 // apps/obsidian-plugin/src/main.ts
 var LOCAL_AGENT_TOKEN_SECRET_ID = "personal-knowledge-agent-local-token";
 var PersonalKnowledgeAgentPlugin = class extends import_obsidian7.Plugin {
+  constructor() {
+    super(...arguments);
+    this.autoConnectTimer = null;
+    this.autoConnectRunning = false;
+  }
   async onload() {
     await this.loadSettings();
     initializePlugin(this);
+    this.startLocalAgentAutoConnect();
   }
   onunload() {
     this.app.workspace.detachLeavesOfType(AGENT_VIEW_TYPE);
@@ -2034,6 +2040,30 @@ var PersonalKnowledgeAgentPlugin = class extends import_obsidian7.Plugin {
       return Promise.reject(new Error("\u8BE5\u8BA1\u5212\u6CA1\u6709\u6301\u4E45\u5316\u64A4\u9500\u5FEB\u7167\u3002"));
     }
     return rollbackLocalOperationPlan(this.settings, plan);
+  }
+  startLocalAgentAutoConnect() {
+    const connect = () => void this.autoConnectLocalAgent();
+    connect();
+    this.autoConnectTimer = window.setInterval(connect, 5e3);
+    this.registerInterval(this.autoConnectTimer);
+  }
+  async autoConnectLocalAgent() {
+    if (this.autoConnectRunning) return;
+    this.autoConnectRunning = true;
+    try {
+      const result = await discoverLocalAgent(this.app, this.settings);
+      this.settings.localAgentPort = result.port;
+      this.settings.localAgentToken = result.token;
+      await this.saveSettings();
+      await updateLocalAgentPolicy(this.app, this.settings);
+      if (this.autoConnectTimer !== null) {
+        window.clearInterval(this.autoConnectTimer);
+        this.autoConnectTimer = null;
+      }
+    } catch (e) {
+    } finally {
+      this.autoConnectRunning = false;
+    }
   }
   async saveSettings() {
     const { localAgentToken, ...settings } = this.settings;

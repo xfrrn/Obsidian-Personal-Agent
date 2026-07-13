@@ -9,8 +9,10 @@ import {
 } from "./features/operation-preview/operation-executor";
 import { AGENT_VIEW_TYPE } from "./views/assistant-view/assistant-view";
 import {
+  discoverLocalAgent,
   executeLocalOperationPlan,
-  rollbackLocalOperationPlan
+  rollbackLocalOperationPlan,
+  updateLocalAgentPolicy
 } from "./api/local-agent-client";
 import type { AgentAnswer, AgentIntent, AgentTraceStep } from "./types";
 import {
@@ -24,10 +26,13 @@ const LOCAL_AGENT_TOKEN_SECRET_ID = "personal-knowledge-agent-local-token";
 
 export default class PersonalKnowledgeAgentPlugin extends Plugin {
   settings!: AgentSettings;
+  private autoConnectTimer: number | null = null;
+  private autoConnectRunning = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     initializePlugin(this);
+    this.startLocalAgentAutoConnect();
   }
 
   onunload(): void {
@@ -63,6 +68,33 @@ export default class PersonalKnowledgeAgentPlugin extends Plugin {
       return Promise.reject(new Error("该计划没有持久化撤销快照。"));
     }
     return rollbackLocalOperationPlan(this.settings, plan);
+  }
+
+  private startLocalAgentAutoConnect(): void {
+    const connect = () => void this.autoConnectLocalAgent();
+    connect();
+    this.autoConnectTimer = window.setInterval(connect, 5_000);
+    this.registerInterval(this.autoConnectTimer);
+  }
+
+  private async autoConnectLocalAgent(): Promise<void> {
+    if (this.autoConnectRunning) return;
+    this.autoConnectRunning = true;
+    try {
+      const result = await discoverLocalAgent(this.app, this.settings);
+      this.settings.localAgentPort = result.port;
+      this.settings.localAgentToken = result.token;
+      await this.saveSettings();
+      await updateLocalAgentPolicy(this.app, this.settings);
+      if (this.autoConnectTimer !== null) {
+        window.clearInterval(this.autoConnectTimer);
+        this.autoConnectTimer = null;
+      }
+    } catch {
+      // Retry on the next 5s tick.
+    } finally {
+      this.autoConnectRunning = false;
+    }
   }
 
   async saveSettings(): Promise<void> {
