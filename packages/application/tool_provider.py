@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from .notes.read_note import ReadNoteUseCase
 from .notes.analyze_notes import (
@@ -109,11 +110,12 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
                         "priority": {"type": "string"},
                         "project": {"type": "string"},
                         "path_prefix": {"type": "string"},
+                        "rawText": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 500},
                     },
                 },
             ),
-            lambda input_data, _context: list_tasks.execute(input_data),
+            lambda input_data, context: list_tasks.execute(_with_turn_context(input_data, context)),
         ),
         FunctionTool(
             ToolDefinition(
@@ -219,3 +221,17 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
             lambda input_data, _context: rollback_plan.execute(input_data),
         ),
     )
+
+
+def _with_turn_context(input_data: Mapping[str, Any], context: Any) -> Mapping[str, Any]:
+    value = dict(input_data)
+    raw_text = getattr(context, "user_input", "")
+    if "rawText" not in value and isinstance(raw_text, str) and raw_text.strip():
+        value["rawText"] = raw_text
+    scope = getattr(context, "scope", "")
+    if "scope" not in value and isinstance(scope, str) and scope:
+        value["scope"] = scope
+    active_file_path = getattr(context, "active_file_path", None)
+    if "activeFilePath" not in value and isinstance(active_file_path, str) and active_file_path:
+        value["activeFilePath"] = active_file_path
+    return value

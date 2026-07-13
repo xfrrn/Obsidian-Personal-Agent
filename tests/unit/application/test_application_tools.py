@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -154,6 +156,12 @@ async def _run() -> None:
     assert tasks.output["query"] == ""
     completed = await registry.run(ToolCall("list_tasks", {"rawText": "已完成任务"}))
     assert completed.output["status"] == "completed"
+    today_tasks = await registry.run(
+        ToolCall("list_tasks", {}),
+        context=SimpleNamespace(user_input="我今天还有哪些任务没有完成", scope="vault"),
+    )
+    assert today_tasks.output["status"] == "open"
+    assert today_tasks.output["filters"] == {"due_on": date.today().isoformat()}
 
     current = await registry.run(ToolCall("search_notes", {"scope": "current", "activeFilePath": "Today.md"}))
     assert current.output["results"][0]["path"] == "Today.md"

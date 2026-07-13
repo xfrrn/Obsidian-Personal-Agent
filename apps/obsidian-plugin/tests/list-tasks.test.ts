@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMarkdownTasks } from "../src/features/task-actions/list-tasks";
+import { TFile } from "obsidian";
+import { answerWithTasks, parseMarkdownTasks } from "../src/features/task-actions/list-tasks";
 
 test("解析 Markdown 任务并保留标题位置", () => {
   const tasks = parseMarkdownTasks("Projects/A.md", [
@@ -35,3 +36,34 @@ test("解析 Markdown 任务并保留标题位置", () => {
     }
   ]);
 });
+
+test("今天未完成任务只返回今天到期且未完成的任务", async () => {
+  const today = localDate(0);
+  const tomorrow = localDate(1);
+  const file = new TFile("Tasks.md");
+  const app = {
+    workspace: { getActiveFile: () => file },
+    vault: {
+      getMarkdownFiles: () => [file],
+      cachedRead: async () => [
+        `- [ ] 今天要做 📅 ${today}`,
+        `- [ ] 明天再做 📅 ${tomorrow}`,
+        `- [x] 今天已做 📅 ${today}`
+      ].join("\n")
+    }
+  };
+
+  const answer = await answerWithTasks(app as never, "我今天还有哪些任务没有完成", "vault");
+
+  assert.match(answer.answer, /今天要做/);
+  assert.doesNotMatch(answer.answer, /明天再做/);
+  assert.doesNotMatch(answer.answer, /今天已做/);
+});
+
+function localDate(offsetDays: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + offsetDays);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}

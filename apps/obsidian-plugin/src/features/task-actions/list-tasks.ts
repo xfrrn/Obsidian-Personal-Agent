@@ -8,6 +8,7 @@ export interface MarkdownTask {
   title: string;
   completed: boolean;
   heading?: string;
+  dueDate?: string;
 }
 
 export async function answerWithTasks(
@@ -17,8 +18,12 @@ export async function answerWithTasks(
 ): Promise<AgentAnswer> {
   const tasks = await collectTasks(app, scope);
   const wantDone = /已完成|完成了|done|completed/i.test(question);
-  const visible = tasks.filter((task) => task.completed === wantDone).slice(0, 30);
-  const label = wantDone ? "已完成任务" : "未完成任务";
+  const dueOn = question.includes("今天") ? todayIso() : "";
+  const visible = tasks
+    .filter((task) => task.completed === wantDone)
+    .filter((task) => !dueOn || task.dueDate === dueOn)
+    .slice(0, 30);
+  const label = `${dueOn ? "今天的" : ""}${wantDone ? "已完成任务" : "未完成任务"}`;
 
   if (!visible.length) {
     return { answer: `没有找到${label}。`, citations: [] };
@@ -42,16 +47,29 @@ export function parseMarkdownTasks(path: string, content: string): MarkdownTask[
 
     const taskMatch = /^\s*[-+*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
     if (!taskMatch) return;
+    const due = dueDate(taskMatch[2]);
     tasks.push({
       path,
       line: index + 1,
       title: taskMatch[2],
       completed: taskMatch[1].toLowerCase() === "x",
-      heading
+      heading,
+      ...(due ? { dueDate: due } : {})
     });
   });
 
   return tasks;
+}
+
+function dueDate(title: string): string | undefined {
+  return /📅\s*(\d{4}-\d{2}-\d{2})/.exec(title)?.[1];
+}
+
+function todayIso(): string {
+  const date = new Date();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 async function collectTasks(app: App, scope: QueryScope): Promise<MarkdownTask[]> {

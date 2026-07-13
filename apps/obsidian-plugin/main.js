@@ -1899,8 +1899,9 @@ function initializePlugin(plugin) {
 async function answerWithTasks(app, question, scope) {
   const tasks = await collectTasks(app, scope);
   const wantDone = /已完成|完成了|done|completed/i.test(question);
-  const visible = tasks.filter((task) => task.completed === wantDone).slice(0, 30);
-  const label = wantDone ? "\u5DF2\u5B8C\u6210\u4EFB\u52A1" : "\u672A\u5B8C\u6210\u4EFB\u52A1";
+  const dueOn = question.includes("\u4ECA\u5929") ? todayIso() : "";
+  const visible = tasks.filter((task) => task.completed === wantDone).filter((task) => !dueOn || task.dueDate === dueOn).slice(0, 30);
+  const label = `${dueOn ? "\u4ECA\u5929\u7684" : ""}${wantDone ? "\u5DF2\u5B8C\u6210\u4EFB\u52A1" : "\u672A\u5B8C\u6210\u4EFB\u52A1"}`;
   if (!visible.length) {
     return { answer: `\u6CA1\u6709\u627E\u5230${label}\u3002`, citations: [] };
   }
@@ -1919,15 +1920,27 @@ function parseMarkdownTasks(path, content) {
     if (headingMatch) heading = headingMatch[2];
     const taskMatch = /^\s*[-+*]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(line);
     if (!taskMatch) return;
+    const due = dueDate(taskMatch[2]);
     tasks.push({
       path,
       line: index + 1,
       title: taskMatch[2],
       completed: taskMatch[1].toLowerCase() === "x",
-      heading
+      heading,
+      ...due ? { dueDate: due } : {}
     });
   });
   return tasks;
+}
+function dueDate(title) {
+  var _a;
+  return (_a = /📅\s*(\d{4}-\d{2}-\d{2})/.exec(title)) == null ? void 0 : _a[1];
+}
+function todayIso() {
+  const date = /* @__PURE__ */ new Date();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 async function collectTasks(app, scope) {
   const activeFile = app.workspace.getActiveFile();

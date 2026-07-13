@@ -47,7 +47,7 @@ def _text(value: Any) -> str:
 def _status_from_text(value: str) -> str | None:
     if any(marker in value.casefold() for marker in ("已完成", "完成了", "done", "completed")):
         return "completed"
-    if any(marker in value.casefold() for marker in ("未完成", "待办", "逾期", "todo", "pending")):
+    if any(marker in value.casefold() for marker in ("未完成", "没有完成", "没完成", "还没完成", "待办", "逾期", "todo", "pending")):
         return "open"
     return None
 
