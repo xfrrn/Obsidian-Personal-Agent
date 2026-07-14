@@ -17,15 +17,15 @@ export interface AgentTraceStep {
   detail?: Record<string, unknown>;
 }
 
-export type AgentIntent = "ask" | "plan";
+export type AgentIntent = "answer" | "act";
 
 export function inferIntent(input: string): AgentIntent {
   const text = input.trim();
-  if (isTaskCompletionRequest(text)) return "plan";
-  if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "ask";
-  return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|元数据|frontmatter|标签|任务)|(?:笔记|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text)
-    ? "plan"
-    : "ask";
+  if (isTaskCompletionRequest(text)) return "act";
+  if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "answer";
+  return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|目录|文件夹|元数据|frontmatter|标签|任务)|(?:笔记|目录|文件夹|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text)
+    ? "act"
+    : "answer";
 }
 
 export function isTaskCompletionRequest(input: string): boolean {
@@ -144,7 +144,8 @@ export function parseAgentAnswer(
 
 export function parseIntent(text: string): AgentIntent {
   const value = parseJsonObject(text);
-  if (value.intent === "ask" || value.intent === "plan") return value.intent;
+  if (value.intent === "answer" || value.intent === "ask") return "answer";
+  if (value.intent === "act" || value.intent === "plan") return "act";
   throw new AgentError("模型没有按要求返回意图判断。");
 }
 

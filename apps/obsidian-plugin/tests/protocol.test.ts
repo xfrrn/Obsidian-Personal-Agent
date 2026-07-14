@@ -86,9 +86,11 @@ test("无法识别的模型响应会被拒绝", () => {
   );
 });
 
-test("意图判断只接受问答或修改计划", () => {
-  assert.equal(parseIntent("{\"intent\":\"ask\"}"), "ask");
-  assert.equal(parseIntent("```json\n{\"intent\":\"plan\"}\n```"), "plan");
+test("路由判断只接受回答或行动，并兼容旧 ask/plan", () => {
+  assert.equal(parseIntent("{\"intent\":\"answer\"}"), "answer");
+  assert.equal(parseIntent("{\"intent\":\"ask\"}"), "answer");
+  assert.equal(parseIntent("```json\n{\"intent\":\"act\"}\n```"), "act");
+  assert.equal(parseIntent("```json\n{\"intent\":\"plan\"}\n```"), "act");
   assert.throws(
     () => parseIntent("{\"intent\":\"delete\"}"),
     AgentError
@@ -96,10 +98,12 @@ test("意图判断只接受问答或修改计划", () => {
 });
 
 test("本地意图判断不会把提问误当成写操作", () => {
-  assert.equal(inferIntent("创建一篇项目笔记"), "plan");
-  assert.equal(inferIntent("帮我把今天需要完成的任务标记为完成"), "plan");
-  assert.equal(inferIntent("如何创建一篇项目笔记？"), "ask");
-  assert.equal(inferIntent("总结当前笔记"), "ask");
+  assert.equal(inferIntent("创建一篇项目笔记"), "act");
+  assert.equal(inferIntent("你能帮我创建目录吗"), "act");
+  assert.equal(inferIntent("新建文件夹 03-Learning/网络与安全"), "act");
+  assert.equal(inferIntent("帮我把今天需要完成的任务标记为完成"), "act");
+  assert.equal(inferIntent("如何创建一篇项目笔记？"), "answer");
+  assert.equal(inferIntent("总结当前笔记"), "answer");
   assert.equal(isTaskCompletionRequest("列出今天需要完成的任务"), false);
   assert.equal(isTaskCompletionRequest("把今天需要完成的任务标记为完成"), true);
   assert.equal(isTaskQuery("列出未完成任务"), true);
@@ -111,5 +115,5 @@ test("本地意图判断不会把提问误当成写操作", () => {
 
 test("JSON 对象外的额外文本会被拒绝", () => {
   assert.throws(() => parseIntent('说明：{"intent":"ask"}'), AgentError);
-  assert.equal(parseIntent('```json\n{"intent":"ask"}\n```'), "ask");
+  assert.equal(parseIntent('```json\n{"intent":"ask"}\n```'), "answer");
 });

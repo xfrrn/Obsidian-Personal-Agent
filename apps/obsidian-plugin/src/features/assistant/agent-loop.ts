@@ -14,7 +14,7 @@ export async function judgeIntent(
   _app: App,
   _settings: AgentSettings,
   input: string
-): Promise<"ask" | "plan"> {
+): Promise<"answer" | "act"> {
   const cleanInput = input.trim();
   if (!cleanInput) throw new AgentError("请输入问题或修改请求。");
   return inferIntent(cleanInput);

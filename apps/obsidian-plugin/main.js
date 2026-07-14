@@ -37,9 +37,9 @@ var import_obsidian = require("obsidian");
 // apps/obsidian-plugin/src/utils/protocol.ts
 function inferIntent(input) {
   const text = input.trim();
-  if (isTaskCompletionRequest(text)) return "plan";
-  if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "ask";
-  return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|元数据|frontmatter|标签|任务)|(?:笔记|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text) ? "plan" : "ask";
+  if (isTaskCompletionRequest(text)) return "act";
+  if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "answer";
+  return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|目录|文件夹|元数据|frontmatter|标签|任务)|(?:笔记|目录|文件夹|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text) ? "act" : "answer";
 }
 function isTaskCompletionRequest(input) {
   return /(?:标记|设为|改为|置为|打勾).{0,12}完成|^(?:帮我)?完成(?:一下)?(?:任务|待办)/i.test(input);
@@ -1463,11 +1463,19 @@ var AssistantView = class extends import_obsidian5.ItemView {
   }
   async submit() {
     if (this.busy) return;
-    const prompt = this.promptText().trim();
-    if (!prompt) return;
+    const input = this.promptText().trim();
+    if (!input) return;
     this.questionEl.empty();
     this.hideFileSuggest();
-    await this.sendPrompt(prompt);
+    if (this.pendingActionPrompt) {
+      const prompt = `${this.pendingActionPrompt}
+\u8865\u5145\u4FE1\u606F\uFF1A${input}`;
+      this.pendingActionPrompt = void 0;
+      this.renderUserMessage(input);
+      await this.sendPrompt(prompt, false);
+      return;
+    }
+    await this.sendPrompt(input);
   }
   updateFileSuggest() {
     const range = this.currentFileSuggestRange();
@@ -1650,6 +1658,13 @@ ${name}`.toLocaleLowerCase();
     selection == null ? void 0 : selection.removeAllRanges();
     selection == null ? void 0 : selection.addRange(range);
   }
+  missingActionQuestion(prompt) {
+    if (!/(创建|新建).{0,12}(目录|文件夹)|(目录|文件夹).{0,12}(创建|新建)/.test(prompt)) {
+      return null;
+    }
+    if (/[^\s，。；：！？]+\/[^\s，。；：！？]+/.test(prompt)) return null;
+    return "\u8981\u521B\u5EFA\u54EA\u4E2A\u76EE\u5F55\uFF1F\u8BF7\u7ED9\u6211\u5B8C\u6574\u8DEF\u5F84\uFF0C\u6BD4\u5982 `03-Learning/\u7F51\u7EDC\u4E0E\u5B89\u5168`\u3002";
+  }
   async sendPrompt(prompt, renderUser = true) {
     var _a, _b, _c;
     if (this.busy) return;
@@ -1666,8 +1681,15 @@ ${name}`.toLocaleLowerCase();
     try {
       const queryScope = "vault";
       const intent = await this.agentPlugin.intent(prompt);
-      this.renderLiveTrace(this.traceStep("intent", `\u610F\u56FE\u5224\u65AD\uFF1A${intent === "plan" ? "\u4FEE\u6539\u8BA1\u5212" : "\u95EE\u7B54"}`));
-      if (intent === "plan") {
+      this.renderLiveTrace(this.traceStep("intent", `\u8DEF\u7531\u5224\u65AD\uFF1A${intent === "act" ? "\u884C\u52A8" : "\u56DE\u7B54"}`));
+      if (intent === "act") {
+        const missingQuestion = this.missingActionQuestion(prompt);
+        if (missingQuestion) {
+          this.pendingActionPrompt = prompt;
+          this.finishLiveTrace("\u7B49\u5F85\u8865\u5145");
+          await this.renderAnswer({ answer: missingQuestion, citations: [] }, true);
+          return;
+        }
         const plan = await this.agentPlugin.plan(
           prompt,
           queryScope

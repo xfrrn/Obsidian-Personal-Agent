@@ -35,6 +35,7 @@ export class AssistantView extends ItemView {
   private liveTraceStartedAt = 0;
   private liveTraceSteps: AgentTraceStep[] = [];
   private history: ChatMessage[] = [];
+  private pendingActionPrompt?: string;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -117,11 +118,18 @@ export class AssistantView extends ItemView {
 
   private async submit(): Promise<void> {
     if (this.busy) return;
-    const prompt = this.promptText().trim();
-    if (!prompt) return;
+    const input = this.promptText().trim();
+    if (!input) return;
     this.questionEl.empty();
     this.hideFileSuggest();
-    await this.sendPrompt(prompt);
+    if (this.pendingActionPrompt) {
+      const prompt = `${this.pendingActionPrompt}\n补充信息：${input}`;
+      this.pendingActionPrompt = undefined;
+      this.renderUserMessage(input);
+      await this.sendPrompt(prompt, false);
+      return;
+    }
+    await this.sendPrompt(input);
   }
 
   private updateFileSuggest(): void {
@@ -323,6 +331,14 @@ export class AssistantView extends ItemView {
     selection?.addRange(range);
   }
 
+  private missingActionQuestion(prompt: string): string | null {
+    if (!/(创建|新建).{0,12}(目录|文件夹)|(目录|文件夹).{0,12}(创建|新建)/.test(prompt)) {
+      return null;
+    }
+    if (/[^\s，。；：！？]+\/[^\s，。；：！？]+/.test(prompt)) return null;
+    return "要创建哪个目录？请给我完整路径，比如 `03-Learning/网络与安全`。";
+  }
+
   private async sendPrompt(prompt: string, renderUser = true): Promise<void> {
     if (this.busy) return;
     this.setBusy(true);
@@ -339,9 +355,16 @@ export class AssistantView extends ItemView {
     try {
       const queryScope: QueryScope = "vault";
       const intent = await this.agentPlugin.intent(prompt);
-      this.renderLiveTrace(this.traceStep("intent", `意图判断：${intent === "plan" ? "修改计划" : "问答"}`));
+      this.renderLiveTrace(this.traceStep("intent", `路由判断：${intent === "act" ? "行动" : "回答"}`));
 
-      if (intent === "plan") {
+      if (intent === "act") {
+        const missingQuestion = this.missingActionQuestion(prompt);
+        if (missingQuestion) {
+          this.pendingActionPrompt = prompt;
+          this.finishLiveTrace("等待补充");
+          await this.renderAnswer({ answer: missingQuestion, citations: [] }, true);
+          return;
+        }
         const plan = await this.agentPlugin.plan(
           prompt,
           queryScope
