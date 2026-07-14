@@ -14,17 +14,25 @@ import { AgentAnswer, AgentError, AgentTraceStep } from "../../utils/protocol";
 
 export const AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
 
+interface FileSuggestRange {
+  range: Range;
+  query: string;
+}
+
 export class AssistantView extends ItemView {
-  private contextEl!: HTMLElement;
-  private modeEl!: HTMLSelectElement;
-  private questionEl!: HTMLTextAreaElement;
+  private questionEl!: HTMLElement;
   private resultEl!: HTMLElement;
-  private scopeEl!: HTMLSelectElement;
   private sendButton!: HTMLButtonElement;
   private busy = false;
-  private liveTraceCard?: HTMLElement;
+  private fileSuggestEl?: HTMLElement;
+  private fileSuggestIndex = 0;
+  private fileSuggestItems: string[] = [];
+  private fileSuggestRange?: FileSuggestRange;
+  private liveTraceDetails?: HTMLDetailsElement;
   private liveTraceList?: HTMLOListElement;
   private liveTraceSummary?: HTMLElement;
+  private liveTraceTimer?: number;
+  private liveTraceStartedAt = 0;
   private liveTraceSteps: AgentTraceStep[] = [];
   private history: ChatMessage[] = [];
 
@@ -52,27 +60,9 @@ export class AssistantView extends ItemView {
     contentEl.empty();
     contentEl.addClass("pka-view");
 
-    const header = contentEl.createDiv({ cls: "pka-header" });
-    const title = header.createDiv({ cls: "pka-title" });
-    title.createEl("h2", { text: "个人知识库 Agent" });
-    const status = title.createDiv({ cls: "pka-status" });
-    status.createSpan({ cls: "pka-dot" });
-    status.createSpan({ text: "当前笔记上下文已加载" });
-
     const toolbar = contentEl.createDiv({ cls: "pka-toolbar" });
-    const modeShell = toolbar.createDiv({ cls: "pka-select-shell" });
-    this.modeEl = modeShell.createEl("select", { attr: { id: "pka-mode" } });
-    this.modeEl.createEl("option", { text: "自动", value: "auto" });
-    this.modeEl.createEl("option", { text: "问答", value: "ask" });
-    this.modeEl.createEl("option", { text: "修改计划", value: "plan" });
-
-    const scopeShell = toolbar.createDiv({ cls: "pka-segmented" });
-    this.scopeEl = scopeShell.createEl("select", { attr: { id: "pka-query-scope" } });
-    this.scopeEl.createEl("option", { text: "当前笔记", value: "current" });
-    this.scopeEl.createEl("option", { text: "整个知识库", value: "vault" });
-
-    this.contextEl = contentEl.createDiv({ cls: "pka-context" });
-    this.renderContext();
+    toolbar.createSpan({ cls: "pka-mode-label", text: "自动" });
+    toolbar.createSpan({ cls: "pka-mode-label", text: "全知识库" });
 
     this.resultEl = contentEl.createDiv({
       cls: "pka-result",
@@ -81,14 +71,20 @@ export class AssistantView extends ItemView {
     this.renderEmptyState();
 
     const composer = contentEl.createDiv({ cls: "pka-composer" });
-    this.questionEl = composer.createEl("textarea", {
+    this.questionEl = composer.createDiv({
       cls: "pka-question",
       attr: {
         id: "pka-question",
-        rows: "3",
+        contenteditable: "true",
+        role: "textbox",
+        "aria-multiline": "true",
         placeholder: "继续追问，或让 Agent 直接修改这篇笔记..."
       }
     });
+    this.questionEl.dataset.placeholder = this.questionEl.getAttribute("placeholder") ?? "";
+    this.questionEl.removeAttribute("placeholder");
+    this.fileSuggestEl = composer.createDiv({ cls: "pka-file-suggest" });
+    this.fileSuggestEl.hide();
     const composerBar = composer.createDiv({ cls: "pka-composer-bar" });
     this.sendButton = composerBar.createEl("button", {
       cls: "mod-cta pka-send",
@@ -97,9 +93,16 @@ export class AssistantView extends ItemView {
     setIcon(this.sendButton, "send");
 
     this.registerDomEvent(this.sendButton, "click", () => void this.submit());
-    this.registerDomEvent(this.modeEl, "change", () => this.renderContext());
-    this.registerDomEvent(this.scopeEl, "change", () => this.renderContext());
+    this.registerDomEvent(this.questionEl, "input", () => this.updateFileSuggest());
+    this.registerDomEvent(this.questionEl, "click", () => this.updateFileSuggest());
     this.registerDomEvent(this.questionEl, "keydown", (event) => {
+      if (this.handleFileSuggestKey(event)) return;
+      if (this.handleReferenceDelete(event)) return;
+      if (event.key === "Enter" && event.shiftKey) {
+        event.preventDefault();
+        document.execCommand("insertLineBreak");
+        return;
+      }
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         void this.submit();
@@ -108,51 +111,252 @@ export class AssistantView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.clearLiveTraceTimer();
     this.contentEl.empty();
   }
 
   private async submit(): Promise<void> {
     if (this.busy) return;
-    const prompt = this.questionEl.value.trim();
+    const prompt = this.promptText().trim();
     if (!prompt) return;
-    this.questionEl.value = "";
+    this.questionEl.empty();
+    this.hideFileSuggest();
     await this.sendPrompt(prompt);
   }
 
-  private async sendPrompt(prompt: string): Promise<void> {
+  private updateFileSuggest(): void {
+    const range = this.currentFileSuggestRange();
+    if (!range) {
+      this.hideFileSuggest();
+      return;
+    }
+
+    const needle = range.query.toLocaleLowerCase();
+    this.fileSuggestItems = this.app.vault.getMarkdownFiles()
+      .map((file) => file.path)
+      .sort((a, b) => a.localeCompare(b))
+      .filter((path) => {
+        const name = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+        const haystack = `${path}\n${name}`.toLocaleLowerCase();
+        return !needle || haystack.includes(needle);
+      })
+      .slice(0, 8);
+    this.fileSuggestRange = range;
+    this.fileSuggestIndex = 0;
+    this.renderFileSuggest();
+  }
+
+  private currentFileSuggestRange(): FileSuggestRange | null {
+    const range = this.currentSelectionRange();
+    if (!range || !(range.startContainer instanceof Text)) return null;
+    const before = range.startContainer.data.slice(0, range.startOffset);
+    const match = /(^|[\s([{])@([^\s@]*)$/.exec(before);
+    if (!match || match[2].includes("]]")) return null;
+    const replaceRange = document.createRange();
+    replaceRange.setStart(range.startContainer, range.startOffset - match[2].length - 1);
+    replaceRange.setEnd(range.startContainer, range.startOffset);
+    return { range: replaceRange, query: match[2].replace(/^\[\[/, "") };
+  }
+
+  private renderFileSuggest(): void {
+    const container = this.fileSuggestEl;
+    if (!container || !this.fileSuggestItems.length) {
+      this.hideFileSuggest();
+      return;
+    }
+    container.empty();
+    for (const [index, path] of this.fileSuggestItems.entries()) {
+      const button = container.createEl("button", {
+        cls: `pka-file-suggest-item${index === this.fileSuggestIndex ? " is-active" : ""}`,
+        text: path
+      });
+      button.onmousedown = (event) => event.preventDefault();
+      button.onclick = () => this.insertFileReference(index);
+    }
+    container.show();
+  }
+
+  private handleFileSuggestKey(event: KeyboardEvent): boolean {
+    if (!this.fileSuggestItems.length || !this.fileSuggestEl || this.fileSuggestEl.hidden) return false;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      this.fileSuggestIndex = (this.fileSuggestIndex + delta + this.fileSuggestItems.length) % this.fileSuggestItems.length;
+      this.renderFileSuggest();
+      return true;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      this.insertFileReference(this.fileSuggestIndex);
+      return true;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.hideFileSuggest();
+      return true;
+    }
+    return false;
+  }
+
+  private insertFileReference(index: number): void {
+    if (!this.fileSuggestRange) return;
+    const path = this.fileSuggestItems[index];
+    if (!path) return;
+    const chip = this.createFileReferenceChip(path);
+    this.fileSuggestRange.range.deleteContents();
+    this.fileSuggestRange.range.insertNode(chip);
+    this.hideFileSuggest();
+    this.placeCaretAfter(chip);
+  }
+
+  private hideFileSuggest(): void {
+    this.fileSuggestItems = [];
+    this.fileSuggestRange = undefined;
+    this.fileSuggestEl?.hide();
+  }
+
+  private createFileReferenceChip(path: string): HTMLElement {
+    const chip = document.createElement("span");
+    chip.className = "pka-file-ref";
+    chip.contentEditable = "false";
+    chip.dataset.path = path;
+    chip.title = path;
+    const mark = document.createElement("span");
+    mark.className = "pka-file-ref-mark";
+    mark.textContent = "@";
+    const label = document.createElement("span");
+    label.className = "pka-file-ref-label";
+    label.textContent = path;
+    chip.append(mark, label);
+    chip.onclick = () => this.removeFileReference(chip);
+    return chip;
+  }
+
+  private promptText(): string {
+    let text = "";
+    const visit = (node: Node) => {
+      if (node instanceof HTMLElement && node.hasClass("pka-file-ref")) {
+        const path = node.dataset.path;
+        if (path) text += `@[[${path}]]`;
+        return;
+      }
+      if (node instanceof Text) {
+        text += node.data;
+        return;
+      }
+      if (node instanceof HTMLBRElement) text += "\n";
+      node.childNodes.forEach(visit);
+    };
+    this.questionEl.childNodes.forEach(visit);
+    return text;
+  }
+
+  private handleReferenceDelete(event: KeyboardEvent): boolean {
+    if (event.key !== "Backspace" && event.key !== "Delete") return false;
+    const range = this.currentSelectionRange();
+    if (!range) return false;
+    const chip = this.adjacentFileReference(range, event.key === "Backspace" ? "before" : "after");
+    if (!chip) return false;
+    event.preventDefault();
+    this.removeFileReference(chip);
+    return true;
+  }
+
+  private adjacentFileReference(range: Range, side: "before" | "after"): HTMLElement | null {
+    const container = range.startContainer;
+    const offset = range.startOffset;
+    if (container instanceof Text) {
+      if ((side === "before" && offset > 0) || (side === "after" && offset < container.data.length)) return null;
+      return this.fileReferenceNear(container, side);
+    }
+    if (!(container instanceof HTMLElement)) return null;
+    const node = container.childNodes[side === "before" ? offset - 1 : offset] ?? null;
+    return node instanceof HTMLElement && node.hasClass("pka-file-ref") ? node : null;
+  }
+
+  private fileReferenceNear(node: Node, side: "before" | "after"): HTMLElement | null {
+    const sibling = side === "before" ? node.previousSibling : node.nextSibling;
+    return sibling instanceof HTMLElement && sibling.hasClass("pka-file-ref") ? sibling : null;
+  }
+
+  private removeFileReference(chip: HTMLElement): void {
+    const next = chip.nextSibling;
+    chip.remove();
+    if (next) this.placeCaretBefore(next);
+    else this.placeCaretAtEnd();
+    this.updateFileSuggest();
+  }
+
+  private currentSelectionRange(): Range | null {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed || !this.questionEl.contains(range.startContainer)) return null;
+    return range;
+  }
+
+  private placeCaretAfter(node: Node): void {
+    const range = document.createRange();
+    range.setStartAfter(node);
+    range.collapse(true);
+    this.setSelection(range);
+  }
+
+  private placeCaretBefore(node: Node): void {
+    const range = document.createRange();
+    range.setStartBefore(node);
+    range.collapse(true);
+    this.setSelection(range);
+  }
+
+  private placeCaretAtEnd(): void {
+    const range = document.createRange();
+    range.selectNodeContents(this.questionEl);
+    range.collapse(false);
+    this.setSelection(range);
+  }
+
+  private setSelection(range: Range): void {
+    this.questionEl.focus();
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  private async sendPrompt(prompt: string, renderUser = true): Promise<void> {
     if (this.busy) return;
     this.setBusy(true);
     this.resultEl.querySelector(".pka-empty")?.remove();
-    this.liveTraceCard = undefined;
+    this.clearLiveTraceTimer();
+    this.liveTraceDetails = undefined;
     this.liveTraceList = undefined;
     this.liveTraceSummary = undefined;
+    this.liveTraceStartedAt = 0;
     this.liveTraceSteps = [];
-    this.renderUserMessage(prompt);
-    this.renderLoading(this.busyText());
+    if (renderUser) this.renderUserMessage(prompt);
+    this.startLiveTrace();
 
     try {
-      const mode = this.modeEl.value;
-      const intent = mode === "auto"
-        ? await this.agentPlugin.intent(prompt)
-        : mode;
-      this.renderLoading(intent === "plan"
-        ? "意图判断：修改计划。正在生成修改计划..."
-        : "意图判断：问答。正在查找相关笔记...");
+      const queryScope: QueryScope = "vault";
+      const intent = await this.agentPlugin.intent(prompt);
+      this.renderLiveTrace(this.traceStep("intent", `意图判断：${intent === "plan" ? "修改计划" : "问答"}`));
 
       if (intent === "plan") {
         const plan = await this.agentPlugin.plan(
           prompt,
-          this.scopeEl.value as QueryScope
+          queryScope
         );
-        const executeButton = this.renderPlan(plan);
-        if (mode === "auto" && plan.requiresConfirmation === false) {
+        for (const step of plan.trace ?? []) this.renderLiveTrace(step);
+        this.finishLiveTrace();
+        const executeButton = this.renderPlan(plan, true);
+        if (plan.requiresConfirmation === false) {
           this.setBusy(false);
           await this.executePlan(plan, executeButton, false);
         }
       } else {
         const answer = await this.agentPlugin.ask(
           prompt,
-          this.scopeEl.value as QueryScope,
+          queryScope,
           this.history,
           (step) => this.renderLiveTrace(step)
         );
@@ -164,6 +368,7 @@ export class AssistantView extends ItemView {
       }
     } catch (error) {
       this.resultEl.querySelector(".pka-loading")?.remove();
+      this.finishLiveTrace("处理失败");
       this.resultEl.createDiv({
         cls: "pka-error",
         text: error instanceof AgentError
@@ -177,7 +382,7 @@ export class AssistantView extends ItemView {
 
   private async renderAnswer(answer: AgentAnswer, skipTrace = false): Promise<void> {
     this.resultEl.querySelector(".pka-loading")?.remove();
-    this.renderContext(answer.citations.length);
+    if (skipTrace) this.finishLiveTrace();
     const card = this.createAssistantCard();
     if (!skipTrace) this.renderTrace(card, answer.trace);
     const answerEl = card.createDiv({ cls: "pka-answer markdown-rendered" });
@@ -215,9 +420,9 @@ export class AssistantView extends ItemView {
     if (!trace?.length) return;
     const details = card.createEl("details", { cls: "pka-agent-trace" });
     const summary = details.createEl("summary");
+    summary.createSpan({ cls: "pka-trace-summary-text", text: `已处理 ${trace.length} 步` });
     const icon = summary.createSpan({ cls: "pka-trace-icon" });
-    setIcon(icon, "activity");
-    summary.createSpan({ text: `思考与工具调用（${trace.length} 步）` });
+    setIcon(icon, "chevron-right");
 
     const list = details.createEl("ol", { cls: "pka-trace-list" });
     for (const step of trace) {
@@ -225,20 +430,35 @@ export class AssistantView extends ItemView {
     }
   }
 
+  private traceStep(toolName: string, summary: string): AgentTraceStep {
+    return {
+      round: 1,
+      toolName,
+      status: "completed",
+      summary,
+      detail: {}
+    };
+  }
+
   private renderLiveTrace(step: AgentTraceStep): void {
     this.liveTraceSteps.push(step);
-    if (!this.liveTraceCard || !this.liveTraceList) {
-      this.liveTraceCard = this.createAssistantCard();
-      const details = this.liveTraceCard.createEl("details", { cls: "pka-agent-trace" });
-      const summary = details.createEl("summary");
-      const icon = summary.createSpan({ cls: "pka-trace-icon" });
-      setIcon(icon, "activity");
-      this.liveTraceSummary = summary.createSpan({ text: "思考与工具调用（0 步）" });
-      this.liveTraceList = details.createEl("ol", { cls: "pka-trace-list" });
-    }
-    this.liveTraceSummary?.setText(`思考与工具调用（${this.liveTraceSteps.length} 步）`);
-    this.appendTraceStep(this.liveTraceList, step);
-    this.liveTraceCard.scrollIntoView({ block: "nearest" });
+    this.startLiveTrace();
+    this.updateLiveTraceSummary();
+    this.appendTraceStep(this.liveTraceList!, step);
+    this.liveTraceDetails!.scrollIntoView({ block: "nearest" });
+  }
+
+  private startLiveTrace(): void {
+    if (this.liveTraceDetails && this.liveTraceList) return;
+    this.liveTraceStartedAt = Date.now();
+    this.liveTraceDetails = this.resultEl.createEl("details", { cls: "pka-agent-trace pka-agent-trace-card is-live" });
+    this.liveTraceDetails.open = true;
+    const summary = this.liveTraceDetails.createEl("summary");
+    this.liveTraceSummary = summary.createSpan({ cls: "pka-trace-summary-text", text: "思考中 0s" });
+    const icon = summary.createSpan({ cls: "pka-trace-icon" });
+    setIcon(icon, "chevron-right");
+    this.liveTraceList = this.liveTraceDetails.createEl("ol", { cls: "pka-trace-list" });
+    this.liveTraceTimer = window.setInterval(() => this.updateLiveTraceSummary(), 1000);
   }
 
   private appendTraceStep(list: HTMLOListElement, step: AgentTraceStep): void {
@@ -246,22 +466,42 @@ export class AssistantView extends ItemView {
       cls: step.status === "failed" ? "is-error" : "is-ok"
     });
     const header = item.createDiv({ cls: "pka-trace-row" });
-    header.createSpan({ cls: "pka-trace-round", text: `#${step.round}` });
+    header.createSpan({ cls: "pka-trace-status", text: step.status === "failed" ? "失败" : "已处理" });
+    header.createSpan({ cls: "pka-trace-summary", text: step.summary || step.toolName });
     header.createSpan({ cls: "pka-trace-tool", text: step.toolName });
-    header.createSpan({ cls: "pka-trace-status", text: step.status });
-    if (step.summary) item.createDiv({ cls: "pka-trace-summary", text: step.summary });
-    if (step.detail && Object.keys(step.detail).length) {
-      item.createEl("pre", {
-        cls: "pka-trace-detail",
-        text: JSON.stringify(step.detail, null, 2)
-      });
-    }
   }
 
-  private renderPlan(plan: OperationPlan): HTMLButtonElement {
+  private finishLiveTrace(label = "已处理"): void {
+    if (!this.liveTraceDetails) return;
+    this.clearLiveTraceTimer();
+    this.liveTraceDetails.open = false;
+    this.liveTraceDetails.removeClass("is-live");
+    this.liveTraceDetails.addClass("is-done");
+    this.liveTraceSummary?.setText(`${label} ${this.formatElapsed()}`);
+  }
+
+  private updateLiveTraceSummary(): void {
+    this.liveTraceSummary?.setText(`思考中 ${this.formatElapsed()}`);
+  }
+
+  private clearLiveTraceTimer(): void {
+    if (this.liveTraceTimer === undefined) return;
+    window.clearInterval(this.liveTraceTimer);
+    this.liveTraceTimer = undefined;
+  }
+
+  private formatElapsed(): string {
+    const seconds = Math.max(0, Math.round((Date.now() - this.liveTraceStartedAt) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  }
+
+  private renderPlan(plan: OperationPlan, skipTrace = false): HTMLButtonElement {
     this.resultEl.querySelector(".pka-loading")?.remove();
     const card = this.createAssistantCard();
-    this.renderTrace(card, plan.trace);
+    if (!skipTrace) this.renderTrace(card, plan.trace);
     card.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
 
     const title = card.createDiv({ cls: "pka-section-title" });
@@ -347,33 +587,17 @@ export class AssistantView extends ItemView {
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.sendButton.disabled = busy;
-    this.modeEl.disabled = busy;
-    this.scopeEl.disabled = busy;
-    this.questionEl.disabled = busy;
+    this.questionEl.contentEditable = busy ? "false" : "true";
+    this.questionEl.toggleAttribute("aria-disabled", busy);
     this.sendButton.empty();
     setIcon(this.sendButton, busy ? "loader" : "send");
-  }
-
-  private busyText(): string {
-    if (this.modeEl.value === "auto") return "正在判断意图...";
-    return this.modeEl.value === "plan"
-      ? "正在生成修改计划..."
-      : "正在查找相关笔记...";
-  }
-
-  private renderContext(citations = 0): void {
-    this.contextEl.empty();
-    const file = this.app.workspace.getActiveFile();
-    this.addChip(this.contextEl, `当前文件：${file?.path ?? "未打开 Markdown"}`);
-    this.addChip(this.contextEl, `${citations} 个引用`);
-    this.addChip(this.contextEl, `模式：${this.modeEl.selectedOptions[0]?.text ?? "自动"}`);
   }
 
   private renderEmptyState(): void {
     const card = this.resultEl.createDiv({ cls: "pka-empty" });
     const title = card.createDiv({ cls: "pka-section-title" });
-    title.createSpan({ text: "准备好了" });
-    card.createEl("p", { text: "选择范围后提问，或直接让 Agent 生成修改计划。" });
+    title.createSpan({ text: "今天想整理什么？" });
+    card.createEl("p", { text: "可以提问，也可以直接让我生成修改计划。" });
   }
 
   private renderUserMessage(text: string): void {
@@ -381,11 +605,13 @@ export class AssistantView extends ItemView {
     const bubble = turn.createDiv({ cls: "pka-user-message" });
     const actions = turn.createDiv({ cls: "pka-user-actions" });
     const sentAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const historyIndex = this.history.length;
+    let currentText = text;
 
     const renderReadMode = () => {
       bubble.empty();
       actions.empty();
-      bubble.createEl("p", { text });
+      bubble.createEl("p", { text: currentText });
       actions.createSpan({ cls: "pka-time", text: sentAt });
 
       const copyButton = actions.createEl("button", {
@@ -394,7 +620,7 @@ export class AssistantView extends ItemView {
       });
       setIcon(copyButton, "copy");
       this.registerDomEvent(copyButton, "click", () => {
-        void navigator.clipboard.writeText(text);
+        void navigator.clipboard.writeText(currentText);
       });
 
       const editButton = actions.createEl("button", {
@@ -410,7 +636,7 @@ export class AssistantView extends ItemView {
       actions.empty();
       const editor = bubble.createEl("textarea", {
         cls: "pka-user-edit",
-        text
+        text: currentText
       });
       const editActions = bubble.createDiv({ cls: "pka-edit-actions" });
       const cancelButton = editActions.createEl("button", {
@@ -427,26 +653,38 @@ export class AssistantView extends ItemView {
       });
       this.registerDomEvent(sendButton, "click", () => {
         const edited = editor.value.trim();
-        if (edited) void this.sendPrompt(edited);
+        if (edited) void resendEdited(edited);
       });
       this.registerDomEvent(editor, "keydown", (event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           const edited = editor.value.trim();
-          if (edited) void this.sendPrompt(edited);
+          if (edited) void resendEdited(edited);
         }
       });
       editor.focus();
       editor.setSelectionRange(editor.value.length, editor.value.length);
     };
 
+    const resendEdited = async (edited: string): Promise<void> => {
+      if (this.busy) return;
+      currentText = edited;
+      this.history = this.history.slice(0, historyIndex);
+      this.removeAfter(turn);
+      renderReadMode();
+      await this.sendPrompt(edited, false);
+    };
+
     renderReadMode();
   }
 
-  private renderLoading(text: string): void {
-    this.resultEl.querySelector(".pka-loading")?.remove();
-    const loading = this.resultEl.createDiv({ cls: "pka-loading" });
-    loading.createSpan({ text });
+  private removeAfter(element: HTMLElement): void {
+    let next = element.nextElementSibling;
+    while (next) {
+      const current = next;
+      next = next.nextElementSibling;
+      current.remove();
+    }
   }
 
   private createAssistantCard(): HTMLElement {
@@ -460,8 +698,4 @@ export class AssistantView extends ItemView {
     return card;
   }
 
-  private addChip(parent: HTMLElement, text: string): void {
-    const chip = parent.createDiv({ cls: "pka-chip" });
-    chip.createSpan({ text });
-  }
 }

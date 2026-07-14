@@ -1,7 +1,7 @@
 import { App } from "obsidian";
 import { askLocalAgent } from "../../api/local-agent-client";
 import { callModel } from "../../api/model-client";
-import { loadSources, SourceDocument, getCurrentSource } from "../../obsidian/vault-reader";
+import { extractFileReferencePaths, loadSources, SourceDocument, getCurrentSource } from "../../obsidian/vault-reader";
 import type { AgentSettings } from "../../settings/settings";
 import { AgentAnswer, AgentError, AgentTraceStep, inferIntent, isLocalAnalysisQuery, isTaskQuery, parseAgentAnswer } from "../../utils/protocol";
 import { selectCandidateNotePaths } from "../knowledge-search/search-notes";
@@ -41,15 +41,18 @@ export async function askAgent(
 
   if (scope === "current") {
     const source = await getCurrentSource(app);
-    return answerFromSources(app, settings, cleanQuestion, [source], history);
+    const referenced = await loadSources(app, withoutPath(extractFileReferencePaths(app, cleanQuestion), source.path));
+    return answerFromSources(app, settings, cleanQuestion, [source, ...referenced], history);
   }
 
+  const referencedPaths = extractFileReferencePaths(app, cleanQuestion);
   const candidates = await selectCandidateNotePaths(app, settings, questionWithHistory(cleanQuestion, history));
-  if (!candidates.length) {
+  const paths = uniquePaths([...referencedPaths, ...candidates]);
+  if (!paths.length) {
     return { answer: "没有找到足以回答这个问题的相关笔记。", citations: [] };
   }
 
-  const sources = await loadSources(app, candidates);
+  const sources = await loadSources(app, paths);
   if (!sources.length) throw new AgentError("候选笔记已经不存在，请重试。");
   return answerFromSources(app, settings, cleanQuestion, sources, history);
 }
@@ -86,4 +89,12 @@ function questionWithHistory(question: string, history: ChatMessage[]): string {
     .map((message) => `${message.role}: ${message.content}`)
     .join("\n");
   return recent ? `${recent}\nuser: ${question}` : question;
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  return [...new Set(paths)];
+}
+
+function withoutPath(paths: readonly string[], path: string): string[] {
+  return paths.filter((item) => item !== path);
 }

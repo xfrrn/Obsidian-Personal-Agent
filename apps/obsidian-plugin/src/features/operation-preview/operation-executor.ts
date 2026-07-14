@@ -14,6 +14,7 @@ import {
 import { AgentError, isTaskCompletionRequest } from "../../utils/protocol";
 import type { AgentSettings } from "../../settings/settings";
 import {
+  extractFileReferencePaths,
   getCurrentSource,
   loadSources,
   SourceDocument
@@ -200,16 +201,31 @@ async function getPlanningSources(
   request: string,
   scope: QueryScope
 ): Promise<SourceDocument[]> {
-  if (scope === "current") return [await getCurrentSource(app)];
+  if (scope === "current") {
+    const source = await getCurrentSource(app);
+    const referenced = await loadSources(app, withoutPath(extractFileReferencePaths(app, request), source.path));
+    return [source, ...referenced];
+  }
 
-  const paths = await selectCandidateNotePaths(
-    app,
-    settings,
-    request,
-    PLAN_NOTE_SELECTION_PROMPT,
-    "修改请求"
-  );
+  const paths = uniquePaths([
+    ...extractFileReferencePaths(app, request),
+    ...await selectCandidateNotePaths(
+      app,
+      settings,
+      request,
+      PLAN_NOTE_SELECTION_PROMPT,
+      "修改请求"
+    )
+  ]);
   return loadSources(app, paths);
+}
+
+function uniquePaths(paths: readonly string[]): string[] {
+  return [...new Set(paths)];
+}
+
+function withoutPath(paths: readonly string[], path: string): string[] {
+  return paths.filter((item) => item !== path);
 }
 
 function assertPlanMatchesSources(

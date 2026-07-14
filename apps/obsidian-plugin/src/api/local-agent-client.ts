@@ -4,6 +4,7 @@ import type { AgentSettings } from "../settings/settings";
 import type { OperationPlan } from "../features/operation-preview/operation-plan";
 import { AgentAnswer, AgentError, AgentTraceStep, chatCompletionsUrl, isTaskQuery } from "../utils/protocol";
 import { collectTasks } from "../features/task-actions/list-tasks";
+import { extractFileReferencePaths } from "../obsidian/vault-reader";
 
 interface LocalTask {
   path: string;
@@ -128,6 +129,7 @@ function parseStreamEvent(raw: string): { event: string; data: unknown } | null 
 
 async function localChatBody(app: App, question: string, scope: QueryScope): Promise<Record<string, unknown>> {
   const activeFile = app.workspace.getActiveFile();
+  const referencedPaths = extractFileReferencePaths(app, question);
   const body: Record<string, unknown> = {
     userInput: question,
     conversationId: "obsidian-plugin",
@@ -135,7 +137,10 @@ async function localChatBody(app: App, question: string, scope: QueryScope): Pro
     activeFilePath: activeFile?.path
   };
   const tasks = isTaskQuery(question) ? await collectTasks(app, scope) : null;
-  if (tasks) body.metadata = { tasks };
+  const metadata: Record<string, unknown> = {};
+  if (referencedPaths.length) metadata.referencedPaths = referencedPaths;
+  if (tasks) metadata.tasks = tasks;
+  if (Object.keys(metadata).length) body.metadata = metadata;
   return body;
 }
 

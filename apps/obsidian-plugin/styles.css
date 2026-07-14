@@ -1,111 +1,45 @@
 .pka-view {
-  --pka-accent: #6d55ff;
-  --pka-accent-soft: rgba(109, 85, 255, 0.12);
-  --pka-border: rgba(123, 116, 145, 0.18);
-  --pka-card: rgba(255, 255, 255, 0.86);
-  --pka-shadow: 0 10px 30px rgba(44, 35, 86, 0.08);
-  background:
-    radial-gradient(circle at 15% 6%, rgba(109, 85, 255, 0.12), transparent 28%),
-    var(--background-primary);
+  --pka-accent: #3f3a34;
+  --pka-accent-soft: rgba(63, 58, 52, 0.08);
+  --pka-border: var(--background-modifier-border);
+  --pka-card: var(--background-primary);
+  --pka-soft: var(--background-secondary);
+  background: var(--background-primary);
   display: flex;
   flex-direction: column;
-  gap: var(--size-4-4);
+  gap: var(--size-4-3);
   height: 100%;
   overflow: hidden;
-  padding: var(--size-4-5);
+  padding: var(--size-4-3);
 }
 
-.pka-view h2,
 .pka-view h3,
 .pka-view p {
   margin: 0;
 }
 
-.pka-header {
-  align-items: center;
-  display: flex;
-}
-
-.pka-title {
-  min-width: 0;
-}
-
-.pka-title h2 {
-  color: var(--text-normal);
-  font-size: 1.35rem;
-  font-weight: 760;
-  letter-spacing: 0;
-  line-height: 1.2;
-}
-
-.pka-status {
-  align-items: center;
-  color: var(--text-muted);
-  display: flex;
-  font-size: var(--font-ui-small);
-  gap: var(--size-4-1);
-  margin-top: 2px;
-}
-
-.pka-dot {
-  background: #48c36a;
-  border-radius: 50%;
-  height: 8px;
-  width: 8px;
-}
-
 .pka-toolbar {
-  align-items: stretch;
-  display: grid;
-  gap: var(--size-4-4);
-  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr);
+  align-items: center;
+  display: flex;
+  gap: var(--size-4-2);
+  justify-content: flex-start;
+  padding: 0 2px;
 }
 
-.pka-select-shell,
-.pka-segmented,
-.pka-context,
+.pka-mode-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1;
+}
+
 .pka-composer,
 .pka-message,
 .pka-execution-log {
   background: var(--pka-card);
   border: 1px solid var(--pka-border);
   border-radius: 8px;
-  box-shadow: var(--pka-shadow);
 }
 
-.pka-select-shell,
-.pka-segmented {
-  align-items: center;
-  display: flex;
-  min-height: 52px;
-  padding: 0 var(--size-4-3);
-}
-
-.pka-select-shell select,
-.pka-segmented select {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  color: var(--text-normal);
-  font-size: var(--font-ui-medium);
-  font-weight: 650;
-  width: 100%;
-}
-
-.pka-segmented {
-  outline: 1px solid rgba(109, 85, 255, 0.22);
-  outline-offset: -4px;
-}
-
-.pka-context {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--size-4-3);
-  padding: var(--size-4-2);
-}
-
-.pka-chip,
 .pka-citation {
   align-items: center;
   background: rgba(255, 255, 255, 0.68);
@@ -118,21 +52,11 @@
   padding: 0 var(--size-4-3);
 }
 
-.pka-chip {
-  max-width: 100%;
-}
-
-.pka-chip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .pka-result {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--size-4-4);
+  gap: var(--size-4-3);
   min-height: 0;
   overflow: auto;
   padding-right: 2px;
@@ -142,13 +66,18 @@
 .pka-loading,
 .pka-message,
 .pka-execution-log {
-  padding: var(--size-4-5);
+  padding: var(--size-4-4);
 }
 
 .pka-empty {
-  border: 1px dashed rgba(109, 85, 255, 0.28);
-  border-radius: 8px;
+  align-self: center;
+  background: transparent;
+  border: 0;
   color: var(--text-muted);
+  margin: auto 0;
+  max-width: 520px;
+  padding: 0;
+  text-align: center;
 }
 
 .pka-message-meta,
@@ -162,8 +91,8 @@
 .pka-message-meta {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
-  font-weight: 650;
-  margin-bottom: var(--size-4-3);
+  font-weight: 500;
+  margin-bottom: var(--size-4-2);
 }
 
 .pka-time {
@@ -179,7 +108,7 @@
 }
 
 .pka-user-message {
-  background: var(--background-secondary);
+  background: var(--pka-soft);
   border-radius: 8px;
   color: var(--text-normal);
   max-width: min(760px, 86%);
@@ -267,10 +196,21 @@
   line-height: 1.7;
 }
 
+.pka-agent-card,
+.pka-execution-log {
+  border: 0;
+}
+
 .pka-agent-trace {
   border-bottom: 1px solid var(--pka-border);
   margin-bottom: var(--size-4-4);
   padding-bottom: var(--size-4-3);
+}
+
+.pka-agent-trace-card {
+  border-bottom: 1px solid var(--pka-border);
+  margin: 0;
+  padding: 0 0 var(--size-4-2);
 }
 
 .pka-agent-trace summary {
@@ -279,8 +219,7 @@
   cursor: pointer;
   display: flex;
   font-size: var(--font-ui-small);
-  font-weight: 650;
-  gap: var(--size-4-2);
+  gap: var(--size-4-1);
   list-style: none;
 }
 
@@ -291,35 +230,39 @@
 .pka-trace-icon {
   align-items: center;
   display: inline-flex;
+  transition: transform 120ms ease;
+}
+
+.pka-agent-trace[open] .pka-trace-icon {
+  transform: rotate(90deg);
 }
 
 .pka-trace-icon svg {
-  height: 15px;
-  width: 15px;
+  height: 14px;
+  width: 14px;
 }
 
 .pka-trace-list {
   display: grid;
-  gap: var(--size-4-2);
+  gap: 6px;
   list-style: none;
-  margin: var(--size-4-3) 0 0;
+  margin: var(--size-4-2) 0 0;
   padding: 0;
 }
 
 .pka-trace-list li {
-  border-left: 2px solid var(--pka-accent);
-  padding-left: var(--size-4-3);
+  color: var(--text-muted);
 }
 
 .pka-trace-list li.is-error {
-  border-left-color: var(--text-error);
+  color: var(--text-error);
 }
 
 .pka-trace-row {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--size-4-2);
+  gap: 6px;
 }
 
 .pka-trace-round,
@@ -329,16 +272,19 @@
 }
 
 .pka-trace-tool {
-  color: var(--text-normal);
+  color: var(--text-faint);
   font-family: var(--font-monospace);
-  font-size: var(--font-ui-small);
-  font-weight: 650;
+  font-size: var(--font-ui-smaller);
 }
 
 .pka-trace-summary {
-  color: var(--text-muted);
+  color: var(--text-normal);
   font-size: var(--font-ui-small);
-  margin-top: 2px;
+  min-width: min(280px, 100%);
+}
+
+.pka-trace-summary-text {
+  color: var(--text-muted);
 }
 
 .pka-trace-detail {
@@ -357,8 +303,8 @@
 .pka-section-title {
   color: var(--text-normal);
   font-size: var(--font-ui-medium);
-  font-weight: 760;
-  margin: var(--size-4-4) 0 var(--size-4-2);
+  font-weight: 650;
+  margin: var(--size-4-3) 0 var(--size-4-2);
 }
 
 .pka-plan {
@@ -415,17 +361,25 @@
 }
 
 .pka-composer {
-  border-color: rgba(109, 85, 255, 0.5);
+  background: var(--background-primary);
+  border-color: var(--background-modifier-border);
   flex: none;
-  padding: var(--size-4-3);
+  padding: var(--size-4-2);
+  position: relative;
 }
 
 .pka-question {
   background: transparent;
   border: 0;
   box-shadow: none;
-  min-height: 64px;
-  resize: none;
+  line-height: 1.5;
+  max-height: 160px;
+  min-height: 56px;
+  outline: none;
+  overflow: auto;
+  padding: var(--size-4-1) var(--size-4-1) 0;
+  white-space: pre-wrap;
+  word-break: break-word;
   width: 100%;
 }
 
@@ -433,22 +387,110 @@
   box-shadow: none;
 }
 
+.pka-question:empty::before {
+  color: var(--text-faint);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.pka-file-ref {
+  align-items: center;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-normal);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--font-ui-small);
+  gap: 3px;
+  line-height: 1.5;
+  margin: 0 2px;
+  max-width: min(420px, 100%);
+  padding: 0 6px;
+  vertical-align: baseline;
+}
+
+.pka-file-ref-mark {
+  color: var(--text-accent);
+  font-weight: 700;
+}
+
+.pka-file-ref-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pka-file-suggest {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  bottom: calc(100% + var(--size-4-2));
+  box-shadow: var(--shadow-s);
+  display: grid;
+  gap: 2px;
+  left: var(--size-4-2);
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--size-4-1);
+  position: absolute;
+  right: var(--size-4-2);
+  z-index: 20;
+}
+
+.pka-file-suggest-item {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  justify-content: flex-start;
+  min-height: 30px;
+  overflow: hidden;
+  padding: 0 var(--size-4-2);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pka-file-suggest-item:hover,
+.pka-file-suggest-item.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
 .pka-composer-bar {
   align-items: center;
   display: flex;
-  gap: var(--size-4-2);
+  gap: var(--size-4-1);
+  justify-content: flex-end;
+  margin-top: var(--size-4-1);
 }
 
-.pka-send {
+.pka-send.mod-cta {
   align-items: center;
-  background: var(--pka-accent);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  color: white;
+  box-shadow: none;
+  color: var(--text-muted);
   display: inline-flex;
   justify-content: center;
   margin-left: auto;
-  min-height: 40px;
-  min-width: 52px;
+  min-height: 32px;
+  min-width: 36px;
+  padding: 0;
+}
+
+.pka-send.mod-cta:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.pka-send svg {
+  height: 16px;
+  width: 16px;
 }
 
 @media (max-width: 560px) {
@@ -457,17 +499,9 @@
   }
 
   .pka-toolbar {
-    grid-template-columns: 1fr;
+    flex-wrap: wrap;
   }
 
-  .pka-context {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .pka-chip {
-    width: 100%;
-  }
 }
 
 .pka-setting-status {

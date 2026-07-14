@@ -196,6 +196,7 @@ class AgentRuntime:
             "content": (
                 "You are a local-first Obsidian personal knowledge agent. "
                 "Use tools when notes, tasks, rules, or operation plans are needed. "
+                "When metadata.referencedPaths is present, read those notes before answering or planning. "
                 "Return a final answer when enough information is available. "
                 "Never call system-only write execution tools from a user message; create an OperationPlan instead."
             ),
