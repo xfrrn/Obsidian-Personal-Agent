@@ -25,6 +25,7 @@ export type AgentIntent = "answer" | "act";
 export function inferIntent(input: string): AgentIntent {
   const text = input.trim();
   if (isTaskCompletionRequest(text)) return "act";
+  if (/^(?:可以(?:的)?|好(?:的)?|确认|同意|(?:请|帮我)?(?:继续)?执行(?:吧|一下|这个|该)?(?:操作|计划)?)[。！!]?$/i.test(text)) return "act";
   if (/移入.{0,8}(?:废纸篓|回收站)/.test(text)) return "act";
   if (/^(如何|怎么|怎样|为什么|解释|介绍|总结|概括|查询|搜索|查找)/.test(text)) return "answer";
   return /(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除).{0,12}(?:笔记|目录|文件夹|元数据|frontmatter|标签|任务)|(?:笔记|目录|文件夹|元数据|frontmatter|标签|任务).{0,12}(?:创建|新建|修改|更新|编辑|移动|归档|追加|添加|删除)/i.test(text)

@@ -144,6 +144,45 @@ def test_agent_loop_returns_bad_tool_json_to_model() -> None:
     assert result.assistant_message == "fixed"
 
 
+def test_write_followup_reuses_previous_intent_and_builds_operation_plan() -> None:
+    registry = ToolRegistry(ToolPolicy.allow({ToolPermission.READ, ToolPermission.WRITE}, ToolRiskLevel.HIGH))
+    for name in ("read_note", "search_notes"):
+        registry.register_function(ToolDefinition(name, name), lambda _input, _context: {"message": "read"})
+    registry.register_function(
+        ToolDefinition(
+            "build_operation_plan",
+            "build operation plan",
+            permission=ToolPermission.WRITE,
+            effect=ToolEffect.PREPARE_WRITE,
+        ),
+        lambda input_data, _context: {"message": "已生成操作计划，等待确认。", "input": input_data},
+    )
+    exposed: list[set[str]] = []
+
+    def agent(messages, tools):
+        exposed.append({tool.name for tool in tools})
+        current = next(message["content"] for message in reversed(messages) if message["role"] == "user")
+        if current == "帮我执行":
+            return {"tool_calls": [{
+                "name": "build_operation_plan",
+                "arguments": {"requestedOperations": [{
+                    "type": "move-note",
+                    "path": "00-Inbox/前端设计网站.md",
+                    "targetPath": "06-Resources/前端设计/Kill AI Slop.md",
+                }]},
+            }]}
+        return {"final_answer": "需要我帮你执行移动操作吗？（把文件从 00-Inbox/前端设计网站.md 移动到 06-Resources/前端设计/Kill AI Slop.md）"}
+
+    runtime = AgentRuntime(registry, agent_client=agent)
+    asyncio.run(runtime.run(RuntimeRequest("这个文件应该放到哪里", conversation_id="c1")))
+    result = asyncio.run(runtime.run(RuntimeRequest("帮我执行", conversation_id="c1")))
+
+    assert result.intent.intent.value == "note.archive"
+    assert exposed[-1] == {"read_note", "search_notes", "build_operation_plan"}
+    assert result.trace[0].tool_name == "build_operation_plan"
+    assert result.trace[0].status == "completed"
+
+
 def test_runtime_limits_note_inspection_tools_and_blocks_health_check() -> None:
     registry = ToolRegistry(ToolPolicy.allow({ToolPermission.READ}, ToolRiskLevel.LOW))
     for name in ("read_note", "search_notes", "inspect_note", "list_rules", "check_vault_health"):

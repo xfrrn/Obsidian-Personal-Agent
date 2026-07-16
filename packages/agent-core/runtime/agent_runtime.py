@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from inspect import isawaitable
 import json
+import re
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
@@ -25,6 +26,9 @@ AgentClient = Callable[[list[dict[str, Any]], tuple[Any, ...]], Any]
 TraceCallback = Callable[["AgentTraceStep"], Any]
 
 _SAFE_READ_TOOL_NAMES = frozenset({"read_note", "search_notes"})
+_WRITE_FOLLOWUP = re.compile(
+    r"^\s*(?:可以(?:的)?|好(?:的)?|确认|同意|(?:请|帮我)?(?:继续)?执行(?:吧|一下|这个|该)?(?:操作|计划)?|按(?:这个|上述|上面)(?:方案|计划)?(?:做|执行))[。！!]?\s*$"
+)
 _INTENT_TOOL_NAMES = {
     rule.intent: rule.tool_name
     for rule in INTENT_TOOL_RULES
@@ -110,7 +114,7 @@ class AgentRuntime:
         token: CancellationToken,
         on_trace: TraceCallback | None,
     ) -> AgentRunResult:
-        intent = self._intent_classifier.classify(request.user_input)
+        intent = self._classify_intent(request)
         available_tools = _available_tools(intent, self._tool_registry.definitions())
         allowed_tool_names = {tool.name for tool in available_tools}
         context = self._context_builder.build(
@@ -215,6 +219,7 @@ class AgentRuntime:
                 "Use tools when notes, tasks, rules, or operation plans are needed. "
                 "When metadata.referencedPaths is present, read those notes before answering or planning. "
                 "Return a final answer when enough information is available. "
+                "File writes such as moves are requestedOperations inside build_operation_plan; never invent direct write tools. "
                 "Never call system-only write execution tools from a user message; create an OperationPlan instead."
             ),
         }]
@@ -232,6 +237,24 @@ class AgentRuntime:
                 }),
             })
         return messages
+
+    def _classify_intent(self, request: RuntimeRequest) -> IntentResult:
+        intent = self._intent_classifier.classify(request.user_input)
+        if intent.intent is not IntentType.UNKNOWN or not _WRITE_FOLLOWUP.fullmatch(request.user_input):
+            return intent
+        previous = next((
+            message
+            for message in reversed(self._conversations.messages(request.conversation_id))
+            if message.role is ConversationRole.ASSISTANT
+        ), None)
+        if previous is None:
+            return intent
+        previous_intent = self._intent_classifier.classify(previous.content)
+        return (
+            replace(previous_intent, raw_text=request.user_input)
+            if _INTENT_TOOL_NAMES.get(previous_intent.intent) == "build_operation_plan"
+            else intent
+        )
 
     async def _agent_decision(
         self,
