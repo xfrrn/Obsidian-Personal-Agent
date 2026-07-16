@@ -40,13 +40,13 @@ def test_execution_modes() -> None:
         risk="low", capabilities=safe, source="interactive", affected_files=1
     )
     unattended = ExecutionPolicy(ExecutionMode.UNATTENDED)
-    assert unattended.requires_confirmation(
+    assert not unattended.requires_confirmation(
         risk="low", capabilities=safe, source="interactive", affected_files=1
     )
     assert not unattended.requires_confirmation(
         risk="low", capabilities=safe, source="automation", affected_files=1
     )
-    assert unattended.requires_confirmation(
+    assert not unattended.requires_confirmation(
         risk="medium", capabilities=safe, source="automation", affected_files=1
     )
 

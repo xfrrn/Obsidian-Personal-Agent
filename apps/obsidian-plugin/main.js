@@ -28,11 +28,8 @@ var import_obsidian7 = require("obsidian");
 // apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts
 var import_obsidian5 = require("obsidian");
 
-// apps/obsidian-plugin/src/features/operation-preview/operation-executor.ts
-var import_obsidian4 = require("obsidian");
-
-// apps/obsidian-plugin/src/api/model-client.ts
-var import_obsidian = require("obsidian");
+// apps/obsidian-plugin/src/api/local-agent-client.ts
+var import_obsidian2 = require("obsidian");
 
 // apps/obsidian-plugin/src/utils/protocol.ts
 function inferIntent(input) {
@@ -145,39 +142,6 @@ function parseJsonObject(text) {
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-// apps/obsidian-plugin/src/api/model-client.ts
-async function callModel(app, settings, messages) {
-  const model = settings.model.trim();
-  if (!model) throw new AgentError("\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u586B\u5199\u6A21\u578B\u540D\u79F0\u3002");
-  const secret = settings.secretId ? app.secretStorage.getSecret(settings.secretId) : null;
-  if (settings.secretId && !secret) {
-    throw new AgentError("\u9009\u4E2D\u7684 API \u5BC6\u94A5\u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u3002");
-  }
-  const headers = {
-    "Content-Type": "application/json"
-  };
-  if (secret) headers.Authorization = `Bearer ${secret}`;
-  try {
-    const response = await (0, import_obsidian.requestUrl)({
-      url: chatCompletionsUrl(settings.apiBaseUrl),
-      method: "POST",
-      headers,
-      body: JSON.stringify({ model, messages }),
-      throw: false
-    });
-    if (response.status < 200 || response.status >= 300) {
-      throw new AgentError(`\u6A21\u578B\u670D\u52A1\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
-    }
-    return extractChatContent(response.json);
-  } catch (error) {
-    if (error instanceof AgentError) throw error;
-    throw new AgentError("\u65E0\u6CD5\u8FDE\u63A5\u6A21\u578B\u670D\u52A1\uFF0C\u8BF7\u68C0\u67E5\u5730\u5740\u3001\u7F51\u7EDC\u548C\u5BC6\u94A5\u3002");
-  }
-}
-
-// apps/obsidian-plugin/src/api/local-agent-client.ts
-var import_obsidian3 = require("obsidian");
 
 // apps/obsidian-plugin/src/features/task-actions/list-tasks.ts
 function parseMarkdownTasks(path, content) {
@@ -297,7 +261,7 @@ function isRecord2(value) {
 }
 
 // apps/obsidian-plugin/src/obsidian/vault-reader.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian = require("obsidian");
 var MAX_NOTE_CHARS = 2e4;
 var MAX_CONTEXT_CHARS = 6e4;
 async function getCurrentSource(app) {
@@ -321,7 +285,7 @@ async function loadSources(app, paths) {
   let remaining = MAX_CONTEXT_CHARS;
   for (const path of paths) {
     const file = app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian2.TFile) || file.extension !== "md") continue;
+    if (!(file instanceof import_obsidian.TFile) || file.extension !== "md") continue;
     if (remaining <= 0) break;
     const content = await app.vault.cachedRead(file);
     const allowed = Math.min(MAX_NOTE_CHARS, remaining);
@@ -345,7 +309,7 @@ function toCatalogItem(app, file, content) {
   var _a, _b, _c;
   const cache = app.metadataCache.getFileCache(file);
   const frontmatter = cache == null ? void 0 : cache.frontmatter;
-  const info = (0, import_obsidian2.getFrontMatterInfo)(content);
+  const info = (0, import_obsidian.getFrontMatterInfo)(content);
   const body = content.slice(info.exists ? info.contentStart : 0);
   return {
     path: file.path,
@@ -353,7 +317,7 @@ function toCatalogItem(app, file, content) {
     type: shortString(frontmatter == null ? void 0 : frontmatter.type),
     project: shortString(frontmatter == null ? void 0 : frontmatter.project),
     status: shortString(frontmatter == null ? void 0 : frontmatter.status),
-    tags: cache ? ((_b = (0, import_obsidian2.getAllTags)(cache)) != null ? _b : []).slice(0, 12) : [],
+    tags: cache ? ((_b = (0, import_obsidian.getAllTags)(cache)) != null ? _b : []).slice(0, 12) : [],
     headings: ((_c = cache == null ? void 0 : cache.headings) != null ? _c : []).slice(0, 16).map((item) => item.heading),
     excerpt: body.replace(/\s+/g, " ").trim().slice(0, 600)
   };
@@ -388,7 +352,7 @@ function cleanReferenceLabel(label) {
   return label.split("|", 1)[0].split("#", 1)[0].trim();
 }
 function resolveFileReference(files, label) {
-  const target = stripMd((0, import_obsidian2.normalizePath)(label)).toLocaleLowerCase();
+  const target = stripMd((0, import_obsidian.normalizePath)(label)).toLocaleLowerCase();
   const matches = files.filter((file) => fileReferenceKeys(file).some(
     (key) => stripMd(key).toLocaleLowerCase() === target
   ));
@@ -411,7 +375,7 @@ async function askLocalAgent(app, settings, question, scope, onTrace) {
   if (onTrace && typeof fetch === "function") {
     return askLocalAgentStream(port, settings, body, onTrace);
   }
-  const response = await (0, import_obsidian3.requestUrl)({
+  const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}/chat`,
     method: "POST",
     headers: {
@@ -502,7 +466,7 @@ async function buildLocalOperationPlan(app, settings, requestText, scope) {
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
   if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
   const body = await localChatBody(app, requestText, scope);
-  const response = await (0, import_obsidian3.requestUrl)({
+  const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}/chat`,
     method: "POST",
     headers: {
@@ -525,7 +489,7 @@ async function listLocalAgentTools(settings) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
   if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
-  const response = await (0, import_obsidian3.requestUrl)({
+  const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}/tools`,
     method: "GET",
     headers: { "X-Agent-Token": settings.localAgentToken },
@@ -620,7 +584,7 @@ async function testLocalAgent(app, settings) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
   if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
-  const response = await (0, import_obsidian3.requestUrl)({
+  const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}/identity`,
     method: "GET",
     headers: { "X-Agent-Token": settings.localAgentToken },
@@ -640,7 +604,7 @@ async function discoverLocalAgent(app, settings) {
   if (settings.localAgentToken) {
     for (const port of ports) {
       try {
-        const response = await withTimeout((0, import_obsidian3.requestUrl)({
+        const response = await withTimeout((0, import_obsidian2.requestUrl)({
           url: `http://127.0.0.1:${port}/identity`,
           method: "GET",
           headers: { "X-Agent-Token": settings.localAgentToken },
@@ -656,12 +620,12 @@ async function discoverLocalAgent(app, settings) {
   }
   for (const port of ports) {
     try {
-      await withTimeout((0, import_obsidian3.requestUrl)({
+      await withTimeout((0, import_obsidian2.requestUrl)({
         url: `http://127.0.0.1:${port}/health`,
         method: "GET",
         throw: false
       }), 400);
-      const response = await withTimeout((0, import_obsidian3.requestUrl)({
+      const response = await withTimeout((0, import_obsidian2.requestUrl)({
         url: `http://127.0.0.1:${port}/handshake`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -725,6 +689,14 @@ function withTimeout(promise, ms) {
 function toAgentAnswer(payload) {
   const output = unwrapToolOutput(payload);
   const trace = agentTrace(payload);
+  if (isRecord3(output) && isRecord3(output.plan)) {
+    return {
+      answer: typeof output.message === "string" ? output.message : "\u5DF2\u751F\u6210\u64CD\u4F5C\u8BA1\u5212\uFF0C\u7B49\u5F85\u786E\u8BA4\u3002",
+      citations: [],
+      trace,
+      operationPlan: localPlanFromPayload(output.plan, trace)
+    };
+  }
   if (isRecord3(output) && Array.isArray(output.tasks)) {
     return withTrace(tasksAnswer(output.tasks.filter(isLocalTask)), trace);
   }
@@ -807,7 +779,7 @@ async function localAgentRequest(settings, path, body) {
   const port = localAgentPort(settings);
   if (!port) throw new AgentError("\u672C\u5730 Agent \u7AEF\u53E3\u672A\u914D\u7F6E\u3002");
   if (!settings.localAgentToken) throw new AgentError("\u672C\u5730 Agent \u5C1A\u672A\u914D\u5BF9\u3002");
-  const response = await (0, import_obsidian3.requestUrl)({
+  const response = await (0, import_obsidian2.requestUrl)({
     url: `http://127.0.0.1:${port}${path}`,
     method: "POST",
     headers: {
@@ -857,6 +829,40 @@ function isLocalAgentTool(value) {
 }
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// apps/obsidian-plugin/src/features/operation-preview/operation-executor.ts
+var import_obsidian4 = require("obsidian");
+
+// apps/obsidian-plugin/src/api/model-client.ts
+var import_obsidian3 = require("obsidian");
+async function callModel(app, settings, messages) {
+  const model = settings.model.trim();
+  if (!model) throw new AgentError("\u8BF7\u5148\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u586B\u5199\u6A21\u578B\u540D\u79F0\u3002");
+  const secret = settings.secretId ? app.secretStorage.getSecret(settings.secretId) : null;
+  if (settings.secretId && !secret) {
+    throw new AgentError("\u9009\u4E2D\u7684 API \u5BC6\u94A5\u4E0D\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u3002");
+  }
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (secret) headers.Authorization = `Bearer ${secret}`;
+  try {
+    const response = await (0, import_obsidian3.requestUrl)({
+      url: chatCompletionsUrl(settings.apiBaseUrl),
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model, messages }),
+      throw: false
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new AgentError(`\u6A21\u578B\u670D\u52A1\u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${response.status}\uFF09\u3002`);
+    }
+    return extractChatContent(response.json);
+  } catch (error) {
+    if (error instanceof AgentError) throw error;
+    throw new AgentError("\u65E0\u6CD5\u8FDE\u63A5\u6A21\u578B\u670D\u52A1\uFF0C\u8BF7\u68C0\u67E5\u5730\u5740\u3001\u7F51\u7EDC\u548C\u5BC6\u94A5\u3002");
+  }
 }
 
 // apps/obsidian-plugin/src/features/assistant/prompts.ts
@@ -1469,6 +1475,29 @@ async function ensureParentFolder(app, path) {
 
 // apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts
 var AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
+var APPROVAL_MODES = [
+  {
+    value: "confirm_all",
+    label: "\u8BF7\u6C42\u6279\u51C6",
+    menuLabel: "\u8BF7\u6C42\u6279\u51C6",
+    description: "\u7F16\u8F91\u6587\u4EF6\u65F6\u59CB\u7EC8\u5411\u4F60\u8BE2\u95EE",
+    icon: "hand"
+  },
+  {
+    value: "risk_based",
+    label: "\u66FF\u6211\u5BA1\u6279",
+    menuLabel: "\u66FF\u6211\u5BA1\u6279",
+    description: "\u4EC5\u5BF9\u68C0\u6D4B\u5230\u7684\u98CE\u9669\u64CD\u4F5C\u8BF7\u6C42\u6279\u51C6",
+    icon: "shield-check"
+  },
+  {
+    value: "unattended",
+    label: "\u5B8C\u5168\u8BBF\u95EE",
+    menuLabel: "\u5B8C\u5168\u8BBF\u95EE\u6743\u9650",
+    description: "\u65E0\u9700\u786E\u8BA4\u5373\u53EF\u8BBF\u95EE Vault \u4E2D\u7684\u6587\u4EF6",
+    icon: "shield"
+  }
+];
 var AssistantView = class extends import_obsidian5.ItemView {
   constructor(leaf, agentPlugin) {
     super(leaf);
@@ -1528,6 +1557,7 @@ var AssistantView = class extends import_obsidian5.ItemView {
     this.fileSuggestEl = composer.createDiv({ cls: "pka-file-suggest" });
     this.fileSuggestEl.hide();
     const composerBar = composer.createDiv({ cls: "pka-composer-bar" });
+    this.renderApprovalMenu(composerBar);
     this.sendButton = composerBar.createEl("button", {
       cls: "mod-cta pka-send",
       attr: { "aria-label": "\u53D1\u9001" }
@@ -1549,6 +1579,57 @@ var AssistantView = class extends import_obsidian5.ItemView {
         void this.submit();
       }
     });
+  }
+  renderApprovalMenu(parent) {
+    const details = parent.createEl("details", { cls: "pka-approval-menu" });
+    const summary = details.createEl("summary", {
+      attr: { "aria-label": "\u9009\u62E9\u5BA1\u6279\u65B9\u5F0F" }
+    });
+    const shield = summary.createSpan({ cls: "pka-approval-summary-icon" });
+    (0, import_obsidian5.setIcon)(shield, "shield");
+    const currentLabel = summary.createSpan({ cls: "pka-approval-summary-label" });
+    const chevron = summary.createSpan({ cls: "pka-approval-chevron" });
+    (0, import_obsidian5.setIcon)(chevron, "chevron-up");
+    const popover = details.createDiv({
+      cls: "pka-approval-popover",
+      attr: { role: "menu", "aria-label": "\u5BA1\u6279\u65B9\u5F0F" }
+    });
+    popover.createDiv({ cls: "pka-approval-title", text: "\u5E94\u5982\u4F55\u6279\u51C6 Agent \u64CD\u4F5C\uFF1F" });
+    const rows = [];
+    for (const mode of APPROVAL_MODES) {
+      const button = popover.createEl("button", {
+        cls: "pka-approval-option",
+        attr: { role: "menuitemradio", "aria-checked": "false" }
+      });
+      const icon = button.createSpan({ cls: "pka-approval-option-icon" });
+      (0, import_obsidian5.setIcon)(icon, mode.icon);
+      const copy = button.createDiv({ cls: "pka-approval-copy" });
+      copy.createDiv({ cls: "pka-approval-option-label", text: mode.menuLabel });
+      copy.createDiv({ cls: "pka-approval-description", text: mode.description });
+      const check = button.createSpan({ cls: "pka-approval-check" });
+      rows.push({ mode: mode.value, button, check });
+      this.registerDomEvent(button, "click", () => {
+        this.agentPlugin.settings.executionMode = mode.value;
+        refresh();
+        details.open = false;
+        void this.agentPlugin.saveSettings().then(() => updateLocalAgentPolicy(this.app, this.agentPlugin.settings));
+      });
+    }
+    const refresh = () => {
+      var _a;
+      const selected = (_a = APPROVAL_MODES.find(
+        (mode) => mode.value === this.agentPlugin.settings.executionMode
+      )) != null ? _a : APPROVAL_MODES[0];
+      currentLabel.setText(selected.label);
+      for (const row of rows) {
+        const active = row.mode === selected.value;
+        row.button.toggleClass("is-active", active);
+        row.button.setAttribute("aria-checked", String(active));
+        row.check.empty();
+        if (active) (0, import_obsidian5.setIcon)(row.check, "check");
+      }
+    };
+    refresh();
   }
   async onClose() {
     this.clearLiveTraceTimer();
@@ -1789,11 +1870,7 @@ ${name}`.toLocaleLowerCase();
         );
         for (const step of (_b = plan.trace) != null ? _b : []) this.renderLiveTrace(step);
         this.finishLiveTrace();
-        const executeButton = this.renderPlan(plan, true);
-        if (plan.requiresConfirmation === false) {
-          this.setBusy(false);
-          await this.executePlan(plan, executeButton, false);
-        }
+        await this.presentPlan(plan, true);
       } else {
         const answer = await this.agentPlugin.ask(
           prompt,
@@ -1801,7 +1878,12 @@ ${name}`.toLocaleLowerCase();
           this.history,
           (step) => this.renderLiveTrace(step)
         );
-        await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
+        if (answer.operationPlan) {
+          this.finishLiveTrace();
+          await this.presentPlan(answer.operationPlan, true);
+        } else {
+          await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
+        }
         this.history.push(
           { role: "user", content: prompt },
           { role: "assistant", content: JSON.stringify({ answer: answer.answer, citations: answer.citations }) }
@@ -1922,6 +2004,17 @@ ${name}`.toLocaleLowerCase();
     const rest = seconds % 60;
     return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
   }
+  async presentPlan(plan, skipTrace = false) {
+    const executeButton = this.renderPlan(plan, skipTrace);
+    const mode = this.agentPlugin.settings.executionMode;
+    const builtInAutoApproval = plan.managedBy !== "local-agent" && (mode === "unattended" || mode === "risk_based" && plan.risk === "low");
+    if (plan.requiresConfirmation === false || builtInAutoApproval) {
+      this.setBusy(false);
+      await this.executePlan(plan, executeButton, false);
+      return;
+    }
+    this.openPlanConfirmation(plan, executeButton);
+  }
   renderPlan(plan, skipTrace = false) {
     var _a;
     (_a = this.resultEl.querySelector(".pka-loading")) == null ? void 0 : _a.remove();
@@ -1947,6 +2040,25 @@ ${name}`.toLocaleLowerCase();
       () => void this.executePlan(plan, executeButton)
     );
     return executeButton;
+  }
+  openPlanConfirmation(plan, executeButton) {
+    const modal = new import_obsidian5.Modal(this.app);
+    modal.modalEl.addClass("pka-confirm-modal");
+    modal.setTitle("\u6279\u51C6\u6267\u884C\u6B64\u64CD\u4F5C\u8BA1\u5212\uFF1F");
+    modal.contentEl.createEl("p", { text: `${plan.summary}\uFF08\u98CE\u9669\uFF1A${plan.risk}\uFF09` });
+    const list = modal.contentEl.createEl("ol", { cls: "pka-confirm-list" });
+    for (const operation of plan.operations) {
+      list.createEl("li", { text: describeOperation(operation) });
+    }
+    const actions = modal.contentEl.createDiv({ cls: "pka-confirm-actions" });
+    const cancel = actions.createEl("button", { text: "\u6682\u4E0D\u6267\u884C" });
+    const approve = actions.createEl("button", { cls: "mod-cta", text: "\u6279\u51C6\u5E76\u6267\u884C" });
+    this.registerDomEvent(cancel, "click", () => modal.close());
+    this.registerDomEvent(approve, "click", () => {
+      modal.close();
+      void this.executePlan(plan, executeButton);
+    });
+    modal.open();
   }
   async executePlan(plan, executeButton, confirmed = true) {
     if (this.busy) return;
@@ -2208,8 +2320,8 @@ var AgentSettingTab = class extends import_obsidian6.PluginSettingTab {
     );
     const localAgentStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
     localAgentSetting.settingEl.insertAdjacentElement("afterend", localAgentStatusEl);
-    new import_obsidian6.Setting(containerEl).setName("\u6267\u884C\u6743\u9650\u6A21\u5F0F").setDesc("\u5168\u90E8\u786E\u8BA4\u6700\u5B89\u5168\uFF1B\u98CE\u9669\u5206\u7EA7\u4EC5\u81EA\u52A8\u6267\u884C\u767D\u540D\u5355\u4F4E\u98CE\u9669\u64CD\u4F5C\uFF1B\u65E0\u4EBA\u503C\u5B88\u53EA\u5141\u8BB8\u53EF\u4FE1\u5B9A\u65F6\u4EFB\u52A1\u81EA\u52A8\u6267\u884C\u4F4E\u98CE\u9669\u64CD\u4F5C\u3002").addDropdown(
-      (dropdown) => dropdown.addOption("confirm_all", "\u5168\u90E8\u786E\u8BA4").addOption("risk_based", "\u98CE\u9669\u5206\u7EA7").addOption("unattended", "\u65E0\u4EBA\u503C\u5B88").setValue(this.agentPlugin.settings.executionMode).onChange(async (value) => {
+    new import_obsidian6.Setting(containerEl).setName("\u6267\u884C\u6743\u9650\u6A21\u5F0F").setDesc("\u8BF7\u6C42\u6279\u51C6\u6700\u5B89\u5168\uFF1B\u66FF\u6211\u5BA1\u6279\u4F1A\u81EA\u52A8\u6267\u884C\u767D\u540D\u5355\u4F4E\u98CE\u9669\u64CD\u4F5C\uFF1B\u5B8C\u5168\u8BBF\u95EE\u4E0D\u518D\u5F39\u51FA\u6267\u884C\u786E\u8BA4\u3002").addDropdown(
+      (dropdown) => dropdown.addOption("confirm_all", "\u8BF7\u6C42\u6279\u51C6").addOption("risk_based", "\u66FF\u6211\u5BA1\u6279").addOption("unattended", "\u5B8C\u5168\u8BBF\u95EE\u6743\u9650").setValue(this.agentPlugin.settings.executionMode).onChange(async (value) => {
         if (!isExecutionMode(value)) return;
         this.agentPlugin.settings.executionMode = value;
         await this.agentPlugin.saveSettings();

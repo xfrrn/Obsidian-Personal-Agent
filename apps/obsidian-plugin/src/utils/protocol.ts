@@ -1,3 +1,5 @@
+import type { OperationPlan } from "../features/operation-preview/operation-plan";
+
 export interface AgentCitation {
   path: string;
   heading?: string;
@@ -7,6 +9,7 @@ export interface AgentAnswer {
   answer: string;
   citations: AgentCitation[];
   trace?: AgentTraceStep[];
+  operationPlan?: OperationPlan;
 }
 
 export interface AgentTraceStep {

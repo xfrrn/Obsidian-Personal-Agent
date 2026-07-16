@@ -473,6 +473,132 @@
   margin-top: var(--size-4-1);
 }
 
+.pka-approval-menu {
+  position: relative;
+}
+
+.pka-approval-menu > summary {
+  align-items: center;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--font-ui-small);
+  gap: 5px;
+  list-style: none;
+  min-height: 30px;
+  padding: 0 var(--size-4-2);
+}
+
+.pka-approval-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pka-approval-menu > summary:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.pka-approval-summary-icon,
+.pka-approval-chevron,
+.pka-approval-option-icon,
+.pka-approval-check {
+  align-items: center;
+  display: inline-flex;
+  flex: none;
+}
+
+.pka-approval-summary-icon svg,
+.pka-approval-chevron svg {
+  height: 14px;
+  width: 14px;
+}
+
+.pka-approval-chevron {
+  transition: transform 120ms ease;
+}
+
+.pka-approval-menu[open] .pka-approval-chevron {
+  transform: rotate(180deg);
+}
+
+.pka-approval-popover {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  bottom: calc(100% + var(--size-4-2));
+  box-shadow: var(--shadow-l);
+  left: 0;
+  padding: var(--size-4-2);
+  position: absolute;
+  width: min(340px, calc(100vw - 48px));
+  z-index: 30;
+}
+
+.pka-approval-title {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  padding: var(--size-4-1) var(--size-4-2) var(--size-4-2);
+}
+
+.pka-approval-option {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  box-shadow: none;
+  color: var(--text-muted);
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 20px;
+  height: auto;
+  min-height: 54px;
+  padding: var(--size-4-2);
+  text-align: left;
+  width: 100%;
+}
+
+.pka-approval-option:hover,
+.pka-approval-option.is-active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.pka-approval-option-icon svg,
+.pka-approval-check svg {
+  height: 18px;
+  width: 18px;
+}
+
+.pka-approval-copy {
+  min-width: 0;
+}
+
+.pka-approval-option-label {
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+}
+
+.pka-approval-description {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.35;
+  margin-top: 2px;
+  white-space: normal;
+}
+
+.pka-confirm-list {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.pka-confirm-actions {
+  display: flex;
+  gap: var(--size-4-2);
+  justify-content: flex-end;
+  margin-top: var(--size-4-4);
+}
+
 .pka-send.mod-cta {
   align-items: center;
   background: var(--background-secondary);

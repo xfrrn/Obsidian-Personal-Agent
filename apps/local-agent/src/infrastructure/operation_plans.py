@@ -64,13 +64,15 @@ class ExecutionPolicy:
             mode = self.mode
             allowed = self.auto_allow
             max_files = self.max_auto_affected_files
-        if mode is ExecutionMode.CONFIRM_ALL or risk != "low":
+        if mode is ExecutionMode.CONFIRM_ALL:
+            return True
+        if mode is ExecutionMode.UNATTENDED:
+            return False
+        if risk != "low":
             return True
         if source in {"remote", "external"} or affected_files > max_files:
             return True
         if not capabilities or not set(capabilities).issubset(allowed):
-            return True
-        if mode is ExecutionMode.UNATTENDED and source != "automation":
             return True
         return False
 

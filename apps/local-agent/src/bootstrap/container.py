@@ -99,12 +99,16 @@ def _openai_compatible_agent_client(settings: LocalAgentSettings):
         headers = {"Content-Type": "application/json"}
         if settings.intent_llm_api_key:
             headers["Authorization"] = f"Bearer {settings.intent_llm_api_key}"
-        body = json.dumps({
+        payload: dict[str, Any] = {
             "model": settings.intent_llm_model,
             "messages": messages,
-            "tools": [_agent_function_tool(tool) for tool in tools],
-            "tool_choice": "auto",
-        }).encode("utf-8")
+        }
+        if tools:
+            payload.update(
+                tools=[_agent_function_tool(tool) for tool in tools],
+                tool_choice="auto",
+            )
+        body = json.dumps(payload).encode("utf-8")
         request = Request(url, data=body, headers=headers, method="POST")
         with urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))

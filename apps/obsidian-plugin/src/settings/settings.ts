@@ -137,12 +137,12 @@ export class AgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("执行权限模式")
-      .setDesc("全部确认最安全；风险分级仅自动执行白名单低风险操作；无人值守只允许可信定时任务自动执行低风险操作。")
+      .setDesc("请求批准最安全；替我审批会自动执行白名单低风险操作；完全访问不再弹出执行确认。")
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("confirm_all", "全部确认")
-          .addOption("risk_based", "风险分级")
-          .addOption("unattended", "无人值守")
+          .addOption("confirm_all", "请求批准")
+          .addOption("risk_based", "替我审批")
+          .addOption("unattended", "完全访问权限")
           .setValue(this.agentPlugin.settings.executionMode)
           .onChange(async (value) => {
             if (!isExecutionMode(value)) return;

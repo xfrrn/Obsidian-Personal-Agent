@@ -416,9 +416,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-function toAgentAnswer(payload: unknown): AgentAnswer {
+export function toAgentAnswer(payload: unknown): AgentAnswer {
   const output = unwrapToolOutput(payload);
   const trace = agentTrace(payload);
+  if (isRecord(output) && isRecord(output.plan)) {
+    return {
+      answer: typeof output.message === "string" ? output.message : "已生成操作计划，等待确认。",
+      citations: [],
+      trace,
+      operationPlan: localPlanFromPayload(output.plan, trace)
+    };
+  }
   if (isRecord(output) && Array.isArray(output.tasks)) {
     return withTrace(tasksAnswer(output.tasks.filter(isLocalTask)), trace);
   }

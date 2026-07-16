@@ -55,9 +55,20 @@ INTENT_RULES: tuple[IntentRule, ...] = (
     ),
     IntentRule(
         IntentType.NOTE_INSPECT,
-        strong_keywords=("检查当前笔记", "笔记规范检查", "分析当前笔记"),
+        strong_keywords=(
+            "检查当前笔记",
+            "笔记规范检查",
+            "分析当前笔记",
+            "应该放在哪里",
+            "适合放在哪里",
+            "放哪个目录",
+        ),
         keywords=("检查笔记", "缺失字段", "链接检查", "归档建议"),
-        patterns=_patterns(r"检查.+笔记.*(?:规范|问题|缺少)", r"这篇笔记.*(?:有问题|缺什么)"),
+        patterns=_patterns(
+            r"检查.+笔记.*(?:规范|问题|缺少)",
+            r"这篇笔记.*(?:有问题|缺什么)",
+            r"(?:笔记|文档).*(?:应该|适合|建议).*(?:放在|放到|归档到|哪个目录|哪里)",
+        ),
         priority=10,
     ),
     IntentRule(
@@ -181,9 +192,9 @@ INTENT_RULES: tuple[IntentRule, ...] = (
     ),
     IntentRule(
         IntentType.NOTE_ARCHIVE,
-        strong_keywords=("归档笔记", "移动笔记", "整理到目录"),
+        strong_keywords=("归档笔记", "移动笔记", "整理到目录", "删除笔记", "移入废纸篓", "移入回收站"),
         keywords=("归档", "移动到", "放到文件夹"),
-        patterns=_patterns(r"把.+移动到.+", r"把.+归档到.+", r"将.+放入.+目录"),
+        patterns=_patterns(r"把.+移动到.+", r"把.+归档到.+", r"将.+放入.+目录", r"(?:删除|移除).+(?:笔记|文档)"),
         priority=8,
     ),
     IntentRule(
@@ -209,7 +220,17 @@ INTENT_RULES: tuple[IntentRule, ...] = (
     ),
     IntentRule(
         IntentType.VAULT_ORGANIZE,
-        strong_keywords=("整理知识库", "整理仓库", "知识库归类"),
+        strong_keywords=(
+            "整理知识库",
+            "整理仓库",
+            "知识库归类",
+            "创建目录",
+            "新建目录",
+            "创建文件夹",
+            "新建文件夹",
+            "删除空目录",
+            "删除空文件夹",
+        ),
         keywords=("自动分类", "整理文件", "清理知识库"),
         patterns=_patterns(r"整理整个知识库", r"对知识库进行.+分类", r"检查知识库.+混乱"),
         priority=7,

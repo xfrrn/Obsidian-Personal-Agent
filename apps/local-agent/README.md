@@ -52,11 +52,11 @@ OperationPlan、执行结果和回滚快照保存在 Vault 的
 $env:OBSIDIAN_AGENT_EXECUTION_MODE="confirm_all" # risk_based / unattended
 ```
 
-- `confirm_all`：所有写入都需要确认。
-- `risk_based`：白名单内的低风险写入可以自动执行。
-- `unattended`：只有可信自动化触发的白名单低风险写入可以自动执行。
+- `confirm_all`（请求批准）：所有写入都需要确认。
+- `risk_based`（替我审批）：白名单内的低风险写入可以自动执行。
+- `unattended`（完全访问权限）：所有 Vault 写入都可以直接执行。
 
-中高风险操作始终确认；撤销前会再次核对文件哈希，避免覆盖用户后续修改。
+除完全访问模式外，中高风险操作始终确认；撤销前会再次核对文件哈希，避免覆盖用户后续修改。
 
 意图识别默认使用关键词规则；插件通过 `/handshake` 会把设置页里的
 OpenAI-compatible API 地址、模型和密钥传给 Local Agent，之后优先用 LLM function call

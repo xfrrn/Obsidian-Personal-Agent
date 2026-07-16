@@ -144,6 +144,28 @@ def test_agent_loop_returns_bad_tool_json_to_model() -> None:
     assert result.assistant_message == "fixed"
 
 
+def test_runtime_limits_note_inspection_tools_and_blocks_health_check() -> None:
+    registry = ToolRegistry(ToolPolicy.allow({ToolPermission.READ}, ToolRiskLevel.LOW))
+    for name in ("read_note", "search_notes", "inspect_note", "list_rules", "check_vault_health"):
+        registry.register_function(ToolDefinition(name, name), lambda _input, _context: {"message": "called"})
+    exposed: list[set[str]] = []
+
+    def agent(messages, tools):
+        exposed.append({tool.name for tool in tools})
+        if not any(message["role"] == "tool" for message in messages):
+            return {"tool_calls": [{"name": "check_vault_health", "arguments": {}}]}
+        return {"final_answer": "done"}
+
+    result = asyncio.run(AgentRuntime(registry, agent_client=agent).run(
+        RuntimeRequest("@[[00-Inbox/前端设计网站.md]]你觉得这个文档应该放在哪里")
+    ))
+
+    assert result.intent.intent.value == "note.inspect"
+    assert exposed[0] == {"read_note", "search_notes", "inspect_note", "list_rules"}
+    assert result.trace[0].status == "failed"
+    assert "not available" in result.trace[0].summary
+
+
 if __name__ == "__main__":
     test_runtime_requires_agent_client()
     test_runtime_honors_cancellation()

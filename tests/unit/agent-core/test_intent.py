@@ -75,6 +75,23 @@ def test_p1_p2_read_intents() -> None:
     assert "Agent" in _entity_values(project, IntentEntityType.PROJECT_NAME)
 
 
+def test_note_placement_advice_is_inspection_not_archive() -> None:
+    result = RuleBasedIntentClassifier().classify(
+        "@[[00-Inbox/前端设计网站.md]]你觉得这个文档应该放在哪里"
+    )
+
+    assert result.intent is IntentType.NOTE_INSPECT
+    assert not result.requires_confirmation
+
+
+def test_filesystem_operations_are_write_intents() -> None:
+    classifier = RuleBasedIntentClassifier()
+
+    assert classifier.classify("把这篇笔记移入废纸篓").intent is IntentType.NOTE_ARCHIVE
+    assert classifier.classify("创建目录 03-Learning/网络安全").intent is IntentType.VAULT_ORGANIZE
+    assert classifier.classify("删除空目录 00-Inbox/tmp").intent is IntentType.VAULT_ORGANIZE
+
+
 def test_hybrid_uses_llm_first() -> None:
     async def fake_llm(_prompt):
         return '{"intent":"note.search","confidence":0.91,"requiresConfirmation":false,"entities":[{"type":"keyword","value":"项目结构设计"}]}'

@@ -10,16 +10,26 @@ from uuid import uuid4
 
 from conversation import ContextBuilder, ConversationManager
 from conversation.conversation_manager import ConversationRole
+from exceptions import ToolPermissionDeniedError
+from intent import RuleBasedIntentClassifier
 from intent.intent_types import IntentResult, IntentType
 from planner import AgentPlan, PlanExecutionResult, PlanStepExecutionResult, PlanValidationResult
+from planner.planner import INTENT_TOOL_RULES
 from tools import ToolRegistry, ToolResult
-from tools.definitions import ToolCall
+from tools.definitions import ToolCall, ToolDefinition
 
 from .cancellation import CancellationToken
 from .execution_context import RuntimeRequest
 
 AgentClient = Callable[[list[dict[str, Any]], tuple[Any, ...]], Any]
 TraceCallback = Callable[["AgentTraceStep"], Any]
+
+_SAFE_READ_TOOL_NAMES = frozenset({"read_note", "search_notes"})
+_INTENT_TOOL_NAMES = {
+    rule.intent: rule.tool_name
+    for rule in INTENT_TOOL_RULES
+    if rule.tool_name
+}
 
 
 @dataclass(frozen=True)
@@ -74,6 +84,7 @@ class AgentRuntime:
         self._context_builder = context_builder or ContextBuilder(self._conversations)
         self._agent_client = agent_client
         self._max_agent_rounds = max(1, max_agent_rounds)
+        self._intent_classifier = RuleBasedIntentClassifier()
 
     async def run(
         self,
@@ -99,13 +110,15 @@ class AgentRuntime:
         token: CancellationToken,
         on_trace: TraceCallback | None,
     ) -> AgentRunResult:
-        intent = _system_intent(request.user_input)
+        intent = self._intent_classifier.classify(request.user_input)
+        available_tools = _available_tools(intent, self._tool_registry.definitions())
+        allowed_tool_names = {tool.name for tool in available_tools}
         context = self._context_builder.build(
             conversation_id=request.conversation_id,
             user_input=request.user_input,
             scope=request.scope,
             intent=intent,
-            available_tools=self._tool_registry.definitions(),
+            available_tools=available_tools,
             active_file_path=request.active_file_path,
             selected_text=request.selected_text,
             metadata=request.metadata,
@@ -125,7 +138,7 @@ class AgentRuntime:
 
         for round_no in range(1, self._max_agent_rounds + 1):
             token.throw_if_cancelled()
-            decision = await self._agent_decision(messages)
+            decision = await self._agent_decision(messages, available_tools)
             if decision.final_answer.strip():
                 final_answer = decision.final_answer.strip()
                 reached_limit = False
@@ -141,6 +154,10 @@ class AgentRuntime:
             messages.append(_assistant_tool_message(decision))
             for call in decision.tool_calls:
                 try:
+                    if call.name not in allowed_tool_names:
+                        raise ToolPermissionDeniedError(
+                            f"tool not available for intent {intent.intent.value}: {call.name}"
+                        )
                     result = await self._tool_registry.run(
                         ToolCall(call.name, call.arguments, call.id),
                         context=context,
@@ -216,23 +233,29 @@ class AgentRuntime:
             })
         return messages
 
-    async def _agent_decision(self, messages: list[dict[str, Any]]) -> AgentDecision:
+    async def _agent_decision(
+        self,
+        messages: list[dict[str, Any]],
+        tools: tuple[ToolDefinition, ...],
+    ) -> AgentDecision:
         assert self._agent_client is not None
-        value = self._agent_client(messages, self._tool_registry.definitions())
+        value = self._agent_client(messages, tools)
         if isawaitable(value):
             value = await value
         return _agent_decision(value)
 
 
-def _system_intent(raw_text: str) -> IntentResult:
-    return IntentResult(
-        intent=IntentType.UNKNOWN,
-        confidence=1,
-        entities=(),
-        raw_text=raw_text,
-        requires_confirmation=False,
-        candidates=(),
-    )
+def _available_tools(
+    intent: IntentResult,
+    definitions: tuple[ToolDefinition, ...],
+) -> tuple[ToolDefinition, ...]:
+    primary = _INTENT_TOOL_NAMES.get(intent.intent)
+    allowed = {primary} if primary else set()
+    if intent.intent is IntentType.UNKNOWN or primary in {"search_notes", "build_operation_plan"}:
+        allowed.update(_SAFE_READ_TOOL_NAMES)
+    if intent.intent is IntentType.NOTE_INSPECT:
+        allowed.update((*_SAFE_READ_TOOL_NAMES, "list_rules"))
+    return tuple(tool for tool in definitions if tool.name in allowed)
 
 
 def _message_from_tool_payload(payload: Any) -> str:

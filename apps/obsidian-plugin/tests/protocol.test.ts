@@ -12,6 +12,40 @@ import {
   isTaskQuery,
   parseIntent
 } from "../src/utils/protocol";
+import { toAgentAnswer } from "../src/api/local-agent-client";
+
+test("local-agent 返回的操作计划不会被降级成普通回答", () => {
+  const answer = toAgentAnswer({
+    execution: {
+      step_results: [{
+        output: {
+          output: {
+            message: "已生成操作计划，等待确认。",
+            plan: {
+              planId: "op_1",
+              summary: "移动并补充笔记",
+              risk: "medium",
+              requiresConfirmation: true,
+              confirmationToken: "token",
+              operations: [{ type: "move-note", path: "A.md", targetPath: "Archive/A.md" }]
+            }
+          }
+        }
+      }]
+    },
+    trace: [{
+      round: 1,
+      tool_name: "build_operation_plan",
+      status: "completed",
+      summary: "已生成操作计划",
+      detail: {}
+    }]
+  });
+
+  assert.equal(answer.operationPlan?.planId, "op_1");
+  assert.equal(answer.operationPlan?.managedBy, "local-agent");
+  assert.equal(answer.operationPlan?.trace?.[0]?.toolName, "build_operation_plan");
+});
 
 test("API 地址只允许 HTTPS 或本机 HTTP", () => {
   assert.equal(

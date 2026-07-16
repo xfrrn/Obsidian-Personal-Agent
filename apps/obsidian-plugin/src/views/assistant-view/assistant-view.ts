@@ -1,18 +1,51 @@
 import {
   ItemView,
   MarkdownRenderer,
+  Modal,
   setIcon,
   WorkspaceLeaf
 } from "obsidian";
+import { updateLocalAgentPolicy } from "../../api/local-agent-client";
 import type { ChatMessage, QueryScope } from "../../features/assistant/types";
 import type PersonalKnowledgeAgentPlugin from "../../main";
 import {
   describeOperation,
   OperationPlan
 } from "../../features/operation-preview/operation-executor";
+import type { ExecutionMode } from "../../settings/settings";
 import { AgentAnswer, AgentError, AgentTraceStep } from "../../utils/protocol";
 
 export const AGENT_VIEW_TYPE = "personal-knowledge-agent-view";
+
+const APPROVAL_MODES: ReadonlyArray<{
+  value: ExecutionMode;
+  label: string;
+  menuLabel: string;
+  description: string;
+  icon: string;
+}> = [
+  {
+    value: "confirm_all",
+    label: "请求批准",
+    menuLabel: "请求批准",
+    description: "编辑文件时始终向你询问",
+    icon: "hand"
+  },
+  {
+    value: "risk_based",
+    label: "替我审批",
+    menuLabel: "替我审批",
+    description: "仅对检测到的风险操作请求批准",
+    icon: "shield-check"
+  },
+  {
+    value: "unattended",
+    label: "完全访问",
+    menuLabel: "完全访问权限",
+    description: "无需确认即可访问 Vault 中的文件",
+    icon: "shield"
+  }
+];
 
 interface FileSuggestRange {
   range: Range;
@@ -97,6 +130,7 @@ export class AssistantView extends ItemView {
     this.fileSuggestEl = composer.createDiv({ cls: "pka-file-suggest" });
     this.fileSuggestEl.hide();
     const composerBar = composer.createDiv({ cls: "pka-composer-bar" });
+    this.renderApprovalMenu(composerBar);
     this.sendButton = composerBar.createEl("button", {
       cls: "mod-cta pka-send",
       attr: { "aria-label": "发送" }
@@ -119,6 +153,61 @@ export class AssistantView extends ItemView {
         void this.submit();
       }
     });
+  }
+
+  private renderApprovalMenu(parent: HTMLElement): void {
+    const details = parent.createEl("details", { cls: "pka-approval-menu" });
+    const summary = details.createEl("summary", {
+      attr: { "aria-label": "选择审批方式" }
+    });
+    const shield = summary.createSpan({ cls: "pka-approval-summary-icon" });
+    setIcon(shield, "shield");
+    const currentLabel = summary.createSpan({ cls: "pka-approval-summary-label" });
+    const chevron = summary.createSpan({ cls: "pka-approval-chevron" });
+    setIcon(chevron, "chevron-up");
+
+    const popover = details.createDiv({
+      cls: "pka-approval-popover",
+      attr: { role: "menu", "aria-label": "审批方式" }
+    });
+    popover.createDiv({ cls: "pka-approval-title", text: "应如何批准 Agent 操作？" });
+
+    const rows: Array<{ mode: ExecutionMode; button: HTMLButtonElement; check: HTMLElement }> = [];
+    for (const mode of APPROVAL_MODES) {
+      const button = popover.createEl("button", {
+        cls: "pka-approval-option",
+        attr: { role: "menuitemradio", "aria-checked": "false" }
+      });
+      const icon = button.createSpan({ cls: "pka-approval-option-icon" });
+      setIcon(icon, mode.icon);
+      const copy = button.createDiv({ cls: "pka-approval-copy" });
+      copy.createDiv({ cls: "pka-approval-option-label", text: mode.menuLabel });
+      copy.createDiv({ cls: "pka-approval-description", text: mode.description });
+      const check = button.createSpan({ cls: "pka-approval-check" });
+      rows.push({ mode: mode.value, button, check });
+      this.registerDomEvent(button, "click", () => {
+        this.agentPlugin.settings.executionMode = mode.value;
+        refresh();
+        details.open = false;
+        void this.agentPlugin.saveSettings()
+          .then(() => updateLocalAgentPolicy(this.app, this.agentPlugin.settings));
+      });
+    }
+
+    const refresh = () => {
+      const selected = APPROVAL_MODES.find(
+        (mode) => mode.value === this.agentPlugin.settings.executionMode
+      ) ?? APPROVAL_MODES[0];
+      currentLabel.setText(selected.label);
+      for (const row of rows) {
+        const active = row.mode === selected.value;
+        row.button.toggleClass("is-active", active);
+        row.button.setAttribute("aria-checked", String(active));
+        row.check.empty();
+        if (active) setIcon(row.check, "check");
+      }
+    };
+    refresh();
   }
 
   async onClose(): Promise<void> {
@@ -381,11 +470,7 @@ export class AssistantView extends ItemView {
         );
         for (const step of plan.trace ?? []) this.renderLiveTrace(step);
         this.finishLiveTrace();
-        const executeButton = this.renderPlan(plan, true);
-        if (plan.requiresConfirmation === false) {
-          this.setBusy(false);
-          await this.executePlan(plan, executeButton, false);
-        }
+        await this.presentPlan(plan, true);
       } else {
         const answer = await this.agentPlugin.ask(
           prompt,
@@ -393,7 +478,12 @@ export class AssistantView extends ItemView {
           this.history,
           (step) => this.renderLiveTrace(step)
         );
-        await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
+        if (answer.operationPlan) {
+          this.finishLiveTrace();
+          await this.presentPlan(answer.operationPlan, true);
+        } else {
+          await this.renderAnswer(answer, this.liveTraceSteps.length > 0);
+        }
         this.history.push(
           { role: "user", content: prompt },
           { role: "assistant", content: JSON.stringify({ answer: answer.answer, citations: answer.citations }) }
@@ -531,6 +621,20 @@ export class AssistantView extends ItemView {
     return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
   }
 
+  private async presentPlan(plan: OperationPlan, skipTrace = false): Promise<void> {
+    const executeButton = this.renderPlan(plan, skipTrace);
+    const mode = this.agentPlugin.settings.executionMode;
+    const builtInAutoApproval = plan.managedBy !== "local-agent" && (
+      mode === "unattended" || (mode === "risk_based" && plan.risk === "low")
+    );
+    if (plan.requiresConfirmation === false || builtInAutoApproval) {
+      this.setBusy(false);
+      await this.executePlan(plan, executeButton, false);
+      return;
+    }
+    this.openPlanConfirmation(plan, executeButton);
+  }
+
   private renderPlan(plan: OperationPlan, skipTrace = false): HTMLButtonElement {
     this.resultEl.querySelector(".pka-loading")?.remove();
     const card = this.createAssistantCard();
@@ -555,6 +659,26 @@ export class AssistantView extends ItemView {
       void this.executePlan(plan, executeButton)
     );
     return executeButton;
+  }
+
+  private openPlanConfirmation(plan: OperationPlan, executeButton: HTMLButtonElement): void {
+    const modal = new Modal(this.app);
+    modal.modalEl.addClass("pka-confirm-modal");
+    modal.setTitle("批准执行此操作计划？");
+    modal.contentEl.createEl("p", { text: `${plan.summary}（风险：${plan.risk}）` });
+    const list = modal.contentEl.createEl("ol", { cls: "pka-confirm-list" });
+    for (const operation of plan.operations) {
+      list.createEl("li", { text: describeOperation(operation) });
+    }
+    const actions = modal.contentEl.createDiv({ cls: "pka-confirm-actions" });
+    const cancel = actions.createEl("button", { text: "暂不执行" });
+    const approve = actions.createEl("button", { cls: "mod-cta", text: "批准并执行" });
+    this.registerDomEvent(cancel, "click", () => modal.close());
+    this.registerDomEvent(approve, "click", () => {
+      modal.close();
+      void this.executePlan(plan, executeButton);
+    });
+    modal.open();
   }
 
   private async executePlan(
