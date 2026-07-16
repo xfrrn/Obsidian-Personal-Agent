@@ -26,6 +26,8 @@ DEFAULT_AUTO_ALLOW = frozenset({
 })
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 TOP_LEVEL_YAML_KEY = re.compile(r"^([^\s:#][^:]*):(?:\s*(.*))?$")
+DIRECTORY_SNAPSHOT = {"kind": "directory"}
+DIRECTORY_HASH = "directory"
 
 
 class ExecutionMode(str, Enum):
@@ -171,7 +173,7 @@ class PersistentOperationPlanStore:
             )
             return True
 
-    def mark_running(self, plan_id: str, snapshot: Mapping[str, str | None]) -> None:
+    def mark_running(self, plan_id: str, snapshot: Mapping[str, Any]) -> None:
         with self._lock, self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -188,7 +190,7 @@ class PersistentOperationPlanStore:
         self,
         plan_id: str,
         results: Sequence[Mapping[str, Any]],
-        snapshot: Mapping[str, str | None],
+        snapshot: Mapping[str, Any],
         after_hashes: Mapping[str, str | None],
     ) -> None:
         self._update(
@@ -206,7 +208,7 @@ class PersistentOperationPlanStore:
     def mark_rolled_back(self, plan_id: str) -> None:
         self._update(plan_id, status="rolled_back", error=None)
 
-    def rollback_data(self, plan_id: str) -> tuple[dict[str, str | None], dict[str, str | None]]:
+    def rollback_data(self, plan_id: str) -> tuple[dict[str, Any], dict[str, str | None]]:
         with self._lock, self._connect() as connection:
             row = connection.execute(
                 "SELECT snapshot_json, after_hashes_json FROM operation_plans WHERE id = ?",
@@ -493,6 +495,24 @@ def _validate_operation(
         if not isinstance(content, str) or not content.strip():
             raise ValueError("create-note content is required")
         return {"type": kind, "path": path, "content": content}
+    if kind == "create-folder":
+        path = _safe_folder_path(str(operation.get("path") or ""))
+        folder = _file(root, path)
+        if folder.exists():
+            raise ValueError(f"folder already exists: {path}")
+        if folder.parent != root.resolve() and not folder.parent.is_dir():
+            raise FileNotFoundError(f"parent folder does not exist: {folder.parent.relative_to(root)}")
+        return {"type": kind, "path": path}
+    if kind == "delete-folder":
+        path = _safe_folder_path(str(operation.get("path") or ""))
+        folder = _file(root, path)
+        if allowed_paths and path not in allowed_paths:
+            raise PermissionError(f"operation path is outside the planning context: {path}")
+        if not folder.is_dir():
+            raise FileNotFoundError(path)
+        if any(folder.iterdir()):
+            raise ValueError(f"folder is not empty: {path}")
+        return {"type": kind, "path": path}
 
     path = _safe_path(str(operation.get("path") or ""))
     file = _file(root, path)
@@ -500,6 +520,9 @@ def _validate_operation(
         raise FileNotFoundError(path)
     if allowed_paths and path not in allowed_paths:
         raise PermissionError(f"operation path is outside the planning context: {path}")
+
+    if kind == "trash-note":
+        return {"type": kind, "path": path, "trashPath": _available_trash_path(root, path)}
 
     if kind == "update-note":
         old_text = operation.get("oldText")
@@ -543,6 +566,8 @@ def _risk_of(operations: Sequence[Mapping[str, Any]], context: Mapping[str, Any]
     total_change = 0
     for operation in operations:
         kind = operation["type"]
+        if kind in {"trash-note", "delete-folder"}:
+            risk = "high"
         if kind in {"update-note", "move-note", "update-metadata"}:
             risk = _max_risk(risk, "medium")
         if kind == "update-note":
@@ -560,6 +585,12 @@ def _capability(operation: Mapping[str, Any]) -> str:
     kind = operation["type"]
     if kind == "create-note":
         return "note.create.inbox" if str(operation["path"]).startswith("00-Inbox/") else "note.create"
+    if kind == "trash-note":
+        return "note.trash"
+    if kind == "create-folder":
+        return "folder.create"
+    if kind == "delete-folder":
+        return "folder.delete"
     if kind == "create-task":
         return "task.create.pending"
     if kind == "move-note":
@@ -581,6 +612,21 @@ def _execute_operation(root: Path, operation: Mapping[str, Any]) -> None:
             raise ValueError(f"note already exists: {operation['path']}")
         path.parent.mkdir(parents=True, exist_ok=True)
         _write_exact(path, str(operation["content"]))
+        return
+    if kind == "create-folder":
+        path.mkdir()
+        return
+    if kind == "delete-folder":
+        if any(path.iterdir()):
+            raise ValueError(f"folder is not empty: {operation['path']}")
+        path.rmdir()
+        return
+    if kind == "trash-note":
+        target = _file(root, str(operation["trashPath"]))
+        if target.exists():
+            raise ValueError(f"trash target already exists: {operation['trashPath']}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        path.rename(target)
         return
     if kind == "move-note":
         target = _file(root, str(operation["targetPath"]))
@@ -678,7 +724,7 @@ def _source_paths(operations: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(
         str(operation["path"])
         for operation in operations
-        if operation["type"] != "create-note"
+        if operation["type"] not in {"create-note", "create-folder"}
     ))
 
 
@@ -688,21 +734,24 @@ def _affected_paths(operations: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
         paths.append(str(operation["path"]))
         if operation["type"] == "move-note":
             paths.append(str(operation["targetPath"]))
+        if operation["type"] == "trash-note":
+            paths.append(str(operation["trashPath"]))
     return tuple(dict.fromkeys(paths))
 
 
 def _operation_paths(operation: Mapping[str, Any]) -> tuple[str, ...]:
     if operation["type"] == "move-note":
         return str(operation["path"]), str(operation["targetPath"])
+    if operation["type"] == "trash-note":
+        return str(operation["path"]), str(operation["trashPath"])
     return (str(operation["path"]),)
 
 
 def _safe_path(value: str) -> str:
-    raw = value.strip().replace("\\", "/")
+    raw = _single_line(value, "note path").replace("\\", "/")
     parts = tuple(part for part in raw.split("/") if part and part != ".")
     if (
-        not raw
-        or raw.startswith("/")
+        raw.startswith("/")
         or "://" in raw
         or re.match(r"^[A-Za-z]:", raw)
         or ".." in parts
@@ -711,6 +760,31 @@ def _safe_path(value: str) -> str:
     ):
         raise ValueError(f"unsafe note path: {value}")
     return "/".join(parts)
+
+
+def _safe_folder_path(value: str) -> str:
+    raw = _single_line(value, "folder path").replace("\\", "/")
+    parts = tuple(part for part in raw.split("/") if part and part != ".")
+    if (
+        not parts
+        or raw.startswith("/")
+        or "://" in raw
+        or re.match(r"^[A-Za-z]:", raw)
+        or ".." in parts
+        or any(part.casefold() in PROTECTED_PARTS for part in parts)
+    ):
+        raise ValueError(f"unsafe folder path: {value}")
+    return "/".join(parts)
+
+
+def _available_trash_path(root: Path, path: str) -> str:
+    original = Path(".trash") / path
+    candidate = original
+    index = 1
+    while _file(root, candidate.as_posix()).exists():
+        candidate = original.with_name(f"{original.stem}-{index}{original.suffix}")
+        index += 1
+    return candidate.as_posix()
 
 
 def _file(root: Path, relative: str) -> Path:
@@ -747,22 +821,35 @@ def _assert_unique(content: str, old_text: str, path: str) -> None:
         raise ValueError(f"oldText must match exactly once: {path}")
 
 
-def _capture(root: Path, paths: Sequence[str]) -> dict[str, str | None]:
-    return {
-        path: _read_exact(_file(root, path)) if _file(root, path).is_file() else None
-        for path in paths
-    }
+def _capture(root: Path, paths: Sequence[str]) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    for path in paths:
+        target = _file(root, path)
+        snapshot[path] = (
+            _read_exact(target)
+            if target.is_file()
+            else DIRECTORY_SNAPSHOT
+            if target.is_dir()
+            else None
+        )
+    return snapshot
 
 
-def _restore(root: Path, snapshot: Mapping[str, str | None]) -> None:
-    for path, content in snapshot.items():
+def _restore(root: Path, snapshot: Mapping[str, Any]) -> None:
+    for path, content in reversed(tuple(snapshot.items())):
         file = _file(root, path)
-        if content is None:
-            if file.exists():
+        if content == DIRECTORY_SNAPSHOT:
+            if file.exists() and not file.is_dir():
+                raise ValueError(f"rollback conflict: {path}")
+            file.mkdir(parents=True, exist_ok=True)
+        elif content is None:
+            if file.is_dir():
+                file.rmdir()
+            elif file.exists():
                 file.unlink()
         else:
             file.parent.mkdir(parents=True, exist_ok=True)
-            _write_exact(file, content)
+            _write_exact(file, str(content))
 
 
 def _read_exact(path: Path) -> str:
@@ -785,6 +872,8 @@ def _hash_existing(root: Path, paths: Sequence[str]) -> dict[str, str]:
 
 def _path_hash(root: Path, path: str) -> str | None:
     file = _file(root, path)
+    if file.is_dir():
+        return DIRECTORY_HASH
     return sha256(file.read_bytes()).hexdigest() if file.is_file() else None
 
 
@@ -795,9 +884,13 @@ def _required_file_hash(root: Path, path: str) -> str:
     return value
 
 
-def _hash_state(snapshot: Mapping[str, str | None]) -> dict[str, str | None]:
+def _hash_state(snapshot: Mapping[str, Any]) -> dict[str, str | None]:
     return {
-        path: sha256(content.encode("utf-8")).hexdigest() if content is not None else None
+        path: DIRECTORY_HASH
+        if content == DIRECTORY_SNAPSHOT
+        else sha256(str(content).encode("utf-8")).hexdigest()
+        if content is not None
+        else None
         for path, content in snapshot.items()
     }
 
@@ -865,7 +958,11 @@ def _max_risk(left: str, right: str) -> str:
 def _string_set(value: Any) -> frozenset[str]:
     if not isinstance(value, (list, tuple)):
         return frozenset()
-    return frozenset(_safe_path(item) for item in value if isinstance(item, str))
+    return frozenset(
+        _safe_path(item) if item.strip().casefold().endswith(".md") else _safe_folder_path(item)
+        for item in value
+        if isinstance(item, str)
+    )
 
 
 def _now() -> str:

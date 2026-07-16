@@ -202,3 +202,57 @@ def test_preview_conflict_invalidates_plan(tmp_path: Path) -> None:
         assert note.read_text(encoding="utf-8") == "user edit\n"
 
     asyncio.run(run())
+
+
+def test_trash_note_and_empty_folder_operations(tmp_path: Path) -> None:
+    (tmp_path / ".obsidian").mkdir()
+    (tmp_path / "Note.md").write_text("keep me\n", encoding="utf-8")
+    (tmp_path / "OldEmpty").mkdir()
+    manager = _manager(tmp_path, ExecutionMode.CONFIRM_ALL)
+
+    async def run() -> None:
+        plan = await manager.stage({
+            "operations": [
+                {"type": "trash-note", "path": "Note.md"},
+                {"type": "create-folder", "path": "NewEmpty"},
+                {"type": "delete-folder", "path": "OldEmpty"},
+            ],
+            "context": {"allowedPaths": ["Note.md", "OldEmpty"]},
+        })
+        assert plan["risk"] == "high"
+        assert plan["requiresConfirmation"]
+
+        await manager.execute(plan["id"], confirmation_token=plan["confirmationToken"])
+        assert not (tmp_path / "Note.md").exists()
+        assert (tmp_path / ".trash" / "Note.md").read_text(encoding="utf-8") == "keep me\n"
+        assert (tmp_path / "NewEmpty").is_dir()
+        assert not (tmp_path / "OldEmpty").exists()
+
+        await manager.rollback(plan["id"], trusted_system=True)
+        assert (tmp_path / "Note.md").read_text(encoding="utf-8") == "keep me\n"
+        assert not (tmp_path / ".trash" / "Note.md").exists()
+        assert not (tmp_path / "NewEmpty").exists()
+        assert (tmp_path / "OldEmpty").is_dir()
+
+    asyncio.run(run())
+
+
+def test_delete_folder_rejects_non_empty_directory(tmp_path: Path) -> None:
+    (tmp_path / ".obsidian").mkdir()
+    folder = tmp_path / "Folder"
+    folder.mkdir()
+    (folder / "Note.md").write_text("content\n", encoding="utf-8")
+    manager = _manager(tmp_path, ExecutionMode.CONFIRM_ALL)
+
+    async def run() -> None:
+        try:
+            await manager.stage({
+                "operations": [{"type": "delete-folder", "path": "Folder"}],
+                "context": {"allowedPaths": ["Folder"]},
+            })
+        except ValueError as error:
+            assert "folder is not empty" in str(error)
+        else:
+            raise AssertionError("non-empty folders must not be deleted")
+
+    asyncio.run(run())

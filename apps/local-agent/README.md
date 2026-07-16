@@ -43,8 +43,8 @@ POST /operations/{planId}/rollback
 
 OperationPlan、执行结果和回滚快照保存在 Vault 的
 `.obsidian-agent-data/state.sqlite3`，审计日志写入
-`.obsidian-agent-data/audit.jsonl`。执行器支持创建笔记、精确替换、移动笔记、
-更新 Frontmatter 和追加任务；插件命令调用继续由 Obsidian 插件执行。
+`.obsidian-agent-data/audit.jsonl`。执行器支持创建笔记、精确替换、移动或移入废纸篓、
+更新 Frontmatter、追加任务，以及创建和删除空目录；插件命令调用继续由 Obsidian 插件执行。
 
 执行模式可通过插件设置或环境变量配置：
 

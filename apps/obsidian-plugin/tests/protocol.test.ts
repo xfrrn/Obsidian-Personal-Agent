@@ -101,6 +101,7 @@ test("本地意图判断不会把提问误当成写操作", () => {
   assert.equal(inferIntent("创建一篇项目笔记"), "act");
   assert.equal(inferIntent("你能帮我创建目录吗"), "act");
   assert.equal(inferIntent("新建文件夹 03-Learning/网络与安全"), "act");
+  assert.equal(inferIntent("把 A.md 移入废纸篓"), "act");
   assert.equal(inferIntent("帮我把今天需要完成的任务标记为完成"), "act");
   assert.equal(inferIntent("如何创建一篇项目笔记？"), "answer");
   assert.equal(inferIntent("总结当前笔记"), "answer");

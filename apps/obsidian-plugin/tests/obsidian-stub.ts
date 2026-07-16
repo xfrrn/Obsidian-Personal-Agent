@@ -7,6 +7,8 @@ export class TFile {
 }
 
 export class TFolder {
+  children: Array<TFile | TFolder> = [];
+
   constructor(public path: string) {}
 }
 

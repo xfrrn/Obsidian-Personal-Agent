@@ -142,6 +142,21 @@ async def _run() -> None:
         "execute_operation_plan",
         "rollback_operation",
     )
+    build_schema = registry.get("build_operation_plan").definition.input_schema
+    assert build_schema["required"] == ["requestedOperations"]
+    operation_types = build_schema["properties"]["requestedOperations"]["items"]["properties"]["type"]["enum"]
+    assert operation_types == [
+        "create-note",
+        "update-note",
+        "move-note",
+        "trash-note",
+        "create-folder",
+        "delete-folder",
+        "update-metadata",
+        "create-task",
+    ]
+    execute_schema = registry.get("execute_operation_plan").definition.input_schema
+    assert execute_schema["required"] == ["operationPlanId"]
 
     search = await registry.run(ToolCall("search_notes", {"query": "agent", "limit": 1}))
     assert search.output["results"][0]["path"] == "Today.md"

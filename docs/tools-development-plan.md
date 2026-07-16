@@ -12,7 +12,7 @@
 
 1. Agent 只能通过 tool 获取外部信息或触发系统行为。
 2. 所有 Vault 写入都先生成 `OperationPlan`，再由统一执行器执行。
-3. 创建、更新、移动笔记或任务属于 Operation，不再注册一组可绕过计划的直接写入 tools。
+3. 创建、更新、移动或移入废纸篓，以及空目录管理属于 Operation，不再注册一组可绕过计划的直接写入 tools。
 4. 摘要、对比、改写、生成草稿属于模型能力，复用检索和读取 tools，不单独注册同名 tool。
 5. Tasks、Dataview、Templater 等属于 adapter，复用统一 tool 名，不把第三方插件名暴露成业务接口。
 6. 当前主要供个人使用，先不开发多租户、角色管理和工具市场。
@@ -56,7 +56,7 @@
 | `execute_operation_plan` | write / system-only | 动态 | 接入真实执行器、确认令牌、冲突校验、审计和回滚 |
 | `rollback_operation` | write / system-only | high | 撤销已完成操作；要求本地确认并校验当前文件版本 |
 
-P0 不增加业务型写入 tool。`create_note`、`update_note`、`move_note`、`update_metadata`、`create_task` 和 `invoke_plugin` 继续作为 `OperationPlan` 内部操作。
+P0 不增加业务型写入 tool。笔记、任务、废纸篓、空目录和插件命令继续作为 `OperationPlan` 内部操作。
 
 完成标准：
 

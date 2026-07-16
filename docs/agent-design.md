@@ -110,6 +110,9 @@ type KnowledgeOperation =
   | { type: "create-note"; path: string; content: string }
   | { type: "update-note"; path: string; oldText: string; newText: string }
   | { type: "move-note"; path: string; targetPath: string }
+  | { type: "trash-note"; path: string }
+  | { type: "create-folder"; path: string }
+  | { type: "delete-folder"; path: string }
   | { type: "update-metadata"; path: string; set?: object; remove?: string[] }
   | { type: "create-task"; path: string; title: string }
   | { type: "invoke-plugin"; commandId: string };
@@ -118,11 +121,11 @@ type KnowledgeOperation =
 执行规则：
 
 - 一次最多 10 个操作。
-- 不支持删除。
+- 不支持永久删除；笔记只能移入废纸篓，目录只能在为空时删除。
 - `update-note` 只能修改本次上下文中的笔记。
 - `oldText` 必须逐字匹配且唯一。
 - 插件命令必须是最后一步。
-- 路径只能是 Vault 内相对 Markdown 路径。
+- 路径只能是 Vault 内安全相对路径；笔记路径必须以 `.md` 结尾。
 
 后续拆出 local-agent 时，把这份合同迁到 `packages/contracts`，并补齐 `schemaVersion`、`planId`、`createdAt`、`expectedHash`。
 

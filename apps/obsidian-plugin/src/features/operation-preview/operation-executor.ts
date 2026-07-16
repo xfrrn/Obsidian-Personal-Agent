@@ -52,7 +52,7 @@ export async function buildOperationPlan(
   }
 
   const sources = await getPlanningSources(app, settings, cleanRequest, scope);
-  const existingPaths = new Set(app.vault.getMarkdownFiles().map((file) => file.path));
+  const existingPaths = new Set(app.vault.getAllLoadedFiles().map((file) => file.path));
   const sourcePaths = new Set(sources.map((source) => source.path));
   const response = await callModel(app, settings, [
     {
@@ -74,7 +74,13 @@ export async function buildOperationPlan(
     expectedHashes: await hashPaths(app, operationSourcePaths(plan))
   };
   if (settings.localAgentToken && !plan.operations.some((operation) => operation.type === "invoke-plugin")) {
-    return stageLocalOperationPlan(settings, versionedPlan, [...sourcePaths]);
+    const allowedPaths = uniquePaths([
+      ...sourcePaths,
+      ...plan.operations
+        .filter((operation) => operation.type === "delete-folder")
+        .map((operation) => operation.path)
+    ]);
+    return stageLocalOperationPlan(settings, versionedPlan, allowedPaths);
   }
   return versionedPlan;
 }
@@ -147,6 +153,46 @@ async function executeOperation(
       const moved = getMarkdownFile(app, operation.targetPath);
       await assertRollbackHash(app, moved, movedHash);
       await app.fileManager.renameFile(moved, operation.path);
+    });
+    return;
+  }
+
+  if (operation.type === "trash-note") {
+    const file = getMarkdownFile(app, operation.path);
+    const content = await app.vault.cachedRead(file);
+    await app.fileManager.trashFile(file);
+    rollback.push(async () => {
+      if (app.vault.getAbstractFileByPath(operation.path)) {
+        throw new AgentError(`回滚冲突，原路径已被占用：${operation.path}`);
+      }
+      await ensureParentFolder(app, operation.path);
+      await app.vault.create(operation.path, content);
+    });
+    return;
+  }
+
+  if (operation.type === "create-folder") {
+    if (app.vault.getAbstractFileByPath(operation.path)) {
+      throw new AgentError(`目录已存在，已停止执行：${operation.path}`);
+    }
+    assertFolderParent(app, operation.path);
+    await app.vault.createFolder(operation.path);
+    rollback.push(async () => {
+      const folder = getEmptyFolder(app, operation.path);
+      await app.vault.delete(folder, true);
+    });
+    return;
+  }
+
+  if (operation.type === "delete-folder") {
+    const folder = getEmptyFolder(app, operation.path);
+    await app.vault.delete(folder, true);
+    rollback.push(async () => {
+      if (app.vault.getAbstractFileByPath(operation.path)) {
+        throw new AgentError(`回滚冲突，目录路径已被占用：${operation.path}`);
+      }
+      assertFolderParent(app, operation.path);
+      await app.vault.createFolder(operation.path);
     });
     return;
   }
@@ -327,7 +373,12 @@ async function assertExpectedHashes(
 function operationSourcePaths(plan: OperationPlan): string[] {
   const paths = new Set<string>();
   for (const operation of plan.operations) {
-    if (operation.type !== "create-note" && operation.type !== "invoke-plugin") paths.add(operation.path);
+    if (
+      operation.type !== "create-note" &&
+      operation.type !== "create-folder" &&
+      operation.type !== "delete-folder" &&
+      operation.type !== "invoke-plugin"
+    ) paths.add(operation.path);
   }
   return [...paths];
 }
@@ -373,6 +424,20 @@ function getMarkdownFile(app: App, path: string): TFile {
     throw new AgentError(`笔记不存在：${path}`);
   }
   return file;
+}
+
+function getEmptyFolder(app: App, path: string): TFolder {
+  const folder = app.vault.getAbstractFileByPath(normalizePath(path));
+  if (!(folder instanceof TFolder)) throw new AgentError(`目录不存在：${path}`);
+  if (folder.children.length) throw new AgentError(`目录不是空目录：${path}`);
+  return folder;
+}
+
+function assertFolderParent(app: App, path: string): void {
+  const parentPath = normalizePath(path).split("/").slice(0, -1).join("/");
+  if (parentPath && !(app.vault.getAbstractFileByPath(parentPath) instanceof TFolder)) {
+    throw new AgentError(`父目录不存在：${parentPath}`);
+  }
 }
 
 async function ensureParentFolder(app: App, path: string): Promise<void> {

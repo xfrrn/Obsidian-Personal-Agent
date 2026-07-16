@@ -32,6 +32,11 @@
   line-height: 1;
 }
 
+.pka-scope-select {
+  font-size: var(--font-ui-small);
+  height: 28px;
+}
+
 .pka-composer,
 .pka-message,
 .pka-execution-log {

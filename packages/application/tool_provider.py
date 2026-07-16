@@ -185,6 +185,57 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
             ToolDefinition(
                 name="build_operation_plan",
                 description="为写入请求生成安全的操作计划",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "requestedOperations": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 10,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {
+                                        "enum": [
+                                            "create-note",
+                                            "update-note",
+                                            "move-note",
+                                            "trash-note",
+                                            "create-folder",
+                                            "delete-folder",
+                                            "update-metadata",
+                                            "create-task",
+                                        ]
+                                    },
+                                    "path": {"type": "string", "description": "Vault 内安全相对路径"},
+                                    "content": {"type": "string"},
+                                    "oldText": {"type": "string"},
+                                    "newText": {"type": "string"},
+                                    "targetPath": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "set": {"type": "object"},
+                                    "remove": {"type": "array", "items": {"type": "string"}},
+                                    "addTags": {"type": "array", "items": {"type": "string"}},
+                                    "removeTags": {"type": "array", "items": {"type": "string"}},
+                                    "intent": {"enum": ["task.complete"]},
+                                    "arguments": {"type": "object"},
+                                },
+                                "anyOf": [
+                                    {"required": ["type"]},
+                                    {"required": ["intent", "arguments"]},
+                                ],
+                            },
+                        },
+                        "context": {
+                            "type": "object",
+                            "properties": {
+                                "source": {"enum": ["interactive", "automation", "remote", "external"]},
+                                "allowedPaths": {"type": "array", "items": {"type": "string"}},
+                            },
+                        },
+                    },
+                    "required": ["requestedOperations"],
+                },
                 permission=ToolPermission.WRITE,
                 risk_level=ToolRiskLevel.LOW,
                 effect=ToolEffect.PREPARE_WRITE,
@@ -195,6 +246,11 @@ def build_application_tools(deps: ApplicationToolDependencies) -> tuple[Tool, ..
             ToolDefinition(
                 name="execute_operation_plan",
                 description="执行已经确认的操作计划",
+                input_schema={
+                    "type": "object",
+                    "properties": {"operationPlanId": {"type": "string"}},
+                    "required": ["operationPlanId"],
+                },
                 permission=ToolPermission.WRITE,
                 risk_level=ToolRiskLevel.HIGH,
                 effect=ToolEffect.WRITE,

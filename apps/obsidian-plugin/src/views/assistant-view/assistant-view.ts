@@ -36,6 +36,7 @@ export class AssistantView extends ItemView {
   private liveTraceSteps: AgentTraceStep[] = [];
   private history: ChatMessage[] = [];
   private pendingActionPrompt?: string;
+  private queryScope: QueryScope = "vault";
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -63,7 +64,16 @@ export class AssistantView extends ItemView {
 
     const toolbar = contentEl.createDiv({ cls: "pka-toolbar" });
     toolbar.createSpan({ cls: "pka-mode-label", text: "自动" });
-    toolbar.createSpan({ cls: "pka-mode-label", text: "全知识库" });
+    const scopeSelect = toolbar.createEl("select", {
+      cls: "pka-scope-select",
+      attr: { "aria-label": "查询范围" }
+    });
+    scopeSelect.createEl("option", { value: "vault", text: "全知识库" });
+    scopeSelect.createEl("option", { value: "current", text: "当前笔记" });
+    scopeSelect.value = this.queryScope;
+    this.registerDomEvent(scopeSelect, "change", () => {
+      this.queryScope = scopeSelect.value === "current" ? "current" : "vault";
+    });
 
     this.resultEl = contentEl.createDiv({
       cls: "pka-result",
@@ -79,7 +89,7 @@ export class AssistantView extends ItemView {
         contenteditable: "true",
         role: "textbox",
         "aria-multiline": "true",
-        placeholder: "继续追问，或让 Agent 直接修改这篇笔记..."
+        placeholder: "继续追问，或让 Agent 整理笔记..."
       }
     });
     this.questionEl.dataset.placeholder = this.questionEl.getAttribute("placeholder") ?? "";
@@ -353,7 +363,7 @@ export class AssistantView extends ItemView {
     this.startLiveTrace();
 
     try {
-      const queryScope: QueryScope = "vault";
+      const queryScope = this.queryScope;
       const intent = await this.agentPlugin.intent(prompt);
       this.renderLiveTrace(this.traceStep("intent", `路由判断：${intent === "act" ? "行动" : "回答"}`));
 

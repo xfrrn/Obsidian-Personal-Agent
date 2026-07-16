@@ -8,6 +8,9 @@ export type KnowledgeOperation =
   | { type: "create-note"; path: string; content: string }
   | { type: "update-note"; path: string; oldText: string; newText: string }
   | { type: "move-note"; path: string; targetPath: string }
+  | { type: "trash-note"; path: string; trashPath?: string }
+  | { type: "create-folder"; path: string }
+  | { type: "delete-folder"; path: string }
   | {
     type: "update-metadata";
     path: string;
@@ -37,6 +40,7 @@ export interface OperationPlan {
 }
 
 const ALLOWED_PLUGIN_COMMANDS = new Set(["workspace:save-file"]);
+const PROTECTED_PATH_PARTS = new Set([".obsidian", ".obsidian-agent-data", ".git", ".trash"]);
 
 export function parseOperationPlan(
   text: string,
@@ -73,6 +77,9 @@ export function describeOperation(operation: KnowledgeOperation): string {
   if (operation.type === "create-note") return `创建笔记：${operation.path}`;
   if (operation.type === "update-note") return `精确替换：${operation.path}`;
   if (operation.type === "move-note") return `移动笔记：${operation.path} -> ${operation.targetPath}`;
+  if (operation.type === "trash-note") return `移入废纸篓：${operation.path}`;
+  if (operation.type === "create-folder") return `创建目录：${operation.path}`;
+  if (operation.type === "delete-folder") return `删除空目录：${operation.path}`;
   if (operation.type === "update-metadata") return `更新元数据：${operation.path}`;
   if (operation.type === "create-task") return `追加任务：${operation.path} - ${operation.title}`;
   return `调用插件命令：${operation.commandId}`;
@@ -110,6 +117,24 @@ function parseOperation(
     return { type: "move-note", path, targetPath };
   }
 
+  if (raw.type === "trash-note") {
+    return { type: "trash-note", path: existingSourcePath(raw.path, existingPaths, sourcePaths) };
+  }
+
+  if (raw.type === "create-folder") {
+    const path = safeFolderPath(raw.path);
+    if (existingPaths.has(path)) throw new AgentError(`计划要创建的目录已存在：${path}`);
+    const parentPath = path.split("/").slice(0, -1).join("/");
+    if (parentPath && !existingPaths.has(parentPath)) throw new AgentError(`父目录不存在：${parentPath}`);
+    return { type: "create-folder", path };
+  }
+
+  if (raw.type === "delete-folder") {
+    const path = safeFolderPath(raw.path);
+    if (!existingPaths.has(path)) throw new AgentError(`目录不存在：${path}`);
+    return { type: "delete-folder", path };
+  }
+
   if (raw.type === "update-metadata") {
     return {
       type: "update-metadata",
@@ -141,7 +166,11 @@ function parseOperation(
 }
 
 function riskOf(operations: KnowledgeOperation[]): OperationRisk {
-  if (operations.some((operation) => operation.type === "invoke-plugin")) return "high";
+  if (operations.some((operation) =>
+    operation.type === "invoke-plugin" ||
+    operation.type === "trash-note" ||
+    operation.type === "delete-folder"
+  )) return "high";
   if (operations.some((operation) => operation.type === "move-note")) return "medium";
   return "low";
 }
@@ -158,15 +187,31 @@ function existingSourcePath(
 }
 
 function safeMarkdownPath(value: unknown): string {
+  const path = safeVaultPath(value);
+  if (!path.endsWith(".md")) throw new AgentError(`不安全的笔记路径：${value}`);
+  return path;
+}
+
+function safeFolderPath(value: unknown): string {
+  return safeVaultPath(value);
+}
+
+function safeVaultPath(value: unknown): string {
   if (typeof value !== "string") throw new AgentError("修改操作缺少笔记路径。");
   const raw = value.trim().replace(/\\/g, "/");
-  if (!raw || raw.startsWith("/") || raw.includes("://") || /^[a-zA-Z]:/.test(raw)) {
+  if (
+    !raw ||
+    raw.startsWith("/") ||
+    raw.includes("://") ||
+    /^[a-zA-Z]:/.test(raw) ||
+    /[\u0000-\u001f\u007f]/.test(raw)
+  ) {
     throw new AgentError(`不安全的笔记路径：${value}`);
   }
 
   const path = raw.split("/").filter((part) => part && part !== ".").join("/");
   const parts = path.split("/");
-  if (!path.endsWith(".md") || parts.includes("..") || parts.some((part) => part === ".obsidian")) {
+  if (parts.includes("..") || parts.some((part) => PROTECTED_PATH_PARTS.has(part.toLocaleLowerCase()))) {
     throw new AgentError(`不安全的笔记路径：${value}`);
   }
   return path;
