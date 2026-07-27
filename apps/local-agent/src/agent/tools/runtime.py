@@ -5,17 +5,22 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from agent.permissions import (
     PermissionDenied,
     PermissionManager,
     PermissionPolicy,
     PermissionRequest,
+    ToolAccess,
 )
 from agent.protocol.mode import ModeKind
 from agent.tools.invocation import ToolInvocation
 from agent.tools.router import ToolRouter
 from agent.tools.types import ToolExecution
+
+if TYPE_CHECKING:
+    from agent.changes import ChangeJournal
 
 
 class _ToolExecutionGate:
@@ -57,6 +62,9 @@ class ToolCallRuntime:
         self,
         router: ToolRouter,
         permission_manager: PermissionManager | PermissionPolicy | None = None,
+        *,
+        change_journal: ChangeJournal | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._router = router
         # 保留旧的 Policy 注入入口，但立即转换成统一的有状态授权服务。
@@ -68,6 +76,8 @@ class ToolCallRuntime:
         self._running: dict[str, asyncio.Task[ToolExecution]] = {}
         self._cancel_requested: set[str] = set()
         self._execution_gate = _ToolExecutionGate()
+        self._change_journal = change_journal
+        self._session_id = session_id
 
     async def execute(
         self,
@@ -125,6 +135,14 @@ class ToolCallRuntime:
                 grant = await self._permissions.authorize(request)
             except PermissionDenied as exc:
                 return ToolExecution(str(exc), is_error=True)
+            if (
+                self._change_journal is not None
+                and self._session_id is not None
+                and submission_id is not None
+                and mode is not ModeKind.PLAN
+                and grant.access is not ToolAccess.READ_ONLY
+            ):
+                await self._change_journal.begin_turn(self._session_id, submission_id)
             return await self._router.dispatch(
                 invocation, granted_access=grant.access, mode=mode
             )

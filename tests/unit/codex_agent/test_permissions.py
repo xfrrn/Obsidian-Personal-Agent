@@ -201,7 +201,7 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
                 return_value=True,
             ):
                 session = create_session(
-                    _settings(Path(directory), shell_enabled=True, max_tool_rounds=2),
+                    _settings(Path(directory), shell_enabled=True),
                     handle,
                     client,
                 )
@@ -463,7 +463,6 @@ def _settings(
     sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE,
     sandbox_network: SandboxNetwork = SandboxNetwork.HOST,
     approval_policy: ApprovalPolicy = ApprovalPolicy.ON_REQUEST,
-    max_tool_rounds: int = 1,
 ) -> Settings:
     return Settings(
         api_key=None,
@@ -473,7 +472,6 @@ def _settings(
         workspace=workspace,
         shell_enabled=shell_enabled,
         request_timeout_seconds=1,
-        max_tool_rounds=max_tool_rounds,
         sandbox_mode=sandbox_mode,
         approval_policy=approval_policy,
         sandbox_backend=SandboxBackend.AUTO,

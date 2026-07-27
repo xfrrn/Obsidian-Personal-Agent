@@ -14,7 +14,6 @@ class TurnContext:
     submission_id: int
     user_text: str
     system_prompt: str
-    max_tool_rounds: int
     skill_snapshot: tuple[Skill, ...] = ()
     mentioned_skills: tuple[Skill, ...] = ()
     mode: ModeKind = ModeKind.DEFAULT

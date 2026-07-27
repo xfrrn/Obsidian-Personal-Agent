@@ -28,7 +28,6 @@ class Settings:
     workspace: Path
     shell_enabled: bool
     request_timeout_seconds: float
-    max_tool_rounds: int
     sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE
     approval_policy: ApprovalPolicy = ApprovalPolicy.ON_REQUEST
     sandbox_backend: SandboxBackend = SandboxBackend.AUTO
@@ -94,10 +93,6 @@ class Settings:
         ):
             raise ValueError("AGENT_SANDBOX_STATE 必须位于模型可写工作区之外")
 
-        max_tool_rounds = int(env_value("AGENT_MAX_TOOL_ROUNDS", "5"))
-        if max_tool_rounds < 1:
-            raise ValueError("AGENT_MAX_TOOL_ROUNDS 必须至少为 1")
-
         timeout = float(env_value("AGENT_TIMEOUT_SECONDS", "60"))
         if timeout <= 0:
             raise ValueError("AGENT_TIMEOUT_SECONDS 必须大于 0")
@@ -134,7 +129,6 @@ class Settings:
             # Shell 能执行任意命令，默认关闭。只有本地使用者显式同意才会注册该工具。
             shell_enabled=shell_enabled,
             request_timeout_seconds=timeout,
-            max_tool_rounds=max_tool_rounds,
             sandbox_mode=sandbox_mode,
             approval_policy=approval_policy,
             sandbox_backend=sandbox_backend,

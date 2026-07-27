@@ -189,7 +189,6 @@ class ProcessInteractionTest(unittest.IsolatedAsyncioTestCase):
                 _settings(
                     Path(directory),
                     SandboxMode.DANGER_FULL_ACCESS,
-                    max_tool_rounds=3,
                 ),
                 client,
             )
@@ -401,9 +400,7 @@ def _interactive_command() -> str:
     )
 
 
-def _settings(
-    workspace: Path, mode: SandboxMode, *, max_tool_rounds: int = 1
-) -> Settings:
+def _settings(workspace: Path, mode: SandboxMode) -> Settings:
     return Settings(
         api_key=None,
         model="test-model",
@@ -412,7 +409,6 @@ def _settings(
         workspace=workspace,
         shell_enabled=True,
         request_timeout_seconds=5,
-        max_tool_rounds=max_tool_rounds,
         sandbox_mode=mode,
     )
 

@@ -86,7 +86,6 @@ class ContextInjectionTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
             )
             session = create_session(settings, AgentHandle(), client=object())
 
@@ -97,4 +96,4 @@ class ContextInjectionTest(unittest.IsolatedAsyncioTestCase):
 
 
 def _context() -> TurnContext:
-    return TurnContext(1, "test", "system", 1)
+    return TurnContext(1, "test", "system")

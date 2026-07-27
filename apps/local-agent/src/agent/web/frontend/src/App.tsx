@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleAlert,
   CircleDot,
+  FileText,
   Menu,
   Moon,
   Plus,
@@ -15,6 +16,7 @@ import {
   ShieldAlert,
   Sun,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react"
 import {
@@ -36,10 +38,29 @@ type PlanState = {
   plan: Array<{ step: string; status: PlanStepStatus }>
 }
 
+type FileChange = {
+  path: string
+  added: number
+  deleted: number
+  binary: boolean
+  reverted: boolean
+  diff?: string
+  diff_truncated?: boolean
+}
+
+type ChangeSet = {
+  id: string
+  submission_id: number
+  created_at: number
+  added: number
+  deleted: number
+  files: FileChange[]
+}
+
 type AgentEvent = {
   kind: string
   text: string
-  data: { delta?: boolean; replace?: boolean; is_final?: boolean; reasoning?: string; arguments?: unknown; is_error?: boolean; status?: Exclude<ToolState, "running">; name?: string; submission_id?: number; call_id?: string; command?: string; justification?: string; mode?: ModeKind; plan?: PlanState["plan"] }
+  data: { delta?: boolean; replace?: boolean; is_final?: boolean; reasoning?: string; arguments?: unknown; is_error?: boolean; status?: Exclude<ToolState, "running">; name?: string; submission_id?: number; call_id?: string; command?: string; justification?: string; mode?: ModeKind; plan?: PlanState["plan"]; id?: string; created_at?: number; added?: number; deleted?: number; files?: FileChange[] }
 }
 
 type ChatMessage = {
@@ -65,6 +86,7 @@ type Conversation = {
 type ConversationDetail = {
   session: Conversation
   messages: Array<{ id: string; role: "user" | "assistant"; text: string; created_at: number }>
+  changes: ChangeSet[]
 }
 
 type QueuedMessage = {
@@ -98,11 +120,13 @@ type RunTrace = {
 type ConversationView = {
   messages: ChatMessage[]
   traces: RunTrace[]
+  changes: ChangeSet[]
 }
 
 type TimelineEntry =
   | { kind: "message"; at: number; message: ChatMessage }
   | { kind: "trace"; at: number; trace: RunTrace }
+  | { kind: "change"; at: number; change: ChangeSet }
 
 type RuntimePermissions = {
   sandbox_mode: SandboxMode
@@ -291,19 +315,128 @@ function PlanPanel({ plan }: { plan: PlanState }) {
   )
 }
 
-function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onResolveApproval, onSend }: { messages: ChatMessage[]; traces: RunTrace[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind) => Promise<void> }) {
+function DiffView({ file }: { file: FileChange }) {
+  if (file.binary) return <p className="change-binary">二进制文件已修改，无法显示行级差异。</p>
+  const lines = (file.diff || "").split("\n")
+  return (
+    <div className="change-diff" role="region" aria-label={`${file.path} 的改动`}>
+      {lines.map((line, index) => {
+        const kind = line.startsWith("@@") ? "hunk"
+          : line.startsWith("+++") || line.startsWith("---") ? "header"
+            : line.startsWith("+") ? "added"
+              : line.startsWith("-") ? "deleted"
+                : "context"
+        return <code data-kind={kind} key={`${index}:${line}`}>{line || " "}</code>
+      })}
+      {file.diff_truncated && <p>差异过长，只显示前 500 KB。</p>}
+    </div>
+  )
+}
+
+function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; change: ChangeSet; onUpdated: (change: ChangeSet) => void }) {
+  const [detail, setDetail] = useState<ChangeSet | null>(null)
+  const [openPath, setOpenPath] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [showAll, setShowAll] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const active = change.files.filter((file) => !file.reverted)
+  const visible = showAll ? change.files : change.files.slice(0, 4)
+
+  const showDiff = async (path: string) => {
+    if (openPath === path) {
+      setOpenPath(null)
+      return
+    }
+    setError(null)
+    try {
+      let loaded = detail
+      if (!loaded) {
+        loaded = await requestJson<ChangeSet>(`/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(change.id)}`)
+        setDetail(loaded)
+      }
+      setOpenPath(path)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法加载文件差异")
+    }
+  }
+
+  const undo = async (paths: string[]) => {
+    if (!paths.length || !window.confirm(`撤销所选的 ${paths.length} 个文件？\n\n如果文件后来又被修改，操作会安全地拒绝。`)) return
+    setBusy(true)
+    setError(null)
+    try {
+      const updated = await requestJson<ChangeSet>(`/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(change.id)}/undo`, { paths })
+      setDetail(updated)
+      setSelected(new Set())
+      onUpdated(updated)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "撤销失败")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const detailedFile = detail?.files.find((file) => file.path === openPath)
+  return (
+    <article className="change-card">
+      <header>
+        <FileText aria-hidden="true" />
+        <div>
+          <strong>{active.length ? `已编辑 ${change.files.length} 个文件` : `已撤销 ${change.files.length} 个文件`}</strong>
+          <span><b>+{change.added}</b> <i>-{change.deleted}</i></span>
+        </div>
+        <button type="button" disabled={busy || !selected.size} onClick={() => void undo([...selected])}><Undo2 />撤销所选</button>
+      </header>
+      <div className="change-files">
+        {visible.map((file) => (
+          <div className="change-file" data-reverted={file.reverted} key={file.path}>
+            <input
+              type="checkbox"
+              aria-label={`选择 ${file.path}`}
+              checked={selected.has(file.path)}
+              disabled={file.reverted || busy}
+              onChange={(event) => setSelected((current) => {
+                const next = new Set(current)
+                if (event.target.checked) next.add(file.path)
+                else next.delete(file.path)
+                return next
+              })}
+            />
+            <button className="change-file-name" type="button" onClick={() => void showDiff(file.path)} aria-expanded={openPath === file.path}>
+              <span>{file.path}</span>
+              <small>{file.reverted ? "已撤销" : file.binary ? "二进制" : <><b>+{file.added}</b> <i>-{file.deleted}</i></>}</small>
+              <ChevronRight aria-hidden="true" />
+            </button>
+            {openPath === file.path && detailedFile && <DiffView file={detailedFile} />}
+          </div>
+        ))}
+      </div>
+      <footer>
+        {change.files.length > 4 && <button type="button" onClick={() => setShowAll((value) => !value)}>{showAll ? "收起文件" : `再显示 ${change.files.length - 4} 个文件`}</button>}
+        <span />
+        {active.length > 0 && <button type="button" disabled={busy} onClick={() => setSelected(new Set(active.map((file) => file.path)))}>全选</button>}
+        {active.length > 0 && <button type="button" disabled={busy} onClick={() => void undo(active.map((file) => file.path))}>撤销全部</button>}
+      </footer>
+      {error && <p className="change-error" role="alert">{error}</p>}
+    </article>
+  )
+}
+
+function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend }: { sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind) => Promise<void> }) {
   const [input, setInput] = useState("")
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([])
   const endRef = useRef<HTMLDivElement>(null)
   const timeline: TimelineEntry[] = [
     ...messages.map((message) => ({ kind: "message" as const, at: message.createdAt, message })),
     ...traces.map((trace) => ({ kind: "trace" as const, at: trace.startedAt, trace })),
+    ...changes.map((change) => ({ kind: "change" as const, at: change.created_at, change })),
   ].sort((left, right) => left.at - right.at)
 
   useEffect(() => {
     // 某些浏览器实现会让 scrollIntoView 返回 Promise；effect 只能返回清理函数。
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })
-  }, [messages, traces])
+  }, [messages, traces, changes])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -349,6 +482,7 @@ function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onR
           )}
           {timeline.map((item) => {
             if (item.kind === "trace") return <RunTrace key={`${item.trace.id}:${item.trace.completedAt ?? "running"}`} trace={item.trace} />
+            if (item.kind === "change") return <ChangeSetCard sessionId={sessionId} change={item.change} onUpdated={onChangeUpdated} key={item.change.id} />
             const message = item.message
             return (
               <article key={message.id} className={`mb-[26px] flex max-w-[760px] gap-2.5 ${messageClasses[message.role]}`}>
@@ -430,6 +564,7 @@ export default function App() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [traces, setTraces] = useState<RunTrace[]>([])
+  const [changes, setChanges] = useState<ChangeSet[]>([])
   const [permissions, setPermissions] = useState<RuntimePermissions | null>(null)
   const [runningTurns, setRunningTurns] = useState<Record<string, number>>({})
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest[]>>({})
@@ -472,10 +607,12 @@ export default function App() {
     if (cached) {
       setMessages(cached.messages)
       setTraces(cached.traces)
+      setChanges(cached.changes)
       return
     }
     setMessages([])
     setTraces([])
+    setChanges([])
     const detail = await requestJson<ConversationDetail>(`/api/sessions/${encodeURIComponent(sessionId)}`)
     setConversations((current) => current.map((item) => item.id === sessionId ? detail.session : item))
     const view: ConversationView = {
@@ -486,11 +623,13 @@ export default function App() {
         createdAt: message.created_at,
       })),
       traces: [],
+      changes: detail.changes,
     }
     conversationViews.current[sessionId] = view
     if (activeConversationIdRef.current !== sessionId) return
     setMessages(view.messages)
     setTraces(view.traces)
+    setChanges(view.changes)
   }
 
   const newConversation = async () => {
@@ -500,9 +639,10 @@ export default function App() {
       setConversations((current) => [conversation, ...current])
       activeConversationIdRef.current = conversation.id
       setActiveConversationId(conversation.id)
-      conversationViews.current[conversation.id] = { messages: [], traces: [] }
+      conversationViews.current[conversation.id] = { messages: [], traces: [], changes: [] }
       setMessages([])
       setTraces([])
+      setChanges([])
       setConversationVersion((version) => version + 1)
       setSidebarOpen(false)
       setConnectionState("online")
@@ -541,6 +681,7 @@ export default function App() {
         setActiveConversationId(null)
         setMessages([])
         setTraces([])
+        setChanges([])
         setConversationVersion((version) => version + 1)
         if (remaining.length) await openConversation(remaining[0].id)
         else await newConversation()
@@ -618,19 +759,25 @@ export default function App() {
     if (!sessionId) return
     const traceId = id("trace")
     const updateSessionMessages = (update: (messages: ChatMessage[]) => ChatMessage[]) => {
-      const view = conversationViews.current[sessionId] ?? { messages: [], traces: [] }
+      const view = conversationViews.current[sessionId] ?? { messages: [], traces: [], changes: [] }
       const nextMessages = update(view.messages)
       conversationViews.current[sessionId] = { ...view, messages: nextMessages }
       if (activeConversationIdRef.current === sessionId) setMessages(nextMessages)
     }
     const updateSessionTraces = (update: (traces: RunTrace[]) => RunTrace[]) => {
-      const view = conversationViews.current[sessionId] ?? { messages: [], traces: [] }
+      const view = conversationViews.current[sessionId] ?? { messages: [], traces: [], changes: [] }
       const nextTraces = update(view.traces)
       conversationViews.current[sessionId] = { ...view, traces: nextTraces }
       if (activeConversationIdRef.current === sessionId) setTraces(nextTraces)
     }
     const updateTrace = (update: (trace: RunTrace) => RunTrace) => {
       updateSessionTraces((traces) => traces.map((trace) => trace.id === traceId ? update(trace) : trace))
+    }
+    const updateSessionChanges = (update: (changes: ChangeSet[]) => ChangeSet[]) => {
+      const view = conversationViews.current[sessionId] ?? { messages: [], traces: [], changes: [] }
+      const nextChanges = update(view.changes)
+      conversationViews.current[sessionId] = { ...view, changes: nextChanges }
+      if (activeConversationIdRef.current === sessionId) setChanges(nextChanges)
     }
 
     updateSessionMessages((current) => [...current, { id: id("user"), role: "user", text, createdAt: Date.now() }])
@@ -746,6 +893,12 @@ export default function App() {
             conversation.id === sessionId ? { ...conversation, plan } : conversation
           ))
         }
+        if (event.kind === "file_changes" && event.data.id && event.data.created_at && Array.isArray(event.data.files)) {
+          const change = event.data as ChangeSet
+          updateSessionChanges((current) => current.some(({ id: changeId }) => changeId === change.id)
+            ? current.map((item) => item.id === change.id ? change : item)
+            : [...current, change])
+        }
         if (event.kind === "turn_finished") {
           clearSessionApprovals(sessionId)
           completed = true
@@ -800,6 +953,15 @@ export default function App() {
   const runningConversationCount = Object.keys(runningTurns).length
   const anyBusy = runningConversationCount > 0
   const activeConversation = conversations.find(({ id }) => id === activeConversationId)
+  const updateVisibleChangeSet = (updated: ChangeSet) => {
+    const sessionId = activeConversationIdRef.current
+    if (!sessionId) return
+    const view = conversationViews.current[sessionId]
+    if (!view) return
+    const nextChanges = view.changes.map((change) => change.id === updated.id ? updated : change)
+    conversationViews.current[sessionId] = { ...view, changes: nextChanges }
+    setChanges(nextChanges)
+  }
   const changeSandboxMode = async (sandboxMode: SandboxMode) => {
     if (!permissions || sandboxMode === permissions.sandbox_mode) return
     if (anyBusy) {
@@ -918,7 +1080,7 @@ export default function App() {
             <button type="button" onClick={() => void initialize()}><RefreshCw />重连</button>
           </div>
         )}
-        <Chat key={conversationVersion} messages={messages} traces={traces} approvals={activeConversationId ? pendingApprovals[activeConversationId] || [] : []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => activeConversationId ? resolveApproval(activeConversationId, approval, approved) : Promise.resolve()} onSend={sendMessage} />
+        {activeConversationId && <Chat key={conversationVersion} sessionId={activeConversationId} messages={messages} traces={traces} changes={changes} approvals={pendingApprovals[activeConversationId] || []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onChangeUpdated={updateVisibleChangeSet} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => resolveApproval(activeConversationId, approval, approved)} onSend={sendMessage} />}
       </main>
     </div>
   )

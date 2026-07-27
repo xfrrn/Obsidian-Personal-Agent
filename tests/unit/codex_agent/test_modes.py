@@ -223,7 +223,6 @@ def _settings(
         workspace=workspace,
         shell_enabled=shell_enabled,
         request_timeout_seconds=1,
-        max_tool_rounds=2,
         sandbox_mode=sandbox_mode,
         sandbox_backend=sandbox_backend,
         session_db_path=workspace / "sessions.db",

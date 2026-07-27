@@ -16,6 +16,7 @@ class EventKind(str, Enum):
     APPROVAL_REQUESTED = "approval_requested"
     TOOL_RESULT = "tool_result"
     PLAN_UPDATED = "plan_updated"
+    FILE_CHANGES = "file_changes"
     TURN_FINISHED = "turn_finished"
     TURN_INTERRUPTED = "turn_interrupted"
     ERROR = "error"

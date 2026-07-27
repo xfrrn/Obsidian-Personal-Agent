@@ -77,7 +77,6 @@ class UpdatePlanTest(unittest.IsolatedAsyncioTestCase):
                 workspace=root,
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=2,
                 session_db_path=root / "sessions.db",
             )
             store = SessionStore(settings.session_db_path)

@@ -80,7 +80,10 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
         )
         context_messages = await _build_context_messages(session, context)
         tool_specs = session.tool_router.model_visible_specs()
-        for round_number in range(1, context.max_tool_rounds + 1):
+        round_number = 0
+        # 固定轮数上限会截断合法的长工具链；回合由模型终止信号、取消或上下文预算结束。
+        while True:
+            round_number += 1
             await _auto_compact_if_needed(session, context, context_messages, tool_specs)
             compacted_summary = session.context_window.render_summary()
             messages = build_messages(
@@ -158,13 +161,6 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
                 await _run_tool_calls(
                     session, context.submission_id, response.tool_calls, context.mode
                 )
-
-        await session.mark_turn_state("failed")
-        session.emit(TurnError(context.submission_id, f"模型/工具往返超过 {context.max_tool_rounds} 轮，已停止本回合。"))
-        _LOGGER.warning(
-            "turn.tool_round_limit",
-            extra={"round": context.max_tool_rounds, "duration_ms": _elapsed_ms(started_at)},
-        )
     except asyncio.CancelledError:
         _LOGGER.info("turn.cancelled", extra={"duration_ms": _elapsed_ms(started_at)})
         before = len(session.conversation.messages)

@@ -399,7 +399,6 @@ def _settings(
         workspace=workspace,
         shell_enabled=True,
         request_timeout_seconds=5,
-        max_tool_rounds=1,
         sandbox_mode=mode,
         sandbox_network=SandboxNetwork.BLOCKED,
         sandbox_state_dir=state,

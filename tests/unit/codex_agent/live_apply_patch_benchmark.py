@@ -134,7 +134,6 @@ async def _run_scenario(base: Settings, scenario: Scenario, run_number: int) -> 
             workspace=workspace,
             system_prompt=load_system_instructions("concise"),
             shell_enabled=True,
-            max_tool_rounds=50,
         )
         handle, runner = await start_agent(settings)
         events = PublicEventAdapter()

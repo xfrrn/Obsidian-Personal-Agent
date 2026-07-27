@@ -180,7 +180,6 @@ class SchedulingControlTest(unittest.IsolatedAsyncioTestCase):
             workspace=Path(directory.name),
             shell_enabled=False,
             request_timeout_seconds=1,
-            max_tool_rounds=2,
         )
         handle = AgentHandle()
         tools = ToolRegistry(handlers)

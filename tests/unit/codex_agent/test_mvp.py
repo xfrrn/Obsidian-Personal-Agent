@@ -123,6 +123,20 @@ class FollowUpClient:
         return AssistantResponse("完成")
 
 
+class LongToolChainClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> AssistantResponse:
+        self.calls += 1
+        if self.calls <= 6:
+            return AssistantResponse(
+                None,
+                (ToolCall(f"call-{self.calls}", "echo", {"text": str(self.calls)}),),
+            )
+        return AssistantResponse("完成")
+
+
 class MvpFlowTest(unittest.IsolatedAsyncioTestCase):
     async def test_end_turn_false_continues_without_a_tool_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -134,7 +148,6 @@ class MvpFlowTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=2,
             )
             client = FollowUpClient()
             tools = ToolRegistry()
@@ -150,9 +163,39 @@ class MvpFlowTest(unittest.IsolatedAsyncioTestCase):
                 input_queue=InputQueue(),
                 turn_events=TurnEventBus(),
             )
-            await run_turn(session, TurnContext(1, "run", "test", 2, (), ()))
+            await run_turn(session, TurnContext(1, "run", "test", (), ()))
 
         self.assertEqual(client.calls, 2)
+
+    async def test_tool_chain_continues_until_model_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(
+                api_key=None,
+                model="test-model",
+                base_url="http://unused",
+                system_prompt="test",
+                workspace=Path(directory),
+                shell_enabled=False,
+                request_timeout_seconds=1,
+            )
+            client = LongToolChainClient()
+            tools = ToolRegistry([EchoTool()])
+            router = ToolRouter(tools)
+            session = Session(
+                config=settings,
+                client=client,
+                tools=tools,
+                tool_router=router,
+                tool_runtime=ToolCallRuntime(router),
+                skills_service=SkillsService(Path(directory) / "skills"),
+                context_contributors=(),
+                input_queue=InputQueue(),
+                turn_events=TurnEventBus(),
+            )
+            await run_turn(session, TurnContext(1, "run", "test"))
+
+        self.assertEqual(client.calls, 7)
+        self.assertEqual(session.history[-1]["content"], "完成")
 
     async def test_explicit_parallel_tools_start_together(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -164,7 +207,6 @@ class MvpFlowTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=2,
             )
             tool = ParallelTool()
             tools = ToolRegistry([tool])
@@ -184,7 +226,7 @@ class MvpFlowTest(unittest.IsolatedAsyncioTestCase):
             turn = asyncio.create_task(
                 run_turn(
                     session,
-                    TurnContext(1, "run", "test", 2, (), ()),
+                    TurnContext(1, "run", "test", (), ()),
                 )
             )
             await asyncio.wait_for(tool.started.wait(), timeout=1)
@@ -209,7 +251,6 @@ class MvpFlowTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=2,
             )
             handle = AgentHandle()
             client = FakeClient()

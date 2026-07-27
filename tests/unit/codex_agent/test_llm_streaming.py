@@ -156,7 +156,6 @@ def _client(base_url: str) -> ModelClientSession:
         workspace=Path.cwd(),
         shell_enabled=False,
         request_timeout_seconds=5,
-        max_tool_rounds=1,
     )
     return ModelClientSession(settings)
 

@@ -58,7 +58,6 @@ class AutoCompactionTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
                 context_window_tokens=20_000,
                 reserved_output_tokens=100,
                 auto_compact_token_limit=19_000,
@@ -74,7 +73,7 @@ class AutoCompactionTest(unittest.IsolatedAsyncioTestCase):
 
             await run_turn(
                 session,
-                TurnContext(1, "新请求", settings.system_prompt, 1),
+                TurnContext(1, "新请求", settings.system_prompt),
             )
 
         self.assertEqual(len(client.calls), 3)
@@ -95,7 +94,6 @@ class AutoCompactionTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
                 context_window_tokens=20_000,
                 reserved_output_tokens=100,
                 auto_compact_token_limit=200,
@@ -115,7 +113,6 @@ class AutoCompactionTest(unittest.IsolatedAsyncioTestCase):
                     submission_id=1,
                     user_text="新请求",
                     system_prompt=settings.system_prompt,
-                    max_tool_rounds=1,
                 ),
             )
 
@@ -141,7 +138,6 @@ class AutoCompactionTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
                 context_window_tokens=20_000,
                 reserved_output_tokens=100,
                 auto_compact_token_limit=200,
@@ -161,7 +157,6 @@ class AutoCompactionTest(unittest.IsolatedAsyncioTestCase):
                     submission_id=1,
                     user_text="新请求",
                     system_prompt=settings.system_prompt,
-                    max_tool_rounds=1,
                 ),
             )
 

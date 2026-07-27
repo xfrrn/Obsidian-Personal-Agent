@@ -56,7 +56,6 @@ class SkillInjectionTest(unittest.IsolatedAsyncioTestCase):
                 workspace=workspace,
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
             )
             handle = AgentHandle()
             client = RecordingClient()

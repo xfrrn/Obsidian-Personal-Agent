@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from agent.config.settings import Settings
 from agent.core.context_injection.current_time import CurrentTimeContributor
@@ -35,6 +36,9 @@ from agent.tools.registry import ToolRegistry
 from agent.tools.router import ToolRouter
 from agent.tools.runtime import ToolCallRuntime
 
+if TYPE_CHECKING:
+    from agent.changes import ChangeJournal
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +51,7 @@ def create_session(
     session_id: str | None = None,
     store: SessionStore | None = None,
     stored_session: StoredSession | None = None,
+    change_journal: ChangeJournal | None = None,
 ) -> Session:
     """在唯一组合根创建服务；核心模块只接收已组合好的依赖。"""
 
@@ -102,6 +107,8 @@ def create_session(
                 PermissionPolicy(settings.sandbox_mode, settings.approval_policy),
                 request_approval,
             ),
+            change_journal=change_journal,
+            session_id=session_id,
         ),
         skills_service=SkillsService(settings.workspace / "skills"),
         context_contributors=(
@@ -132,6 +139,7 @@ async def start_agent(
     *,
     session_id: str | None = None,
     store: SessionStore | None = None,
+    change_journal: ChangeJournal | None = None,
 ) -> tuple[AgentHandle, asyncio.Task[None]]:
     """嵌入式入口：调用方取得 handle 后即可提交操作并消费事件。"""
 
@@ -156,6 +164,7 @@ async def start_agent(
         session_id=session_id,
         store=store,
         stored_session=stored_session,
+        change_journal=change_journal,
     )
     if stored_session is not None:
         if stored_session.last_turn_state == "running":

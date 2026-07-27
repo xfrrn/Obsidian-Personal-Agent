@@ -17,10 +17,11 @@ from threading import Lock, Thread
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from agent.changes import ChangeJournal
 from agent.config.settings import Settings
 from agent.core.handle import AgentHandle
 from agent.core.loop import start_agent
-from agent.core.turn.events import TurnEvent
+from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInterrupted
 from agent.core.turn.public_events import PublicEventAdapter
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
@@ -55,6 +56,7 @@ class AgentRuntime:
         self._settings = settings
         self._client_factory = client_factory
         self._store = SessionStore(settings.session_db_path)
+        self._changes = ChangeJournal(settings.workspace, settings.session_db_path)
         self._sessions: dict[str, LiveSession] = {}
         self._next_generation = 0
         self._default_session_id: str | None = None
@@ -112,6 +114,7 @@ class AgentRuntime:
             self._call(self._shutdown())
             self._settings = settings
             self._store = SessionStore(settings.session_db_path)
+            self._changes = ChangeJournal(settings.workspace, settings.session_db_path)
             self._default_session_id = None
             return self.configuration()
 
@@ -155,7 +158,23 @@ class AgentRuntime:
                 and message.role in {"user", "assistant"}
                 and isinstance(message.payload.get("content"), str)
             ],
+            "changes": self._changes.list_session(session_id),
         }
+
+    def change_detail(self, session_id: str, change_set_id: str) -> dict[str, object]:
+        if self._store.load(session_id) is None:
+            raise KeyError(f"会话不存在或已归档: {session_id}")
+        return self._changes.get(session_id, change_set_id)
+
+    def undo_changes(
+        self, session_id: str, change_set_id: str, paths: list[str]
+    ) -> dict[str, object]:
+        with self._request_lock:
+            if self._metrics.snapshot()["active_turns"]:
+                raise RuntimeError("运行中的回合结束后才能撤销文件")
+            if self._store.load(session_id) is None:
+                raise KeyError(f"会话不存在或已归档: {session_id}")
+            return self._changes.undo(session_id, change_set_id, paths)
 
     def archive_conversation(self, session_id: str) -> None:
         with self._request_lock:
@@ -275,6 +294,7 @@ class AgentRuntime:
             client,
             session_id=session_id,
             store=self._store,
+            change_journal=self._changes,
         )
         live = LiveSession(handle, runner, generation)
         self._sessions[session_id] = live
@@ -293,12 +313,24 @@ class AgentRuntime:
     def _route_turn_event(self, session_id: str, generation: int, event: TurnEvent) -> None:
         """按 submission 隔离事件，让被取消和新启动的 SSE 能并存。"""
 
-        public_event = PublicEventAdapter.adapt(event)
         submission_id = getattr(event, "submission_id", None)
+        change_set = None
+        if isinstance(event, (TurnFinished, TurnInterrupted, TurnError)) and isinstance(
+            submission_id, int
+        ):
+            try:
+                change_set = self._changes.finish_turn(session_id, submission_id)
+            except Exception:
+                _LOGGER.exception("change_journal.finish_failed")
+        public_event = PublicEventAdapter.adapt(event)
         if public_event is None or not isinstance(submission_id, int):
             return
         queue = self._turn_events.get((session_id, generation, submission_id))
         if queue is not None:
+            if change_set is not None:
+                queue.put_nowait(
+                    Event(EventKind.FILE_CHANGES, "文件修改已记录。", change_set)
+                )
             queue.put_nowait(public_event)
 
     async def _next_turn_event(self, turn_key: tuple[str, int, int]) -> Event:
@@ -352,14 +384,17 @@ class AgentRuntime:
         if not live.runner.done():
             live.handle.shutdown()
         await live.runner
+        self._changes.finish_active_session(session_id)
 
     async def _shutdown(self) -> None:
-        live_sessions = tuple(self._sessions.values())
-        for live in live_sessions:
+        live_sessions = tuple(self._sessions.items())
+        for _, live in live_sessions:
             if not live.runner.done():
                 live.handle.shutdown()
         if live_sessions:
-            await asyncio.gather(*(live.runner for live in live_sessions))
+            await asyncio.gather(*(live.runner for _, live in live_sessions))
+            for session_id, _ in live_sessions:
+                self._changes.finish_active_session(session_id)
         self._sessions.clear()
 
     def metrics(self) -> dict[str, Any]:
@@ -415,6 +450,16 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             )
             return
         route = _session_route(path)
+        change_route = _change_route(route[1]) if route is not None else None
+        if route is not None and change_route is not None and change_route[1] == "":
+            try:
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.change_detail(route[0], change_route[0]),
+                )
+            except KeyError as exc:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+            return
         if route is not None and route[1] == "":
             try:
                 self._send_json(
@@ -492,6 +537,14 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 )
                 return
             route = _session_route(path)
+            change_route = _change_route(route[1]) if route is not None else None
+            if route is not None and change_route is not None and change_route[1] == "undo":
+                paths = _undo_paths(self._read_json_body())
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.undo_changes(route[0], change_route[0], paths),
+                )
+                return
             if route is not None and route[1] == "approvals":
                 body = self._read_json_body()
                 call_id, approved, submission_id = _approval_body(body)
@@ -636,6 +689,17 @@ def _mode_body(body: dict[str, Any]) -> ModeKind | None:
     return ModeKind.parse(value)
 
 
+def _undo_paths(body: dict[str, Any]) -> list[str]:
+    if set(body) != {"paths"} or not isinstance(body["paths"], list):
+        raise ValueError("撤销请求必须且只能包含 paths 数组")
+    paths = body["paths"]
+    if not 1 <= len(paths) <= 500 or any(
+        not isinstance(path, str) or not path or len(path) > 2_000 for path in paths
+    ):
+        raise ValueError("paths 必须包含 1 到 500 个有效文件路径")
+    return paths
+
+
 def _permissions_body(body: dict[str, Any]) -> SandboxMode:
     if set(body) - {"sandbox_mode", "confirmed"}:
         raise ValueError("权限请求只能包含 sandbox_mode 和 confirmed")
@@ -771,6 +835,17 @@ def _session_route(path: str) -> tuple[str, str] | None:
     if not session_id or len(session_id) > 64:
         return None
     return session_id, "/".join(parts[3:])
+
+
+def _change_route(action: str) -> tuple[str, str] | None:
+    parts = action.split("/")
+    if len(parts) not in {2, 3} or parts[0] != "changes":
+        return None
+    change_set_id = parts[1]
+    trailing = parts[2] if len(parts) == 3 else ""
+    if not change_set_id or len(change_set_id) > 64 or trailing not in {"", "undo"}:
+        return None
+    return change_set_id, trailing
 
 
 def main() -> None:

@@ -134,7 +134,6 @@ class SettingsEnvFileTest(unittest.TestCase):
             workspace=Path.cwd(),
             shell_enabled=False,
             request_timeout_seconds=1,
-            max_tool_rounds=1,
             context_window_tokens=1_000,
             reserved_output_tokens=50,
             auto_compact_token_limit=940,

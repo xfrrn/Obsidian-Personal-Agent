@@ -6,6 +6,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from threading import Event as ThreadEvent, Thread
 from unittest.mock import AsyncMock, patch
@@ -101,6 +102,57 @@ class EscalatingWebClient:
         return AssistantResponse("命令已完成")
 
 
+class EditingClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self, messages: list[dict[str, object]], tools: list[dict[str, object]]
+    ) -> AssistantResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return AssistantResponse(
+                None,
+                (
+                    ToolCall(
+                        "edit-1",
+                        "apply_patch",
+                        {
+                            "patch": """*** Begin Patch
+*** Update File: note.md
+@@
+-before
++after
+*** End Patch"""
+                        },
+                    ),
+                ),
+            )
+        return AssistantResponse("编辑完成")
+
+
+class CommandEditingClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self, messages: list[dict[str, object]], tools: list[dict[str, object]]
+    ) -> AssistantResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return AssistantResponse(
+                None,
+                (
+                    ToolCall(
+                        "command-edit-1",
+                        "exec_command",
+                        {"command": "python -c \"open('command.md','w').write('from command')\""},
+                    ),
+                ),
+            )
+        return AssistantResponse("命令完成")
+
+
 class WebRuntimeTest(unittest.TestCase):
     def test_unbuilt_frontend_fallback_has_no_second_agent_ui(self) -> None:
         page = (AGENT_ROOT / "web" / "index.html").read_text(encoding="utf-8")
@@ -139,6 +191,15 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertNotIn('requestJson<Metrics>("/api/metrics"', app)
         self.assertNotIn("function Monitor", app)
 
+    def test_frontend_shows_clickable_file_diffs_and_selective_undo(self) -> None:
+        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("function ChangeSetCard", app)
+        self.assertIn("void showDiff(file.path)", app)
+        self.assertIn("<DiffView file={detailedFile}", app)
+        self.assertIn("撤销所选", app)
+        self.assertIn("撤销全部", app)
+
     def test_new_conversation_uses_a_fresh_agent_session(self) -> None:
         clients: list[RecordingClient] = []
 
@@ -156,7 +217,6 @@ class WebRuntimeTest(unittest.TestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
                 session_db_path=Path(directory) / "sessions.db",
             )
             runtime = AgentRuntime(settings, client_factory)
@@ -176,6 +236,47 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(second_events[1].text, "收到：第二轮")
         self.assertEqual(len(clients), 2)
         self.assertNotIn("第一轮", str(clients[1].requests))
+
+    def test_file_changes_are_streamed_persisted_and_undoable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            note = workspace / "note.md"
+            note.write_text("before\n", encoding="utf-8")
+            settings = _settings(workspace)
+            runtime = AgentRuntime(settings, EditingClient)
+            try:
+                session_id = runtime.new_conversation()
+                events = runtime.ask("修改笔记", session_id)
+                change_event = next(event for event in events if event.kind is EventKind.FILE_CHANGES)
+                change_set_id = str(change_event.data["id"])
+                detail = runtime.change_detail(session_id, change_set_id)
+                runtime.undo_changes(session_id, change_set_id, ["note.md"])
+                restored = note.read_text(encoding="utf-8")
+            finally:
+                runtime.close()
+
+        self.assertEqual(restored, "before\n")
+        self.assertEqual(detail["files"][0]["path"], "note.md")
+        self.assertIn("+after", detail["files"][0]["diff"])
+
+    def test_shell_file_edits_are_included_in_the_change_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            settings = replace(
+                _settings(workspace),
+                shell_enabled=True,
+                sandbox_mode=SandboxMode.DANGER_FULL_ACCESS,
+            )
+            runtime = AgentRuntime(settings, CommandEditingClient)
+            try:
+                session_id = runtime.new_conversation()
+                events = runtime.ask("使用命令创建笔记", session_id)
+            finally:
+                runtime.close()
+
+            change_event = next(event for event in events if event.kind is EventKind.FILE_CHANGES)
+            self.assertEqual(change_event.data["files"][0]["path"], "command.md")
+            self.assertEqual((workspace / "command.md").read_text(), "from command")
 
     def test_sessions_survive_runtime_restart_and_stay_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -256,7 +357,6 @@ class WebRuntimeTest(unittest.TestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
                 session_db_path=Path(directory) / "sessions.db",
             )
             runtime = AgentRuntime(settings, RecordingClient)
@@ -299,7 +399,6 @@ class WebRuntimeTest(unittest.TestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
                 session_db_path=Path(directory) / "sessions.db",
             )
             runtime = AgentRuntime(settings, StreamingClient)
@@ -337,7 +436,6 @@ class WebRuntimeTest(unittest.TestCase):
                 workspace=Path(directory),
                 shell_enabled=True,
                 request_timeout_seconds=1,
-                max_tool_rounds=2,
                 session_db_path=Path(directory) / "sessions.db",
             )
             runtime = AgentRuntime(settings, EscalatingWebClient)
@@ -560,7 +658,6 @@ def _settings(workspace: Path) -> Settings:
         workspace=workspace,
         shell_enabled=False,
         request_timeout_seconds=1,
-        max_tool_rounds=1,
         session_db_path=workspace / "sessions.db",
     )
 

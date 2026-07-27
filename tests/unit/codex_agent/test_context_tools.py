@@ -88,7 +88,6 @@ class ContextToolsTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=2,
                 context_window_tokens=20_000,
                 reserved_output_tokens=100,
                 auto_compact_token_limit=19_000,
@@ -104,7 +103,7 @@ class ContextToolsTest(unittest.IsolatedAsyncioTestCase):
 
             await run_turn(
                 session,
-                TurnContext(1, "新请求", settings.system_prompt, 2),
+                TurnContext(1, "新请求", settings.system_prompt),
             )
 
         self.assertEqual(len(client.calls), 3)
@@ -125,7 +124,6 @@ class ContextToolsTest(unittest.IsolatedAsyncioTestCase):
                 workspace=Path(directory),
                 shell_enabled=False,
                 request_timeout_seconds=1,
-                max_tool_rounds=1,
             )
             session = create_session(settings, AgentHandle(), object())
 

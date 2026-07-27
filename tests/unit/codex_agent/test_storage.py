@@ -129,6 +129,5 @@ def _settings(workspace: Path) -> Settings:
         workspace=workspace,
         shell_enabled=False,
         request_timeout_seconds=1,
-        max_tool_rounds=1,
         session_db_path=workspace / "sessions.db",
     )
