@@ -30,7 +30,7 @@ from agent.utils.logging import configure_logging
 from agent.web.metrics import AgentMetrics
 from agent.protocol.event import Event, EventKind
 from agent.protocol.mode import ModeKind
-from agent.protocol.op import FileReference, ResolveApproval, UserInput
+from agent.protocol.op import FileReference, Interrupt, ResolveApproval, UserInput
 from agent.storage import SessionStore, StoredSession
 
 
@@ -45,6 +45,7 @@ class LiveSession:
     handle: AgentHandle
     runner: asyncio.Task[None]
     generation: int
+    active_submission_id: int | None = None
 
 
 class AgentRuntime:
@@ -212,6 +213,12 @@ class AgentRuntime:
             self._call(self._archive_conversation(session_id))
             if self._default_session_id == session_id:
                 self._default_session_id = None
+
+    def interrupt(self, session_id: str) -> bool:
+        """只中断调用时仍活跃的目标回合，避免迟到请求误伤下一轮。"""
+
+        with self._request_lock:
+            return self._call(self._interrupt(session_id))
 
     def ask(
         self,
@@ -403,6 +410,15 @@ class AgentRuntime:
                     Event(EventKind.FILE_CHANGES, "文件修改已记录。", change_set)
                 )
             queue.put_nowait(public_event)
+        live = self._sessions.get(session_id)
+        if (
+            live is not None
+            and live.generation == generation
+            and live.active_submission_id == submission_id
+            and public_event.kind
+            in {EventKind.TURN_FINISHED, EventKind.TURN_INTERRUPTED, EventKind.ERROR}
+        ):
+            live.active_submission_id = None
 
     async def _next_turn_event(self, turn_key: tuple[str, int, int]) -> Event:
         queue = self._turn_events.get(turn_key)
@@ -430,11 +446,19 @@ class AgentRuntime:
     ) -> tuple[str, int, int]:
         live = await self._ensure_live(session_id)
         submission_id = live.handle.submit(UserInput(text, mode, references))
+        live.active_submission_id = submission_id
         turn_key = (session_id, live.generation, submission_id)
         # submit() 不会让出事件循环，因此调度器还没来得及发 TurnStarted；
         # 在这里建队列可确保新 turn 的首个事件不会丢失。
         self._turn_events[turn_key] = asyncio.Queue()
         return turn_key
+
+    async def _interrupt(self, session_id: str) -> bool:
+        live = self._sessions.get(session_id)
+        if live is None or live.runner.done() or live.active_submission_id is None:
+            return False
+        live.handle.submit(Interrupt(live.active_submission_id))
+        return True
 
     async def _resolve_approval(
         self, session_id: str, call_id: str, approved: bool, submission_id: int
@@ -632,6 +656,11 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     call_id, approved, submission_id, route[0]
                 ):
                     raise RuntimeError("审批请求已失效")
+                self._send_json(HTTPStatus.OK, {"ok": True})
+                return
+            if route is not None and route[1] == "interrupt":
+                if not self.server.runtime.interrupt(route[0]):
+                    raise RuntimeError("当前没有运行中的回合")
                 self._send_json(HTTPStatus.OK, {"ok": True})
                 return
             if route is not None and route[1] in {"messages", "messages/stream"}:

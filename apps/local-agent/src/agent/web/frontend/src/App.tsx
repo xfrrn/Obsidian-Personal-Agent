@@ -14,6 +14,7 @@ import {
   RefreshCw,
   SendHorizontal,
   ShieldAlert,
+  Square,
   Sun,
   Trash2,
   Undo2,
@@ -476,16 +477,18 @@ function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; ch
   )
 }
 
-function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend }: { sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind, references: FileReference[]) => Promise<void> }) {
+function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend, onStop }: { sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind, references: FileReference[]) => Promise<void>; onStop: () => Promise<void> }) {
   const [input, setInput] = useState("")
   const [selectedReferences, setSelectedReferences] = useState<FileReference[]>([])
   const [fileSuggestions, setFileSuggestions] = useState<FileReference[]>([])
   const [fileSuggestionsLoading, setFileSuggestionsLoading] = useState(false)
   const [fileSuggestionsError, setFileSuggestionsError] = useState<string | null>(null)
+  const [stopping, setStopping] = useState(false)
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const referenceQuery = trailingFileMention(input)
+  const hasInput = Boolean(input.trim() || selectedReferences.length)
   const timeline: TimelineEntry[] = [
     ...messages.map((message) => ({ kind: "message" as const, at: message.createdAt, message })),
     ...traces.map((trace) => ({ kind: "trace" as const, at: trace.startedAt, trace })),
@@ -496,6 +499,10 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
     // 某些浏览器实现会让 scrollIntoView 返回 Promise；effect 只能返回清理函数。
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })
   }, [messages, traces, changes])
+
+  useEffect(() => {
+    if (!busy) setStopping(false)
+  }, [busy])
 
   useEffect(() => {
     if (referenceQuery === null) {
@@ -529,7 +536,17 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
     event.preventDefault()
     const text = input.trim()
     const references = selectedReferences
-    if (!text && references.length === 0) return
+    if (busy && !hasInput) {
+      setStopping(true)
+      try {
+        await onStop()
+      } catch (error) {
+        setStopping(false)
+        window.alert(error instanceof Error ? error.message : "无法停止当前回合")
+      }
+      return
+    }
+    if (!hasInput) return
     setInput("")
     setSelectedReferences([])
     setFileSuggestions([])
@@ -693,9 +710,9 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
                 </select>
                 <span className="max-[520px]:hidden">Enter 发送 · Shift + Enter 换行</span>
               </div>
-              <button className="inline-flex cursor-pointer items-center gap-[7px] rounded-[7px] bg-primary px-[11px] py-2 text-[13px] font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45 [&>svg]:size-[15px]" disabled={!input.trim() && selectedReferences.length === 0} type="submit">
-                {busy ? <Plus aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
-                {busy ? "加入队列" : "发送"}
+              <button className="inline-flex cursor-pointer items-center gap-[7px] rounded-[7px] bg-primary px-[11px] py-2 text-[13px] font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45 [&>svg]:size-[15px]" disabled={stopping || (!busy && !hasInput)} type="submit">
+                {busy ? hasInput ? <Plus aria-hidden="true" /> : <Square aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
+                {stopping ? "停止中…" : busy ? hasInput ? "追加" : "停止" : "发送"}
               </button>
             </div>
           </div>
@@ -1155,6 +1172,11 @@ export default function App() {
     }
   }
 
+  const stopMessage = async () => {
+    if (!activeConversationId) return
+    await requestJson(`/api/sessions/${encodeURIComponent(activeConversationId)}/interrupt`, {})
+  }
+
   const busy = activeConversationId !== null && Boolean(runningTurns[activeConversationId])
   const runningConversationCount = Object.keys(runningTurns).length
   const anyBusy = runningConversationCount > 0
@@ -1286,7 +1308,7 @@ export default function App() {
             <button type="button" onClick={() => void initialize()}><RefreshCw />重连</button>
           </div>
         )}
-        {activeConversationId && <Chat key={conversationVersion} sessionId={activeConversationId} messages={messages} traces={traces} changes={changes} approvals={pendingApprovals[activeConversationId] || []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onChangeUpdated={updateVisibleChangeSet} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => resolveApproval(activeConversationId, approval, approved)} onSend={sendMessage} />}
+        {activeConversationId && <Chat key={conversationVersion} sessionId={activeConversationId} messages={messages} traces={traces} changes={changes} approvals={pendingApprovals[activeConversationId] || []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onChangeUpdated={updateVisibleChangeSet} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => resolveApproval(activeConversationId, approval, approved)} onSend={sendMessage} onStop={stopMessage} />}
       </main>
     </div>
   )

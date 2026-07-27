@@ -180,6 +180,8 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertIn("const nextMessages = update(view.messages)", app)
         self.assertIn("const nextTraces = update(view.traces)", app)
         self.assertIn("Boolean(runningTurns[activeConversationId])", app)
+        self.assertIn('busy ? hasInput ? "追加" : "停止"', app)
+        self.assertIn("/interrupt`, {})", app)
 
     def test_frontend_exposes_archive_and_inline_approval_flows(self) -> None:
         app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
@@ -741,6 +743,49 @@ class WebRuntimeTest(unittest.TestCase):
         ])
         user_messages = [message["content"] for message in clients[0].requests[1] if message["role"] == "user"]
         self.assertEqual(user_messages, ["先用 Go 实现", "改用 Python"])
+
+    def test_http_interrupt_stops_the_active_web_stream(self) -> None:
+        clients: list[SteeringClient] = []
+
+        def client_factory() -> SteeringClient:
+            client = SteeringClient()
+            clients.append(client)
+            return client
+
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = AgentRuntime(_settings(Path(directory)), client_factory)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            events: list[dict[str, object]] = []
+            session_id = _post_json(f"{address}/api/sessions", {})["id"]
+            stream = Thread(
+                target=lambda: events.extend(
+                    _post_sse(
+                        f"{address}/api/sessions/{session_id}/messages/stream",
+                        {"text": "持续运行"},
+                    )
+                ),
+                daemon=True,
+            )
+            try:
+                stream.start()
+                self.assertTrue(clients[0].started.wait(timeout=1))
+                stopped = _post_json(
+                    f"{address}/api/sessions/{session_id}/interrupt", {}
+                )
+                stream.join(timeout=1)
+            finally:
+                runtime.close()
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
+        self.assertEqual(stopped, {"ok": True})
+        self.assertFalse(stream.is_alive())
+        self.assertTrue(clients[0].was_cancelled)
+        self.assertEqual(events[-1]["kind"], EventKind.TURN_INTERRUPTED.value)
 
 
 def _post_json(url: str, body: dict[str, object]) -> dict[str, object]:
