@@ -119,6 +119,18 @@ class TurnEventBusTest(unittest.IsolatedAsyncioTestCase):
             Event(EventKind.ASSISTANT_MESSAGE, "part", {"delta": True}),
         )
 
+    async def test_listener_can_opt_into_reasoning_deltas(self) -> None:
+        bus = TurnEventBus()
+        adapter = PublicEventAdapter()
+        bus.subscribe(adapter, include_deltas=True)
+
+        bus.emit(AssistantDelta(7, "检查", "reasoning"))
+
+        self.assertEqual(
+            await adapter.receive(),
+            Event(EventKind.ASSISTANT_MESSAGE, "检查", {"delta": True, "reasoning_delta": True}),
+        )
+
     async def test_tool_call_response_marks_streamed_text_as_provisional(self) -> None:
         bus = TurnEventBus()
         adapter = PublicEventAdapter()

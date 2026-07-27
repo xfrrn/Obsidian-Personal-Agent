@@ -42,6 +42,20 @@ class StreamingClient:
         return AssistantResponse("逐字")
 
 
+class ReasoningStreamingClient:
+    async def stream_complete(
+        self,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]],
+        on_delta: object,
+        on_reasoning_delta: object | None = None,
+    ) -> AssistantResponse:
+        if callable(on_reasoning_delta):
+            await on_reasoning_delta("先想")
+        await on_delta("答")
+        return AssistantResponse("答", reasoning="先想")
+
+
 class SteeringClient:
     """首个请求持续运行，验证第二条输入可直接中断并重启 turn。"""
 
@@ -425,6 +439,38 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual([event["text"] for event in events[1:3]], ["逐", "字"])
         self.assertTrue(all(event["data"] == {"delta": True} for event in events[1:3]))
         self.assertEqual(events[3]["data"], {"replace": True, "is_final": True})
+
+    def test_http_stream_forwards_reasoning_deltas(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(
+                api_key=None,
+                model="test-model",
+                base_url="http://unused",
+                system_prompt="test",
+                workspace=Path(directory),
+                shell_enabled=False,
+                request_timeout_seconds=1,
+                session_db_path=Path(directory) / "sessions.db",
+            )
+            runtime = AgentRuntime(settings, ReasoningStreamingClient)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            try:
+                self.assertEqual(_post_json(f"{address}/api/new", {}).get("ok"), True)
+                events = _post_sse(f"{address}/api/messages/stream", {"text": "网页消息"})
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        self.assertEqual(events[1], {
+            "kind": EventKind.ASSISTANT_MESSAGE.value,
+            "text": "先想",
+            "data": {"delta": True, "reasoning_delta": True},
+        })
 
     def test_http_approval_resumes_the_waiting_shell_call_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

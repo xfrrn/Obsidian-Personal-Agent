@@ -91,13 +91,19 @@ class ModelStreamingTest(unittest.IsolatedAsyncioTestCase):
 
         server, base_url = await _start_server(handler)
         try:
+            received: list[str] = []
+
+            async def record_reasoning(delta: str) -> None:
+                received.append(delta)
+
             response = await _client(base_url).stream_complete(
-                [{"role": "user", "content": "test"}], [], _ignore
+                [{"role": "user", "content": "test"}], [], _ignore, on_reasoning_delta=record_reasoning
             )
         finally:
             server.close()
             await server.wait_closed()
 
+        self.assertEqual(received, ["检查", "目录"])
         self.assertEqual(response.reasoning, "检查目录")
 
     async def test_preserves_optional_end_turn_signal(self) -> None:

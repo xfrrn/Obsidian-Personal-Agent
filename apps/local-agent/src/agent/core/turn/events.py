@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from agent.llm.types import AssistantResponse
 from agent.protocol.mode import ModeKind
@@ -40,6 +40,7 @@ class AssistantResponseReceived:
 class AssistantDelta:
     submission_id: int
     text: str
+    channel: Literal["content", "reasoning"] = "content"
 
 
 @dataclass(frozen=True, slots=True)

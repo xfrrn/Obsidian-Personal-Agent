@@ -45,6 +45,8 @@ class PublicEventAdapter:
                     EventKind.TURN_STARTED,
                     data={"submission_id": submission_id, "mode": mode.value},
                 )
+            case AssistantDelta(text=text, channel="reasoning"):
+                return Event(EventKind.ASSISTANT_MESSAGE, text, {"delta": True, "reasoning_delta": True})
             case AssistantDelta(text=text):
                 return Event(EventKind.ASSISTANT_MESSAGE, text, {"delta": True})
             case AssistantResponseReceived(response=response, streamed=streamed):

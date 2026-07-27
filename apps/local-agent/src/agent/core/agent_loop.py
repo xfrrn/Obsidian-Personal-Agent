@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+import inspect
 import logging
 import time
 from typing import Any, cast
@@ -332,10 +333,32 @@ async def _complete_turn(
     async def publish_delta(text: str) -> None:
         session.emit(AssistantDelta(submission_id, text))
 
+    async def publish_reasoning_delta(text: str) -> None:
+        session.emit(AssistantDelta(submission_id, text, "reasoning"))
+
     typed_stream_complete = cast(
         Callable[..., Awaitable[AssistantResponse]], stream_complete
     )
+    if _accepts_reasoning_delta(stream_complete):
+        return await typed_stream_complete(
+            messages,
+            tool_specs,
+            publish_delta,
+            on_reasoning_delta=publish_reasoning_delta,
+        ), True
     return await typed_stream_complete(messages, tool_specs, publish_delta), True
+
+
+def _accepts_reasoning_delta(stream_complete: object) -> bool:
+    try:
+        parameters = inspect.signature(stream_complete).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        or parameter.name == "on_reasoning_delta"
+        for parameter in parameters
+    )
 
 
 async def _build_context_messages(session: Session, context: TurnContext) -> tuple[str, ...]:

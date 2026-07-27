@@ -60,7 +60,7 @@ type ChangeSet = {
 type AgentEvent = {
   kind: string
   text: string
-  data: { delta?: boolean; replace?: boolean; is_final?: boolean; reasoning?: string; arguments?: unknown; is_error?: boolean; status?: Exclude<ToolState, "running">; name?: string; submission_id?: number; call_id?: string; command?: string; justification?: string; mode?: ModeKind; plan?: PlanState["plan"]; id?: string; created_at?: number; added?: number; deleted?: number; files?: FileChange[] }
+  data: { delta?: boolean; reasoning_delta?: boolean; replace?: boolean; is_final?: boolean; reasoning?: string; arguments?: unknown; is_error?: boolean; status?: Exclude<ToolState, "running">; name?: string; submission_id?: number; call_id?: string; command?: string; justification?: string; mode?: ModeKind; plan?: PlanState["plan"]; id?: string; created_at?: number; added?: number; deleted?: number; files?: FileChange[] }
 }
 
 type ChatMessage = {
@@ -106,8 +106,9 @@ type ApprovalRequest = {
 }
 
 type ToolTraceStep = { id: string; kind: "tool"; name: string; label: string; state: ToolState }
-type TraceStep = { id: string; kind: "thought"; text: string } | ToolTraceStep
-type TraceGroup = Extract<TraceStep, { kind: "thought" }> | { id: string; kind: "tools"; tools: ToolTraceStep[] }
+type TextTraceStep = { id: string; kind: "thought" | "note"; text: string }
+type TraceStep = TextTraceStep | ToolTraceStep
+type TraceGroup = TextTraceStep | { id: string; kind: "tools"; tools: ToolTraceStep[] }
 
 type RunTrace = {
   id: string
@@ -138,6 +139,7 @@ type RuntimePermissions = {
 
 const markdownClassName = "text-[15px] leading-7 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
 const traceMarkdownClassName = "text-[13px] leading-6 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
+const traceNoteClassName = `${traceMarkdownClassName} font-semibold text-foreground`
 const messageClasses: Record<MessageRole, string> = {
   assistant: "",
   user: "ml-auto justify-end",
@@ -203,7 +205,7 @@ async function streamEvents(sessionId: string, text: string, mode: ModeKind, onE
 function groupTraceSteps(steps: TraceStep[]) {
   const groups: TraceGroup[] = []
   for (const step of steps) {
-    if (step.kind === "thought") {
+    if (step.kind !== "tool") {
       groups.push(step)
       continue
     }
@@ -287,8 +289,8 @@ function RunTrace({ trace }: { trace: RunTrace }) {
         <ChevronRight className="ml-auto size-[15px] transition-transform group-open/trace:rotate-90" aria-hidden="true" />
       </summary>
       <div className="mt-3 grid gap-3 border-t border-border pt-3">
-        {groups.length ? groups.map((group) => group.kind === "thought" ? (
-          <Streamdown className={traceMarkdownClassName} isAnimating={!trace.completedAt} key={group.id} mode={trace.completedAt ? "static" : "streaming"}>{group.text}</Streamdown>
+        {groups.length ? groups.map((group) => group.kind !== "tools" ? (
+          <Streamdown className={group.kind === "note" ? traceNoteClassName : traceMarkdownClassName} isAnimating={!trace.completedAt} key={group.id} mode={trace.completedAt ? "static" : "streaming"}>{group.text}</Streamdown>
         ) : (
           <ToolGroup key={`${group.id}:${group.tools.every((tool) => tool.state !== "running")}`} tools={group.tools} />
         )) : !trace.completedAt && (
@@ -796,8 +798,66 @@ export default function App() {
       [sessionId]: (current[sessionId] || 0) + 1,
     }))
     let roundMessageId: string | null = null
+    let roundNoteId: string | null = null
+    let roundReasoningId: string | null = null
     let roundText = ""
     let completed = false
+    const updateReasoning = (reasoning: string, replace = false) => {
+      if (!reasoning) return
+      if (replace) {
+        const fallbackThoughtId = id("trace-thought")
+        updateTrace((trace) => {
+          const targetIndex = roundReasoningId
+            ? trace.steps.findIndex((step) => step.kind === "thought" && step.id === roundReasoningId)
+            : [...trace.steps].reverse().findIndex((step) => step.kind === "thought")
+          const thoughtIndex = targetIndex >= 0 && roundReasoningId
+            ? targetIndex
+            : targetIndex >= 0
+              ? trace.steps.length - 1 - targetIndex
+              : -1
+          if (thoughtIndex >= 0) {
+            return {
+              ...trace,
+              responseStarted: false,
+              steps: trace.steps.map((step, index) => index === thoughtIndex && step.kind === "thought" ? { ...step, text: reasoning } : step),
+            }
+          }
+          return {
+            ...trace,
+            responseStarted: false,
+            steps: [...trace.steps, { id: fallbackThoughtId, kind: "thought", text: reasoning }],
+          }
+        })
+        return
+      }
+      const thoughtId = roundReasoningId || id("trace-thought")
+      const hasThought = Boolean(roundReasoningId)
+      roundReasoningId = thoughtId
+      updateTrace((trace) => ({
+        ...trace,
+        responseStarted: false,
+        steps: hasThought
+          ? trace.steps.map((step) => step.kind === "thought" && step.id === thoughtId
+            ? { ...step, text: step.text + reasoning }
+            : step)
+          : [...trace.steps, { id: thoughtId, kind: "thought", text: reasoning }],
+      }))
+    }
+    const updateNote = (note: string, replace = false) => {
+      if (!note) return
+      const noteId = roundNoteId || id("trace-note")
+      const hasNote = Boolean(roundNoteId)
+      roundNoteId = noteId
+      updateTrace((trace) => ({
+        ...trace,
+        responseStarted: false,
+        steps: hasNote
+          ? trace.steps.map((step) => step.kind === "note" && step.id === noteId
+            ? { ...step, text: replace ? note : step.text + note }
+            : step)
+          : [...trace.steps, { id: noteId, kind: "note", text: note }],
+      }))
+    }
     try {
       await streamEvents(sessionId, text, mode, (event) => {
         if (event.kind === "turn_started" && event.data.mode) {
@@ -807,11 +867,14 @@ export default function App() {
         }
         if (event.kind === "assistant_message") {
           if (event.data.delta) {
+            if (event.data.reasoning_delta) {
+              updateReasoning(event.text)
+              return
+            }
             roundText += event.text
             if (!roundMessageId) {
               const messageId = id("assistant")
               roundMessageId = messageId
-              updateTrace((trace) => ({ ...trace, responseStarted: true }))
               updateSessionMessages((current) => [...current, {
                 id: messageId,
                 role: "assistant",
@@ -831,7 +894,7 @@ export default function App() {
           }
           const responseText = event.text || roundText
           if (event.data.reasoning) {
-            updateTrace((trace) => ({ ...trace, steps: [...trace.steps, { id: id("trace-thought"), kind: "thought", text: event.data.reasoning! }] }))
+            updateReasoning(event.data.reasoning, true)
           }
           if (event.data.is_final) {
             updateTrace((trace) => ({ ...trace, responseStarted: true }))
@@ -855,15 +918,13 @@ export default function App() {
             const messageId = roundMessageId
             updateSessionMessages((current) => current.filter((message) => message.id !== messageId))
           }
-          updateTrace((trace) => ({
-            ...trace,
-            responseStarted: false,
-            steps: responseText ? [...trace.steps, { id: id("trace-thought"), kind: "thought", text: responseText }] : trace.steps,
-          }))
+          updateNote(responseText, true)
           roundMessageId = null
           roundText = ""
         }
         if (event.kind === "tool_call") {
+          roundNoteId = null
+          roundReasoningId = null
           const command = (event.data.arguments as { command?: unknown } | undefined)?.command
           updateTrace((trace) => ({
             ...trace,

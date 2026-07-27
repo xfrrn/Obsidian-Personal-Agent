@@ -40,6 +40,7 @@ class ModelClientSession:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         on_text_delta: TextDeltaHandler,
+        on_reasoning_delta: TextDeltaHandler | None = None,
     ) -> AssistantResponse:
         """流式读取文本，并在流结束后组合出完整的工具调用和 usage。"""
 
@@ -82,6 +83,8 @@ class ModelClientSession:
                             reasoning = _text_content(delta.get("reasoning_content")) or _text_content(delta.get("reasoning"))
                             if reasoning:
                                 reasoning_parts.append(reasoning)
+                                if on_reasoning_delta is not None:
+                                    await on_reasoning_delta(reasoning)
                             _merge_tool_call_deltas(delta.get("tool_calls"), tool_call_parts)
         except httpx.RequestError as exc:
             raise ClientError(f"无法连接模型端点: {exc}") from exc
