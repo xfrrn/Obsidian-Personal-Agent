@@ -5,20 +5,6 @@
   padding: 0;
 }
 
-.codex-agent-toolbar {
-  align-items: center;
-  border-bottom: 1px solid var(--background-modifier-border);
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: space-between;
-  padding: var(--size-4-2) var(--size-4-3);
-}
-
-.codex-agent-toolbar button {
-  font-size: var(--font-ui-smaller);
-  padding: var(--size-4-1) var(--size-4-2);
-}
-
 .codex-agent-frame {
   border: 0;
   flex: 1 1 auto;
@@ -26,7 +12,23 @@
   width: 100%;
 }
 
-.codex-agent-error {
-  color: var(--text-error);
+.codex-agent-disconnected {
+  align-items: center;
+  color: var(--text-muted);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  font-size: var(--font-ui-small);
+  gap: var(--size-4-2);
+  justify-content: center;
   padding: var(--size-4-4);
+  text-align: center;
+}
+
+.codex-agent-disconnected strong {
+  color: var(--text-normal);
+}
+
+.codex-agent-disconnected button {
+  margin-top: var(--size-4-2);
 }

@@ -22,7 +22,7 @@ from agent.core.handle import AgentHandle
 from agent.core.loop import start_agent
 from agent.core.turn.events import TurnEvent
 from agent.core.turn.public_events import PublicEventAdapter
-from agent.permissions import SandboxMode
+from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
 from agent.utils.logging import configure_logging
 from agent.web.metrics import AgentMetrics
@@ -88,6 +88,32 @@ class AgentRuntime:
             "sandbox_backend": self._settings.sandbox_backend.value,
             "sandbox_network": self._settings.sandbox_network.value,
         }
+
+    def configuration(self) -> dict[str, Any]:
+        """返回可由插件持久化的配置，绝不回传密钥正文。"""
+
+        return {
+            "api_key_configured": bool(self._settings.api_key),
+            "base_url": self._settings.base_url,
+            "model": self._settings.model,
+            "workspace": str(self._settings.workspace),
+            "sandbox_mode": self._settings.sandbox_mode.value,
+            "approval_policy": self._settings.approval_policy.value,
+            "shell_enabled": self._settings.shell_enabled,
+            "session_db_path": str(self._settings.session_db_path),
+        }
+
+    def update_configuration(self, settings: Settings) -> dict[str, Any]:
+        """在空闲边界替换冻结配置，后续会话使用新的模型、工具和工作区。"""
+
+        with self._request_lock:
+            if self._turn_events or self._metrics.snapshot()["active_turns"]:
+                raise RuntimeError("运行中的回合结束后才能应用配置")
+            self._call(self._shutdown())
+            self._settings = settings
+            self._store = SessionStore(settings.session_db_path)
+            self._default_session_id = None
+            return self.configuration()
 
     def update_permissions(self, sandbox_mode: SandboxMode) -> dict[str, Any]:
         """在空闲时替换全局权限，并重建已加载会话的冻结工具配置。"""
@@ -371,6 +397,12 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的固定方法名。
         path = urlparse(self.path).path
+        if path == "/api/config":
+            if not _is_loopback_client(self.client_address[0]):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "配置只允许本机读取"})
+                return
+            self._send_json(HTTPStatus.OK, self.server.runtime.configuration())
+            return
         if path == "/api/metrics":
             self._send_json(HTTPStatus.OK, self.server.runtime.metrics())
             return
@@ -427,6 +459,18 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的固定方法名。
         try:
             path = urlparse(self.path).path
+            if path == "/api/config":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "配置只允许从本机修改"})
+                    return
+                settings = _configuration_body(
+                    self._read_json_body(), self.server.runtime._settings
+                )
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.update_configuration(settings),
+                )
+                return
             if path == "/api/permissions":
                 if not _is_loopback_client(self.client_address[0]):
                     self._send_json(
@@ -605,6 +649,92 @@ def _permissions_body(body: dict[str, Any]) -> SandboxMode:
     ):
         raise ValueError("切换到 danger-full-access 必须显式确认")
     return sandbox_mode
+
+
+def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
+    allowed = {
+        "api_key",
+        "base_url",
+        "model",
+        "workspace",
+        "sandbox_mode",
+        "approval_policy",
+        "shell_enabled",
+        "session_db_path",
+        "confirmed",
+    }
+    if unknown := set(body) - allowed:
+        raise ValueError(f"未知配置字段: {', '.join(sorted(unknown))}")
+
+    api_key = body.get("api_key", current.api_key)
+    if api_key is not None and not isinstance(api_key, str):
+        raise ValueError("api_key 必须是字符串")
+
+    base_url = _required_config_text(body, "base_url", current.base_url)
+    parsed_url = urlparse(base_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
+        raise ValueError("base_url 必须是有效的 HTTP(S) 地址")
+    if parsed_url.username or parsed_url.password:
+        raise ValueError("base_url 不能包含用户名或密码")
+
+    model = _required_config_text(body, "model", current.model)
+    if len(model) > 200:
+        raise ValueError("model 不能超过 200 个字符")
+
+    workspace = Path(
+        _required_config_text(body, "workspace", str(current.workspace))
+    ).expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"workspace 不是目录: {workspace}")
+
+    sandbox_mode = SandboxMode.parse(
+        _required_config_text(body, "sandbox_mode", current.sandbox_mode.value)
+    )
+    if sandbox_mode is SandboxMode.DANGER_FULL_ACCESS and body.get("confirmed") is not True:
+        raise ValueError("danger-full-access 必须显式确认")
+    approval_policy = ApprovalPolicy.parse(
+        _required_config_text(body, "approval_policy", current.approval_policy.value)
+    )
+    shell_enabled = body.get("shell_enabled", current.shell_enabled)
+    if not isinstance(shell_enabled, bool):
+        raise ValueError("shell_enabled 必须是布尔值")
+
+    raw_session_db = body.get("session_db_path")
+    if raw_session_db is None or raw_session_db == "":
+        session_db_path = current.session_db_path
+    elif isinstance(raw_session_db, str):
+        session_db_path = Path(raw_session_db).expanduser().resolve()
+        if session_db_path.is_dir():
+            raise ValueError("session_db_path 必须是文件路径")
+    else:
+        raise ValueError("session_db_path 必须是字符串")
+
+    if (
+        shell_enabled
+        and sandbox_mode is not SandboxMode.DANGER_FULL_ACCESS
+        and current.sandbox_backend is not SandboxBackend.DISABLED
+        and current.sandbox_state_dir.is_relative_to(workspace)
+    ):
+        raise ValueError("沙盒状态目录必须位于工作区之外")
+
+    return replace(
+        current,
+        api_key=api_key.strip() or None if isinstance(api_key, str) else None,
+        base_url=base_url.rstrip("/"),
+        model=model,
+        workspace=workspace,
+        sandbox_mode=sandbox_mode,
+        approval_policy=approval_policy,
+        shell_enabled=shell_enabled,
+        session_db_path=session_db_path,
+    )
+
+
+def _required_config_text(body: dict[str, Any], key: str, fallback: str) -> str:
+    value = body.get(key, fallback)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} 必须是非空字符串")
+    return value.strip()
 
 
 def _is_loopback_client(host: str) -> bool:

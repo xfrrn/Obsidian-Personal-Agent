@@ -102,10 +102,10 @@ class EscalatingWebClient:
 
 
 class WebRuntimeTest(unittest.TestCase):
-    def test_page_displays_tool_call_arguments(self) -> None:
+    def test_unbuilt_frontend_fallback_has_no_second_agent_ui(self) -> None:
         page = (AGENT_ROOT / "web" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("argumentsText = JSON.stringify", page)
-        self.assertIn("entry.data?.is_final", page)
+        self.assertIn("npm run build:agent-ui", page)
+        self.assertNotIn("/api/messages", page)
 
     def test_frontend_keeps_session_navigation_enabled_while_a_turn_runs(self) -> None:
         app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
@@ -129,6 +129,15 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertIn('aria-label="沙盒权限"', app)
         self.assertIn('requestJson<RuntimePermissions>("/api/permissions"', app)
         self.assertIn('value="danger-full-access"', app)
+
+    def test_frontend_is_a_sidebar_chat_without_metrics_dashboard(self) -> None:
+        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+
+        self.assertIn("session-drawer", app)
+        self.assertIn("subscribeToObsidian", app)
+        self.assertIn("connection-banner", app)
+        self.assertNotIn('requestJson<Metrics>("/api/metrics"', app)
+        self.assertNotIn("function Monitor", app)
 
     def test_new_conversation_uses_a_fresh_agent_session(self) -> None:
         clients: list[RecordingClient] = []
@@ -257,7 +266,7 @@ class WebRuntimeTest(unittest.TestCase):
             address = f"http://127.0.0.1:{server.server_port}"
             try:
                 with urlopen(address) as response:
-                    self.assertIn("新对话", response.read().decode("utf-8"))
+                    self.assertIn("CodeX Agent", response.read().decode("utf-8"))
 
                 created = _post_json(f"{address}/api/new", {})
                 self.assertEqual(created.get("ok"), True)
@@ -417,6 +426,56 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertTrue(_is_loopback_client("127.0.0.1"))
         self.assertTrue(_is_loopback_client("::ffff:127.0.0.1"))
         self.assertFalse(_is_loopback_client("192.0.2.1"))
+
+    def test_http_configuration_reloads_runtime_without_exposing_api_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "vault"
+            workspace.mkdir()
+            runtime = AgentRuntime(_settings(root), RecordingClient)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            session_db = root / "configured" / "sessions.db"
+            try:
+                initial = _get_json(f"{address}/api/config")
+                updated = _post_json(
+                    f"{address}/api/config",
+                    {
+                        "api_key": "secret-value",
+                        "base_url": "https://example.com/v1/",
+                        "model": "configured-model",
+                        "workspace": str(workspace),
+                        "sandbox_mode": "read-only",
+                        "approval_policy": "never",
+                        "shell_enabled": False,
+                        "session_db_path": str(session_db),
+                        "confirmed": False,
+                    },
+                )
+                with self.assertRaises(HTTPError) as rejected:
+                    _post_json(
+                        f"{address}/api/config",
+                        {"sandbox_mode": "danger-full-access", "confirmed": False},
+                    )
+                created = _post_json(f"{address}/api/sessions", {})
+                db_created = session_db.is_file()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        self.assertFalse(initial["api_key_configured"])
+        self.assertTrue(updated["api_key_configured"])
+        self.assertNotIn("api_key", updated)
+        self.assertEqual(updated["model"], "configured-model")
+        self.assertEqual(updated["base_url"], "https://example.com/v1")
+        self.assertEqual(updated["sandbox_mode"], "read-only")
+        self.assertEqual(rejected.exception.code, 400)
+        self.assertEqual(created["workspace"], str(workspace))
+        self.assertTrue(db_created)
 
     def test_runtime_rejects_permission_switch_during_a_turn(self) -> None:
         started = ThreadEvent()

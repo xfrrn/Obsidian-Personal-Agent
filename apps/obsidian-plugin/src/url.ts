@@ -10,3 +10,11 @@ export function normalizeAgentUrl(value: string): string {
   }
   return url.origin;
 }
+
+export function normalizeApiBaseUrl(value: string): string {
+  const url = new URL(value.trim());
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("模型地址必须是无内嵌凭据的 HTTP 或 HTTPS 地址。");
+  }
+  return url.toString().replace(/\/$/, "");
+}

@@ -1,36 +1,32 @@
 import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Streamdown } from "streamdown"
 import {
-  Activity,
   Archive,
   Bot,
   CheckCircle2,
   ChevronRight,
   CircleAlert,
   CircleDot,
-  Clock3,
-  Command,
-  Gauge,
-  LayoutDashboard,
   Menu,
-  MessageSquareText,
-  MoreHorizontal,
   Moon,
-  PanelLeftClose,
-  Pencil,
   Plus,
+  RefreshCw,
   SendHorizontal,
   ShieldAlert,
-  Sparkles,
   Sun,
   Trash2,
-  Wrench,
-  ListX,
+  X,
 } from "lucide-react"
+import {
+  applyThemeTokens,
+  clearThemeTokens,
+  SandboxMode,
+  subscribeToObsidian,
+  ThemeMode,
+  updateObsidianSettings,
+} from "./obsidian-bridge"
 
-type Tab = "chat" | "monitor"
 type ModeKind = "default" | "plan"
-type SandboxMode = "read-only" | "workspace-write" | "danger-full-access"
 type MessageRole = "user" | "assistant" | "error" | "notice"
 type ToolState = "running" | "success" | "error" | "interrupted"
 type PlanStepStatus = "pending" | "in_progress" | "completed"
@@ -108,30 +104,6 @@ type TimelineEntry =
   | { kind: "message"; at: number; message: ChatMessage }
   | { kind: "trace"; at: number; trace: RunTrace }
 
-type Metrics = {
-  uptime_seconds: number
-  active_turns: number
-  turns: {
-    started: number
-    finished: number
-    errored: number
-    interrupted: number
-    average_latency_ms: number
-    last_latency_ms: number | null
-  }
-  tokens: { prompt: number; completion: number; total: number; requests: number; streamed_responses: number }
-  tools: {
-    calls: number
-    success: number
-    error: number
-    interrupted: number
-    success_rate: number
-    by_name: Record<string, { calls: number; success: number; error: number; interrupted: number; success_rate: number }>
-  }
-  skills: { invocations: number; by_name: Record<string, number> }
-  recent: Array<{ kind: string; text: string; at_ms: number }>
-}
-
 type RuntimePermissions = {
   sandbox_mode: SandboxMode
   approval_policy: "never" | "on-request"
@@ -140,17 +112,6 @@ type RuntimePermissions = {
   sandbox_network: string
 }
 
-const emptyMetrics: Metrics = {
-  uptime_seconds: 0,
-  active_turns: 0,
-  turns: { started: 0, finished: 0, errored: 0, interrupted: 0, average_latency_ms: 0, last_latency_ms: null },
-  tokens: { prompt: 0, completion: 0, total: 0, requests: 0, streamed_responses: 0 },
-  tools: { calls: 0, success: 0, error: 0, interrupted: 0, success_rate: 0, by_name: {} },
-  skills: { invocations: 0, by_name: {} },
-  recent: [],
-}
-
-const formatNumber = new Intl.NumberFormat("zh-CN")
 const markdownClassName = "text-[15px] leading-7 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
 const messageClasses: Record<MessageRole, string> = {
   assistant: "",
@@ -164,33 +125,8 @@ const messageBodyClasses: Record<MessageRole, string> = {
   notice: "w-full rounded border-l-2 border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground",
   error: "w-full rounded border-l-2 border-red-500 bg-muted px-3 py-2.5 text-xs text-red-600 dark:text-red-300",
 }
-const panelClassName = "rounded-[9px] border border-border bg-background p-5 max-[780px]:p-[17px]"
-const toolTableGridClassName = "grid min-w-[620px] grid-cols-[minmax(150px,1.5fr)_repeat(5,minmax(68px,.55fr))] items-center gap-2.5"
-
-function activityDotClass(kind: string) {
-  const color = ["success", "turn_finished", "llm_response"].includes(kind)
-    ? "bg-success"
-    : ["error", "turn_error"].includes(kind)
-      ? "bg-red-500"
-      : ["tool_requested", "turn_started"].includes(kind)
-        ? "bg-blue-500"
-        : "bg-zinc-400"
-  return `size-[7px] shrink-0 rounded-full ${color}`
-}
-
 function id(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`
-}
-
-function formatDuration(milliseconds: number | null) {
-  if (milliseconds === null) return "—"
-  return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`
-}
-
-function formatUptime(seconds: number) {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  return hours ? `${hours}小时 ${minutes}分` : `${minutes} 分钟`
 }
 
 function formatElapsed(seconds: number) {
@@ -237,18 +173,6 @@ async function streamEvents(sessionId: string, text: string, mode: ModeKind, onE
     }
     if (done) return
   }
-}
-
-function MetricCard({ icon: Icon, label, value, hint }: { icon: typeof Activity; label: string; value: string; hint: string }) {
-  return (
-    <section className="min-w-0 rounded-[9px] border border-border bg-background p-4 max-[440px]:p-[13px]">
-      <div className="flex items-center justify-between gap-2 text-xs font-semibold text-muted-foreground">
-        <span>{label}</span><Icon className="size-[15px]" aria-hidden="true" />
-      </div>
-      <strong className="mt-3.5 mb-[3px] block truncate text-[22px] tracking-[-.035em] text-foreground max-[440px]:text-[19px]">{value}</strong>
-      <small className="block truncate text-[11px] text-muted-foreground">{hint}</small>
-    </section>
-  )
 }
 
 function groupTraceSteps(steps: TraceStep[]) {
@@ -348,28 +272,28 @@ function RunTrace({ trace }: { trace: RunTrace }) {
 
 function PlanPanel({ plan }: { plan: PlanState }) {
   return (
-    <aside className="mx-auto mb-3 w-full max-w-[820px] rounded-[9px] border border-border bg-background px-4 py-3" aria-label="当前计划">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <strong className="text-[13px]">当前计划</strong>
-        <span className="text-[11px] text-muted-foreground">{plan.plan.filter(({ status }) => status === "completed").length}/{plan.plan.length}</span>
-      </div>
-      {plan.explanation && <p className="mt-0 mb-2 text-xs text-muted-foreground">{plan.explanation}</p>}
-      <ol className="m-0 grid list-none gap-1.5 p-0">
+    <details className="agent-plan" aria-label="当前计划">
+      <summary>
+        <strong>当前计划</strong>
+        <span>{plan.plan.filter(({ status }) => status === "completed").length}/{plan.plan.length}</span>
+        <ChevronRight aria-hidden="true" />
+      </summary>
+      {plan.explanation && <p>{plan.explanation}</p>}
+      <ol>
         {plan.plan.map((item, index) => (
-          <li className={`flex gap-2 text-[13px] ${item.status === "completed" ? "text-muted-foreground line-through" : item.status === "in_progress" ? "font-semibold text-cyan-700 dark:text-cyan-400" : "text-muted-foreground"}`} key={`${index}:${item.step}`}>
-            <span className="w-3.5 shrink-0 text-center" aria-hidden="true">{item.status === "completed" ? "✓" : item.status === "in_progress" ? "→" : "·"}</span>
+          <li data-status={item.status} key={`${index}:${item.step}`}>
+            <span aria-hidden="true">{item.status === "completed" ? "✓" : item.status === "in_progress" ? "→" : "·"}</span>
             <span>{item.step}</span>
           </li>
         ))}
       </ol>
-    </aside>
+    </details>
   )
 }
 
 function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onResolveApproval, onSend }: { messages: ChatMessage[]; traces: RunTrace[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind) => Promise<void> }) {
   const [input, setInput] = useState("")
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([])
-  const [openQueueMenu, setOpenQueueMenu] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const timeline: TimelineEntry[] = [
     ...messages.map((message) => ({ kind: "message" as const, at: message.createdAt, message })),
@@ -395,19 +319,11 @@ function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onR
 
   const guideMessage = async (message: QueuedMessage) => {
     setQueuedMessages((messages) => messages.filter(({ id }) => id !== message.id))
-    setOpenQueueMenu(null)
     await onSend(message.text, message.mode)
-  }
-
-  const editQueuedMessage = (message: QueuedMessage) => {
-    setInput(message.text)
-    setQueuedMessages((messages) => messages.filter(({ id }) => id !== message.id))
-    setOpenQueueMenu(null)
   }
 
   const removeQueuedMessage = (messageId: string) => {
     setQueuedMessages((messages) => messages.filter(({ id }) => id !== messageId))
-    setOpenQueueMenu(null)
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -418,10 +334,10 @@ function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onR
   }
 
   return (
-    <div className="flex h-[calc(100vh-166px)] min-h-[460px] flex-col overflow-hidden max-[780px]:h-[calc(100vh-148px)]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {plan && <PlanPanel plan={plan} />}
       <section className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
-        <div className="mx-auto min-h-full w-full max-w-[820px] px-7 pt-[26px] pb-9 max-[780px]:px-4 max-[780px]:pt-[18px] max-[780px]:pb-7">
+        <div className="mx-auto min-h-full w-full max-w-[820px] px-4 pt-5 pb-7">
           {messages.length === 0 && (
             <div className="mx-auto my-[13vh] max-w-[390px] text-center text-muted-foreground">
               <div className="mx-auto mb-[15px] grid size-10 place-items-center rounded-full border border-border bg-background text-foreground">
@@ -451,7 +367,7 @@ function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onR
         </div>
       </section>
       {approvals.length > 0 && (
-        <section className="mx-auto grid w-full max-w-[820px] gap-2 px-7 pb-1 max-[780px]:px-4" aria-label="待审批请求">
+        <section className="mx-auto grid w-full max-w-[820px] gap-2 px-4 pb-1" aria-label="待审批请求">
           {approvals.map((approval) => (
             <article className="rounded-[10px] border border-border bg-background p-3.5 shadow-[0_4px_14px_rgb(0_0_0/.035)]" key={approval.callId}>
               <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold"><ShieldAlert className="size-4 text-amber-600" aria-hidden="true" />需要批准 {approval.toolName}</div>
@@ -467,26 +383,19 @@ function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onR
         </section>
       )}
       {queuedMessages.length > 0 && (
-        <section className="mx-auto grid w-full max-w-[820px] gap-2 px-7 pb-1 max-[780px]:px-4" aria-label="待引导消息">
+        <section className="mx-auto grid w-full max-w-[820px] gap-2 px-4 pb-1" aria-label="待引导消息">
           {queuedMessages.map((message) => (
             <article className="relative flex min-h-[52px] items-center gap-3 rounded-[10px] border border-border bg-background py-[9px] pr-2.5 pl-3.5 shadow-[0_4px_14px_rgb(0_0_0/.035)] before:text-[15px] before:text-muted-foreground before:content-['⠿']" key={message.id}>
               <p className="m-0 min-w-0 flex-1 truncate text-sm leading-[1.45] text-foreground">{message.text}</p>
-              <div className="relative flex shrink-0 items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <button className="cursor-pointer rounded-md bg-transparent px-2 py-1.5 text-[13px] font-semibold text-muted-foreground hover:bg-accent hover:text-foreground" type="button" onClick={() => void guideMessage(message)}>引导</button>
                 <button className="grid size-[30px] cursor-pointer place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground [&>svg]:size-4" type="button" title="删除排队消息" aria-label="删除排队消息" onClick={() => removeQueuedMessage(message.id)}><Trash2 /></button>
-                <button className="grid size-[30px] cursor-pointer place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground [&>svg]:size-4" type="button" title="更多操作" aria-label="更多操作" aria-expanded={openQueueMenu === message.id} onClick={() => setOpenQueueMenu((current) => current === message.id ? null : message.id)}><MoreHorizontal /></button>
-                {openQueueMenu === message.id && (
-                  <div className="absolute top-[calc(100%+6px)] right-0 z-[2] grid min-w-[142px] rounded-lg border border-border bg-background p-1 shadow-[0_10px_24px_rgb(0_0_0/.14)]" role="menu">
-                    <button className="flex cursor-pointer items-center gap-2 rounded-[5px] bg-transparent p-2 text-left text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground [&>svg]:size-[15px]" role="menuitem" type="button" onClick={() => editQueuedMessage(message)}><Pencil />编辑消息</button>
-                    <button className="flex cursor-pointer items-center gap-2 rounded-[5px] bg-transparent p-2 text-left text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground [&>svg]:size-[15px]" role="menuitem" type="button" onClick={() => removeQueuedMessage(message.id)}><ListX />关闭排队</button>
-                  </div>
-                )}
               </div>
             </article>
           ))}
         </section>
       )}
-      <form className="bg-[var(--page)] px-7 pt-3 pb-7 max-[780px]:px-4 max-[780px]:pt-2.5 max-[780px]:pb-[18px]" onSubmit={submit}>
+      <form className="bg-[var(--page)] px-3 pt-2.5 pb-3" onSubmit={submit}>
         <div className="mx-auto w-full max-w-[820px] rounded-xl border border-border bg-background px-3.5 pt-[13px] pb-2.5 shadow-[0_8px_24px_rgb(0_0_0/.04)]">
           <textarea
             className="min-h-[58px] w-full resize-y border-0 bg-transparent p-0 leading-normal text-foreground outline-0 placeholder:text-muted-foreground"
@@ -516,81 +425,11 @@ function Chat({ messages, traces, approvals, busy, mode, plan, onModeChange, onR
   )
 }
 
-function Monitor({ metrics }: { metrics: Metrics }) {
-  const skills = Object.entries(metrics.skills.by_name)
-  const tools = Object.entries(metrics.tools.by_name)
-  const completedTools = metrics.tools.success + metrics.tools.error
-
-  return (
-    <div className="grid gap-[18px]">
-      <div className="grid grid-cols-6 gap-3 max-[1150px]:grid-cols-3 max-[780px]:grid-cols-2 max-[780px]:gap-2.5">
-        <MetricCard icon={Command} label="累计 Token" value={formatNumber.format(metrics.tokens.total)} hint={`${formatNumber.format(metrics.tokens.prompt)} 输入 · ${formatNumber.format(metrics.tokens.completion)} 输出`} />
-        <MetricCard icon={Activity} label="运行中回合" value={String(metrics.active_turns)} hint={`累计启动 ${metrics.turns.started} 个回合`} />
-        <MetricCard icon={Wrench} label="工具调用" value={String(metrics.tools.calls)} hint={`${metrics.tools.success} 成功 · ${metrics.tools.error} 失败`} />
-        <MetricCard icon={CheckCircle2} label="工具成功率" value={`${metrics.tools.success_rate}%`} hint={completedTools ? `${completedTools} 次已完成调用` : "暂无已完成调用"} />
-        <MetricCard icon={Sparkles} label="Skill 调用" value={String(metrics.skills.invocations)} hint="按显式注入 Skill 统计" />
-        <MetricCard icon={Clock3} label="平均回合耗时" value={formatDuration(metrics.turns.average_latency_ms)} hint={`最近一次 ${formatDuration(metrics.turns.last_latency_ms)}`} />
-      </div>
-
-      <div className="grid grid-cols-[1.25fr_.75fr] gap-[18px] max-[780px]:grid-cols-1 max-[780px]:gap-3">
-        <section className={panelClassName}>
-          <div className="mb-[22px] flex justify-between gap-4">
-            <div><h2 className="mb-[5px] text-[15px] tracking-[-.02em]">模型与工具</h2><p className="m-0 text-[13px] leading-normal text-muted-foreground">服务端返回 usage 时才计入 Token。</p></div>
-            <Gauge className="size-[17px] text-muted-foreground" aria-hidden="true" />
-          </div>
-          <div className="flex justify-between text-[13px] text-muted-foreground"><span>工具成功率</span><strong className="text-foreground">{metrics.tools.success_rate}%</strong></div>
-          <div className="my-2.5 mb-5 h-[7px] overflow-hidden rounded-full bg-accent"><i className="block h-full min-w-0 rounded-[inherit] bg-foreground transition-[width] duration-250" style={{ width: `${metrics.tools.success_rate}%` }} /></div>
-          <dl className="m-0 grid grid-cols-2 gap-3">
-            <div className="flex justify-between border-t border-border pt-[11px]"><dt className="text-xs text-muted-foreground">模型请求</dt><dd className="m-0 text-[13px] font-semibold">{metrics.tokens.requests}</dd></div>
-            <div className="flex justify-between border-t border-border pt-[11px]"><dt className="text-xs text-muted-foreground">流式响应</dt><dd className="m-0 text-[13px] font-semibold">{metrics.tokens.streamed_responses}</dd></div>
-            <div className="flex justify-between border-t border-border pt-[11px]"><dt className="text-xs text-muted-foreground">工具中断</dt><dd className="m-0 text-[13px] font-semibold">{metrics.tools.interrupted}</dd></div>
-            <div className="flex justify-between border-t border-border pt-[11px]"><dt className="text-xs text-muted-foreground">失败回合</dt><dd className="m-0 text-[13px] font-semibold">{metrics.turns.errored}</dd></div>
-          </dl>
-        </section>
-        <section className={panelClassName}>
-          <div className="mb-[22px] flex justify-between gap-4">
-            <div><h2 className="mb-[5px] text-[15px] tracking-[-.02em]">Skill 使用</h2><p className="m-0 text-[13px] leading-normal text-muted-foreground">仅统计用户显式提及并注入模型上下文的 Skill。</p></div>
-            <Sparkles className="size-[17px] text-muted-foreground" aria-hidden="true" />
-          </div>
-          {skills.length
-            ? <ul className="m-0 list-none p-0">{skills.map(([name, count]) => <li className="flex items-center justify-between border-t border-border py-2.5 text-[13px]" key={name}><code className="font-mono">${name}</code><span className="text-xs text-muted-foreground">{count} 次</span></li>)}</ul>
-            : <p className="m-0 text-[13px] text-muted-foreground">当前还没有使用 Skill。</p>}
-        </section>
-      </div>
-
-      <section className={panelClassName}>
-        <div className="mb-[22px] flex justify-between gap-4">
-          <div><h2 className="mb-[5px] text-[15px] tracking-[-.02em]">工具调用明细</h2><p className="m-0 text-[13px] leading-normal text-muted-foreground">按工具名统计调用次数、结果和成功率。</p></div>
-          <Wrench className="size-[17px] text-muted-foreground" aria-hidden="true" />
-        </div>
-        {tools.length ? (
-          <div className="overflow-x-auto" role="table" aria-label="工具调用明细">
-            <div className={`${toolTableGridClassName} pb-[9px] text-[11px] font-semibold text-muted-foreground`} role="row"><span>工具</span><span>调用</span><span>成功</span><span>失败</span><span>中断</span><span>成功率</span></div>
-            {tools.map(([name, tool]) => <div className={`${toolTableGridClassName} border-t border-border py-[11px] text-[13px] text-muted-foreground`} role="row" key={name}><code className="font-mono text-foreground">{name}</code><span>{tool.calls}</span><span>{tool.success}</span><span>{tool.error}</span><span>{tool.interrupted}</span><strong className="text-foreground">{tool.success_rate}%</strong></div>)}
-          </div>
-        ) : <p className="m-0 text-[13px] text-muted-foreground">当前还没有工具调用。</p>}
-      </section>
-
-      <section className={`${panelClassName} min-h-[215px]`}>
-        <div className="mb-[22px] flex justify-between gap-4">
-          <div><h2 className="mb-[5px] text-[15px] tracking-[-.02em]">运行事件</h2><p className="m-0 text-[13px] leading-normal text-muted-foreground">只保留最近 20 条安全元数据，不包含提示词或工具输出。</p></div>
-          <Activity className="size-[17px] text-muted-foreground" aria-hidden="true" />
-        </div>
-        {metrics.recent.length
-          ? <ul className="m-0 grid list-none gap-[11px] p-0">{metrics.recent.map((event, index) => <li className="flex items-center gap-2.5 text-[13px] text-muted-foreground" key={`${event.at_ms}-${index}`}><span className={activityDotClass(event.kind)} /><span>{event.text}</span></li>)}</ul>
-          : <p className="m-0 text-[13px] text-muted-foreground">等待 Agent 开始运行。</p>}
-      </section>
-    </div>
-  )
-}
-
 export default function App() {
-  const [tab, setTab] = useState<Tab>("chat")
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [traces, setTraces] = useState<RunTrace[]>([])
-  const [metrics, setMetrics] = useState<Metrics>(emptyMetrics)
   const [permissions, setPermissions] = useState<RuntimePermissions | null>(null)
   const [runningTurns, setRunningTurns] = useState<Record<string, number>>({})
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest[]>>({})
@@ -598,19 +437,17 @@ export default function App() {
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null)
   const [updatingPermissions, setUpdatingPermissions] = useState(false)
   const [conversationVersion, setConversationVersion] = useState(0)
-  const [dark, setDark] = useState(false)
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem("codex-agent-theme")
+    return saved === "light" || saved === "dark" ? saved : "system"
+  })
+  const [hostDark, setHostDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches)
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+  const [connectionState, setConnectionState] = useState<"connecting" | "online" | "offline">("connecting")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const initialized = useRef(false)
   const activeConversationIdRef = useRef<string | null>(null)
   const conversationViews = useRef<Record<string, ConversationView>>({})
-
-  const refreshMetrics = async () => {
-    try {
-      setMetrics(await requestJson<Metrics>("/api/metrics"))
-    } catch {
-      // 指标拉取失败不应中断正在进行的对话。
-    }
-  }
 
   const refreshPermissions = async () => {
     try {
@@ -668,9 +505,12 @@ export default function App() {
       setTraces([])
       setConversationVersion((version) => version + 1)
       setSidebarOpen(false)
-      await refreshMetrics()
+      setConnectionState("online")
+      return true
     } catch (error) {
+      setConnectionState("offline")
       setMessages([{ id: id("error"), role: "error", text: error instanceof Error ? error.message : "无法创建新对话", createdAt: Date.now() }])
+      return false
     } finally {
       setCreatingConversation(false)
     }
@@ -739,28 +579,39 @@ export default function App() {
     }
   }
 
+  const initialize = async () => {
+    setConnectionState("connecting")
+    try {
+      const existing = await refreshConversations()
+      if (existing.length) await openConversation(existing[0].id)
+      else if (!await newConversation()) return
+      void refreshPermissions()
+      setConnectionState("online")
+    } catch (error) {
+      setConnectionState("offline")
+      setMessages([{ id: id("error"), role: "error", text: error instanceof Error ? error.message : "无法连接 Agent", createdAt: Date.now() }])
+    }
+  }
+
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true
-      void (async () => {
-        try {
-          const existing = await refreshConversations()
-          if (existing.length) await openConversation(existing[0].id)
-          else await newConversation()
-        } catch (error) {
-          setMessages([{ id: id("error"), role: "error", text: error instanceof Error ? error.message : "无法加载会话", createdAt: Date.now() }])
-        }
-      })()
+      void initialize()
     }
-    void refreshMetrics()
-    void refreshPermissions()
-    const timer = window.setInterval(() => void refreshMetrics(), 3_000)
-    return () => window.clearInterval(timer)
+    return subscribeToObsidian((state) => {
+      if (state.theme.mode === "system") applyThemeTokens(state.theme.tokens)
+      else clearThemeTokens()
+      setHostDark(state.theme.isDark)
+      setThemeMode(state.theme.mode)
+      setActiveFile(state.context.activeFile)
+    })
   }, [])
 
+  const dark = themeMode === "system" ? hostDark : themeMode === "dark"
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
-  }, [dark])
+    localStorage.setItem("codex-agent-theme", themeMode)
+  }, [dark, themeMode])
 
   const sendMessage = async (text: string, mode: ModeKind) => {
     const sessionId = activeConversationId
@@ -942,13 +793,7 @@ export default function App() {
         return next
       })
       void refreshConversations()
-      void refreshMetrics()
     }
-  }
-
-  const switchTab = (next: Tab) => {
-    setTab(next)
-    setSidebarOpen(false)
   }
 
   const busy = activeConversationId !== null && Boolean(runningTurns[activeConversationId])
@@ -968,10 +813,12 @@ export default function App() {
 
     setUpdatingPermissions(true)
     try {
-      setPermissions(await requestJson<RuntimePermissions>("/api/permissions", {
+      const updated = await requestJson<RuntimePermissions>("/api/permissions", {
         sandbox_mode: sandboxMode,
         confirmed: sandboxMode === "danger-full-access",
-      }))
+      })
+      setPermissions(updated)
+      updateObsidianSettings({ sandboxMode: updated.sandbox_mode })
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "无法切换权限")
     } finally {
@@ -984,31 +831,61 @@ export default function App() {
       conversation.id === activeConversationId ? { ...conversation, mode } : conversation
     ))
   }
+  const toggleTheme = () => {
+    const next: ThemeMode = dark ? "light" : "dark"
+    clearThemeTokens()
+    setThemeMode(next)
+    updateObsidianSettings({ themeMode: next })
+  }
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false)
+    }
+    window.addEventListener("keydown", closeOnEscape)
+    return () => window.removeEventListener("keydown", closeOnEscape)
+  }, [sidebarOpen])
 
   return (
-    <div className="flex min-h-screen min-w-80 bg-[var(--page)] font-sans text-foreground [--accent:#eaeae7] [--background:#fff] [--border:#dfdfdb] [--card:#fff] [--card-foreground:#20201e] [--foreground:#20201e] [--input:#dfdfdb] [--muted:#f1f1ef] [--muted-foreground:#73736f] [--page:#f7f7f5] [--primary:#20201e] [--primary-foreground:#fff] [--radius:0.625rem] [--success:#23865a] [color-scheme:light] dark:[--accent:#30302d] dark:[--background:#1f1f1d] dark:[--border:#373733] dark:[--card:#1f1f1d] dark:[--card-foreground:#f4f4f0] dark:[--foreground:#f4f4f0] dark:[--input:#373733] dark:[--muted:#292927] dark:[--muted-foreground:#a7a7a1] dark:[--page:#171716] dark:[--primary:#f4f4f0] dark:[--primary-foreground:#1d1d1b] dark:[--success:#58c98a] dark:[color-scheme:dark]">
-      <button className="fixed top-3.5 left-3.5 z-[4] hidden size-9 place-items-center rounded-[7px] border border-border bg-background text-foreground max-[780px]:grid [&>svg]:size-[17px]" onClick={() => setSidebarOpen((open) => !open)} type="button" aria-label="切换导航"><Menu /></button>
-      <aside className={`flex min-h-screen w-64 shrink-0 flex-col border-r border-border bg-background max-[780px]:fixed max-[780px]:top-0 max-[780px]:left-0 max-[780px]:z-10 max-[780px]:transition-transform max-[780px]:duration-200 ${sidebarOpen ? "max-[780px]:translate-x-0 max-[780px]:shadow-[12px_0_30px_rgb(0_0_0/.12)]" : "max-[780px]:-translate-x-full"}`}>
-        <div className="flex h-16 items-center gap-[11px] border-b border-border px-5 text-[17px] font-semibold tracking-[-.02em]">
-          <div className="grid size-[30px] place-items-center rounded-lg bg-primary text-primary-foreground"><Command className="w-[17px]" /></div>
-          <span>Agent Console</span>
-          <button className="ml-auto hidden bg-transparent text-muted-foreground max-[780px]:inline-flex" type="button" onClick={() => setSidebarOpen(false)} aria-label="收起导航"><PanelLeftClose /></button>
+    <div className="agent-shell">
+      <header className="agent-toolbar">
+        <button className="agent-icon-button" onClick={() => setSidebarOpen(true)} type="button" aria-label="打开会话列表"><Menu /></button>
+        <div className="agent-title" title={activeConversation?.title}>
+          <strong>{activeConversation?.title || "CodeX Agent"}</strong>
+          <span>{activeFile || (connectionState === "online" ? "当前知识库" : "Agent 未连接")}</span>
         </div>
-        <nav className="p-6 px-3">
-          <p className="mx-2 mt-0 mb-2 text-[11px] font-bold tracking-[.075em] text-muted-foreground uppercase">工作台</p>
-          <button className={`flex w-full cursor-pointer items-center gap-3 rounded-[7px] p-2.5 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [&>svg]:size-[17px] ${tab === "chat" ? "bg-accent text-foreground" : ""}`} onClick={() => switchTab("chat")} type="button"><MessageSquareText />对话</button>
-          <button className={`flex w-full cursor-pointer items-center gap-3 rounded-[7px] p-2.5 text-left text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [&>svg]:size-[17px] ${tab === "monitor" ? "bg-accent text-foreground" : ""}`} onClick={() => switchTab("monitor")} type="button"><LayoutDashboard />运行监控</button>
-        </nav>
-        <section className="min-h-0 flex-1 border-t border-border px-3 py-4">
-          <p className="mx-2 mt-0 mb-2 text-[11px] font-bold tracking-[.075em] text-muted-foreground uppercase">会话</p>
-          <div className="grid max-h-full gap-1 overflow-y-auto">
+        <select
+          className="agent-permission"
+          aria-label="沙盒权限"
+          disabled={!permissions || updatingPermissions || anyBusy}
+          onChange={(event) => void changeSandboxMode(event.target.value as SandboxMode)}
+          title={permissions ? `审批：${permissions.approval_policy} · 网络：${permissions.sandbox_network}` : "权限接口不可用"}
+          value={permissions?.sandbox_mode || ""}
+        >
+          {!permissions && <option value="">权限</option>}
+          <option value="read-only">只读</option>
+          <option value="workspace-write">可写</option>
+          <option value="danger-full-access">完全</option>
+        </select>
+        <button type="button" className="agent-icon-button" onClick={toggleTheme} aria-label={dark ? "切换到亮色" : "切换到暗色"} title={themeMode === "system" ? "当前跟随 Obsidian；点击后固定主题" : "切换主题"}>{dark ? <Sun /> : <Moon />}</button>
+        <button type="button" className="agent-icon-button" onClick={() => void newConversation()} disabled={creatingConversation} aria-label="新对话"><Plus /></button>
+      </header>
+
+      <aside className={`session-drawer ${sidebarOpen ? "is-open" : ""}`} aria-hidden={!sidebarOpen}>
+        <div className="session-drawer-header">
+          <strong>会话</strong>
+          <button className="agent-icon-button" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭会话列表"><X /></button>
+        </div>
+        <section className="session-list">
+          <div>
             {conversations.map((conversation) => {
               const running = Boolean(runningTurns[conversation.id])
               const archiving = archivingConversationId === conversation.id
               return (
-                <div className={`group flex items-center rounded-[7px] transition-colors hover:bg-accent ${conversation.id === activeConversationId ? "bg-accent" : ""}`} key={conversation.id}>
+                <div className={`session-row ${conversation.id === activeConversationId ? "is-active" : ""}`} key={conversation.id}>
                   <button
-                    className={`min-w-0 flex-1 truncate bg-transparent px-2.5 py-2 text-left text-[13px] hover:text-foreground ${conversation.id === activeConversationId ? "font-semibold text-foreground" : "text-muted-foreground"}`}
+                    className="session-open"
                     onClick={() => void openConversation(conversation.id)}
                     title={conversation.title}
                     type="button"
@@ -1016,7 +893,7 @@ export default function App() {
                     {conversation.title}
                   </button>
                   <button
-                    className="mr-1 grid size-7 shrink-0 place-items-center rounded-md bg-transparent text-muted-foreground opacity-0 hover:bg-background hover:text-foreground focus-visible:opacity-100 disabled:cursor-not-allowed disabled:opacity-30 group-hover:opacity-100 max-[780px]:opacity-100 [&>svg]:size-[14px]"
+                    className="session-archive"
                     disabled={running || archiving}
                     onClick={() => void archiveConversation(conversation)}
                     title={running ? "运行中的会话不能归档" : "归档会话"}
@@ -1030,42 +907,18 @@ export default function App() {
             })}
           </div>
         </section>
-        <div className="mt-auto flex items-center gap-[9px] border-t border-border px-[22px] py-[17px] text-xs text-muted-foreground"><span className={`size-2 rounded-full bg-success ${anyBusy ? "animate-pulse" : ""}`} /><span>{anyBusy ? `${runningConversationCount} 个会话运行中` : "Agent 就绪"}</span></div>
+        <div className="agent-status"><span data-state={connectionState} className={anyBusy ? "is-busy" : ""} /><span>{connectionState === "offline" ? "Agent 未连接" : anyBusy ? `${runningConversationCount} 个会话运行中` : connectionState === "connecting" ? "正在连接" : "Agent 就绪"}</span></div>
       </aside>
-      {sidebarOpen && <button className="fixed inset-0 z-[8] hidden bg-black/42 max-[780px]:block" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭导航" />}
-      <main className="min-w-0 flex-1">
-        <header className="flex h-16 items-center justify-between border-b border-border bg-background px-6 max-[780px]:pr-4 max-[780px]:pl-[62px]">
-          <div className="flex items-center gap-[7px] text-sm max-[780px]:hidden"><span className="text-muted-foreground">Agent Console</span><ChevronRight className="size-[15px] text-muted-foreground" /><strong className="font-medium">{tab === "chat" ? "对话" : "运行监控"}</strong></div>
-          <div className="flex items-center gap-2 max-[780px]:ml-auto">
-            <select
-              className="h-9 rounded-[7px] border border-border bg-background px-2 text-xs font-semibold text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="沙盒权限"
-              disabled={!permissions || updatingPermissions || anyBusy}
-              onChange={(event) => void changeSandboxMode(event.target.value as SandboxMode)}
-              title={permissions ? `审批：${permissions.approval_policy} · 网络：${permissions.sandbox_network}` : "权限接口不可用"}
-              value={permissions?.sandbox_mode || ""}
-            >
-              {!permissions && <option value="">权限不可用</option>}
-              <option value="read-only">只读</option>
-              <option value="workspace-write">工作区写入</option>
-              <option value="danger-full-access">完全访问</option>
-            </select>
-            <button type="button" className="inline-flex size-9 cursor-pointer items-center justify-center rounded-[7px] bg-transparent text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [&>svg]:size-4" onClick={() => setDark((value) => !value)} aria-label="切换主题">{dark ? <Sun /> : <Moon />}</button>
-            <button type="button" className="inline-flex cursor-pointer items-center justify-center gap-[7px] rounded-[7px] border border-border bg-transparent px-[11px] py-[9px] text-[13px] font-semibold text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 max-[440px]:size-9 max-[440px]:p-0 [&>svg]:size-4" onClick={() => void newConversation()} disabled={creatingConversation} aria-label="新对话"><Plus /><span className="max-[440px]:hidden">新对话</span></button>
+      {sidebarOpen && <button className="session-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭会话列表" />}
+
+      <main className="agent-main">
+        {connectionState === "offline" && (
+          <div className="connection-banner" role="alert">
+            <span>无法连接本地 Agent。</span>
+            <button type="button" onClick={() => void initialize()}><RefreshCw />重连</button>
           </div>
-        </header>
-        <div className="mx-auto max-w-[1160px] p-7 max-[780px]:px-4 max-[780px]:py-6">
-          <div className="mb-6 flex items-start justify-between gap-4 max-[780px]:mb-[17px]">
-            <div><h1 className="mt-0 mb-[7px] text-2xl tracking-[-.035em] max-[780px]:text-[21px]">{tab === "chat" ? activeConversation?.title || "与 Agent 协作" : "Agent 运行监控"}</h1><p className="m-0 text-[13px] leading-normal text-muted-foreground">{tab === "chat" ? "流式接收模型回答，工具调用在同一时间线中可见。" : `进程已运行 ${formatUptime(metrics.uptime_seconds)}，每 3 秒自动刷新。`}</p></div>
-            <span className={`mt-1 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground before:size-1.5 before:rounded-full before:bg-success before:content-[''] ${busy ? "before:animate-pulse" : ""}`}>{busy ? "生成中" : "实时"}</span>
-          </div>
-          <div className={tab === "chat" ? "" : "hidden"}>
-            <Chat key={conversationVersion} messages={messages} traces={traces} approvals={activeConversationId ? pendingApprovals[activeConversationId] || [] : []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => activeConversationId ? resolveApproval(activeConversationId, approval, approved) : Promise.resolve()} onSend={sendMessage} />
-          </div>
-          <div className={tab === "monitor" ? "" : "hidden"}>
-            <Monitor metrics={metrics} />
-          </div>
-        </div>
+        )}
+        <Chat key={conversationVersion} messages={messages} traces={traces} approvals={activeConversationId ? pendingApprovals[activeConversationId] || [] : []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => activeConversationId ? resolveApproval(activeConversationId, approval, approved) : Promise.resolve()} onSend={sendMessage} />
       </main>
     </div>
   )

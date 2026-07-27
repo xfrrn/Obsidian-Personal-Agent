@@ -3,164 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agent MVP</title>
+  <title>CodeX Agent</title>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: Canvas; color: CanvasText; }
-    .app { max-width: 760px; min-height: 100vh; margin: auto; display: grid; grid-template-rows: auto 1fr auto; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
-    h1 { margin: 0; font-size: 1.15rem; }
-    #messages { margin: 0; padding: 1rem; list-style: none; overflow-y: auto; }
-    .message { max-width: 85%; margin: .55rem 0; padding: .65rem .8rem; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: .5rem; background: color-mix(in srgb, CanvasText 8%, transparent); }
-    .user { margin-left: auto; background: color-mix(in srgb, Highlight 42%, transparent); }
-    .status { font-size: .85rem; color: color-mix(in srgb, CanvasText 70%, transparent); }
-    form { display: flex; gap: .6rem; padding: 1rem; border-top: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
-    textarea { flex: 1; min-height: 2.6rem; resize: vertical; font: inherit; padding: .55rem; }
-    button { align-self: end; font: inherit; padding: .55rem .8rem; cursor: pointer; }
+    body { align-items: center; display: flex; justify-content: center; margin: 0; min-height: 100vh; }
+    main { max-width: 26rem; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.1rem; }
+    p { opacity: .72; }
+    code { font-size: .85em; }
   </style>
 </head>
 <body>
-  <main class="app">
-    <header>
-      <h1>Agent MVP</h1>
-      <button id="new-chat" type="button">新对话</button>
-    </header>
-    <ol id="messages" aria-live="polite"></ol>
-    <form id="chat-form">
-      <textarea id="input" maxlength="20000" placeholder="输入消息…" aria-label="消息"></textarea>
-      <button id="send" type="submit">发送</button>
-    </form>
+  <main>
+    <h1>CodeX Agent 前端尚未构建</h1>
+    <p>请在仓库根目录运行 <code>npm run build:agent-ui</code>，然后重新加载。</p>
   </main>
-  <script>
-    const messages = document.querySelector('#messages');
-    const form = document.querySelector('#chat-form');
-    const input = document.querySelector('#input');
-    const newChat = document.querySelector('#new-chat');
-    const send = document.querySelector('#send');
-    let busy = false;
-    let activeTurns = 0;
-
-    function refreshControls() {
-      busy = activeTurns > 0;
-      // 生成中仍允许提交；新的 UserInput 会取消旧 turn 并成为下一轮上下文。
-      input.disabled = false;
-      send.disabled = false;
-      newChat.disabled = busy;
-    }
-
-    function addMessage(role, text) {
-      const item = document.createElement('li');
-      item.className = `message ${role}`;
-      // 用 textContent 保留模型文本的纯文本语义，不把它当作可执行 HTML。
-      item.textContent = text;
-      messages.append(item);
-      item.scrollIntoView({ block: 'end' });
-      return item;
-    }
-
-    async function api(path, body) {
-      const response = await fetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
-      return data;
-    }
-
-    async function startNewChat() {
-      if (busy) return;
-      newChat.disabled = true;
-      messages.replaceChildren();
-      try {
-        await api('/api/new');
-        addMessage('status', '已开启新对话。');
-        input.focus();
-      } catch (error) {
-        addMessage('status', `错误：${error.message}`);
-      } finally {
-        refreshControls();
-      }
-    }
-
-    function showEvent(entry, stream) {
-      if (entry.kind === 'assistant_message') {
-        if (entry.data?.delta || !entry.data?.is_final) return;
-        addMessage('assistant', entry.text);
-      }
-      if (entry.kind === 'tool_call') {
-        stream.assistant = null;
-        // addMessage() uses textContent, so tool arguments are displayed as data, never executed as HTML.
-        const argumentsText = JSON.stringify(entry.data?.arguments ?? {}, null, 2);
-        addMessage('status', `\u6b63\u5728\u8c03\u7528\u5de5\u5177\uff1a${entry.text}\n\u53c2\u6570\uff1a\n${argumentsText}`);
-      }
-      if (entry.kind === 'approval_requested') {
-        const approved = window.confirm(
-          `允许这一次命令脱离 OS 沙盒运行吗？\n\n命令：${entry.data?.command || ''}\n\n原因：${entry.data?.justification || ''}`
-        );
-        void api('/api/approvals', {
-          call_id: entry.data?.call_id,
-          approved,
-          submission_id: entry.data?.submission_id,
-        }).catch(error => addMessage('status', `错误：${error.message}`));
-      }
-      if (entry.kind === 'tool_result') addMessage('status', `工具结果：${entry.text}`);
-      if (entry.kind === 'error') addMessage('status', `错误：${entry.text}`);
-      if (entry.kind === 'turn_interrupted') addMessage('status', '已根据后续输入停止上一轮。');
-    }
-
-    async function streamEvents(path, body, onEvent) {
-      const response = await fetch(path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok || !response.body) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || `请求失败：${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let pending = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        pending += decoder.decode(value || new Uint8Array(), { stream: !done });
-        let boundary;
-        while ((boundary = pending.indexOf('\n\n')) !== -1) {
-          const event = pending.slice(0, boundary);
-          pending = pending.slice(boundary + 2);
-          const data = event.split('\n').find(line => line.startsWith('data:'));
-          if (data) onEvent(JSON.parse(data.slice(5)));
-        }
-        if (done) return;
-      }
-    }
-
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const text = input.value.trim();
-      if (!text) return;
-
-      addMessage('user', text);
-      input.value = '';
-      activeTurns += 1;
-      refreshControls();
-      try {
-        const stream = { assistant: null };
-        await streamEvents('/api/messages/stream', { text }, entry => showEvent(entry, stream));
-      } catch (error) {
-        addMessage('status', `错误：${error.message}`);
-      } finally {
-        activeTurns -= 1;
-        refreshControls();
-        input.focus();
-      }
-    });
-
-    newChat.addEventListener('click', startNewChat);
-    startNewChat();
-  </script>
 </body>
 </html>

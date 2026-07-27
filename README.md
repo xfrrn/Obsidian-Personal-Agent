@@ -18,7 +18,9 @@ apps/
 tests/unit/codex_agent/     Agent 单元测试
 ```
 
-Obsidian 侧栏通过 iframe 加载默认地址 `http://127.0.0.1:8000`。插件只接受 localhost、`127.0.0.1` 和 `::1`，不维护第二套 Agent 或 API 客户端。
+Obsidian 侧栏通过 iframe 加载默认地址 `http://127.0.0.1:8000`。插件只接受 localhost、`127.0.0.1` 和 `::1`，不维护第二套 Agent。
+
+模型地址、模型、工作区、权限、Shell 和会话数据库路径在插件设置面板持久化；API Key 单独保存在 Obsidian SecretStorage。侧栏打开或重新加载时，插件通过本机 `/api/config` 把配置同步给空闲的 Agent 运行时。
 
 ## 运行
 
@@ -26,17 +28,17 @@ Obsidian 侧栏通过 iframe 加载默认地址 `http://127.0.0.1:8000`。插件
 python -m pip install -e apps/local-agent
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="model-name"
-$env:AGENT_WORKSPACE="D:\Vault"
-python -m agent.web.server
+npm run build:agent-ui
+npm run start:agent
 ```
 
-模型地址可通过 `OPENAI_BASE_URL` 配置。会话默认保存在 `~/.codex-agent/sessions.db`，Skills 从工作区的 `skills/` 加载。`apply_patch` 默认可用；Shell 工具只有在显式设置 `AGENT_ENABLE_SHELL=1` 后才注册。
+插件首次加载时自动把当前 Vault 根目录设置为 Agent 工作区，不需要配置 `AGENT_WORKSPACE`。其他环境变量仍是服务首次启动时的后备配置；插件面板保存过配置后，以插件配置为准。会话默认保存在 `~/.codex-agent/sessions.db`，Skills 从工作区的 `skills/` 加载。`apply_patch` 默认可用，Shell 工具由插件设置开关控制。
 
 ## 开发
 
 ```powershell
 npm run verify
-npm --prefix apps/local-agent/src/agent/web/frontend run build
+npm run build:agent-ui
 ```
 
 生产插件文件为 `apps/obsidian-plugin/main.js`、`manifest.json` 和 `styles.css`。

@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "node apps/obsidian-plugin/esbuild.config.mjs",
     "build": "node apps/obsidian-plugin/esbuild.config.mjs production",
+    "build:agent-ui": "npm --prefix apps/local-agent/src/agent/web/frontend run build",
+    "start:agent": "python -m agent.web.server --host 127.0.0.1 --port 8000",
     "check": "tsc --noEmit -p apps/obsidian-plugin/tsconfig.json",
     "test": "npm run test:plugin",
     "test:plugin": "esbuild apps/obsidian-plugin/tests/url.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/url.test.js",
