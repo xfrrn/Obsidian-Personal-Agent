@@ -8,7 +8,7 @@ from agent.permissions import PermissionRequirement, ToolAccess
 from agent.protocol.mode import ModeKind
 from agent.tools.invocation import ToolInvocation
 from agent.tools.registry import ToolRegistry
-from agent.tools.types import ToolExecution, ToolExecutionContext
+from agent.tools.types import ToolExecution
 
 
 class ToolRouter:
@@ -47,10 +47,9 @@ class ToolRouter:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> ToolExecution:
         """提供运行时所需的单一分发入口。"""
 
         return await self._registry.dispatch(
-            invocation, granted_access=granted_access, mode=mode, context=context
+            invocation, granted_access=granted_access, mode=mode
         )

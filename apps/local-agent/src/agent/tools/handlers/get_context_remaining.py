@@ -8,7 +8,7 @@ from agent.config.loader import build_mode_system_prompt
 from agent.core.token_counter import TokenCounter
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
-from agent.tools.types import ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolSpec
 
 
 class GetContextRemainingTool:
@@ -53,7 +53,6 @@ class GetContextRemainingTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str:
         if set(arguments) - {"mode"}:
             raise ValueError("该工具只接受 mode 参数")

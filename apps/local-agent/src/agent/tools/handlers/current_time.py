@@ -8,7 +8,7 @@ import json
 
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
-from agent.tools.types import ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolSpec
 
 
 class CurrentTimeTool:
@@ -31,7 +31,6 @@ class CurrentTimeTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str:
         if arguments:
             raise ValueError("该工具不接受参数")

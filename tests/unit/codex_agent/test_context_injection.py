@@ -92,12 +92,7 @@ class ContextInjectionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [type(contributor).__name__ for contributor in session.context_contributors],
-            [
-                "AvailableSkillsContributor",
-                "CurrentTimeContributor",
-                "ObsidianContextContributor",
-                "WorldStateContributor",
-            ],
+            ["AvailableSkillsContributor", "CurrentTimeContributor", "WorldStateContributor"],
         )
 
 

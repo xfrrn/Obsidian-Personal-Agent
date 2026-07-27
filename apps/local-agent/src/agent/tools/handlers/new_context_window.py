@@ -5,7 +5,7 @@ from __future__ import annotations
 from agent.core.context_window import ContextWindow
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
-from agent.tools.types import ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolSpec
 
 
 class NewContextWindowTool:
@@ -28,7 +28,6 @@ class NewContextWindowTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str:
         if arguments:
             raise ValueError("该工具不接受参数")

@@ -19,6 +19,9 @@ from agent.protocol.event import EventKind
 from agent.web.server import AgentHTTPServer, AgentRuntime, _is_loopback_client
 
 
+AGENT_ROOT = Path(__file__).resolve().parents[3] / "apps" / "local-agent" / "src" / "agent"
+
+
 class RecordingClient:
     """离线模型替身，记录每个会话真正收到的提示词快照。"""
 
@@ -100,44 +103,32 @@ class EscalatingWebClient:
 
 class WebRuntimeTest(unittest.TestCase):
     def test_page_displays_tool_call_arguments(self) -> None:
-        page = (
-            Path(__file__).parents[3]
-            / "apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts"
-        ).read_text(encoding="utf-8")
-        self.assertIn("JSON.stringify(tool.arguments, null, 2)", page)
-        self.assertIn("event.data.is_final", page)
+        page = (AGENT_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("argumentsText = JSON.stringify", page)
+        self.assertIn("entry.data?.is_final", page)
 
     def test_frontend_keeps_session_navigation_enabled_while_a_turn_runs(self) -> None:
-        app = (
-            Path(__file__).parents[3]
-            / "apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts"
-        ).read_text(encoding="utf-8")
-        self.assertIn("this.sessionSelect.onchange", app)
-        self.assertIn("const version = ++this.requestVersion", app)
-        self.assertIn("version === this.requestVersion", app)
+        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        self.assertNotIn("disabled={busy || creatingConversation}", app)
+        self.assertIn("conversationViews.current[sessionId]", app)
+        self.assertIn("const nextMessages = update(view.messages)", app)
+        self.assertIn("const nextTraces = update(view.traces)", app)
+        self.assertIn("Boolean(runningTurns[activeConversationId])", app)
 
     def test_frontend_exposes_archive_and_inline_approval_flows(self) -> None:
-        app = (
-            Path(__file__).parents[3]
-            / "apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts"
-        ).read_text(encoding="utf-8")
+        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
 
-        self.assertIn("archiveConversation(", app)
-        self.assertIn("this.approvals.push", app)
-        self.assertIn("resolveApproval(", app)
-        self.assertIn('"允许一次"', app)
-        self.assertNotIn("window.confirm(", app)
+        self.assertIn("/archive`, {})", app)
+        self.assertIn("pendingApprovals", app)
+        self.assertIn("仅允许本次", app)
+        self.assertNotIn("window.confirm(\n            `允许这一次命令", app)
 
     def test_frontend_exposes_runtime_permission_switch(self) -> None:
-        app = (
-            Path(__file__).parents[3]
-            / "apps/obsidian-plugin/src/views/assistant-view/assistant-view.ts"
-        ).read_text(encoding="utf-8")
+        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
 
-        self.assertIn('"aria-label": "Agent 模式"', app)
-        self.assertIn('value: "default"', app)
-        self.assertIn('value: "plan"', app)
-        self.assertNotIn('danger-full-access', app)
+        self.assertIn('aria-label="沙盒权限"', app)
+        self.assertIn('requestJson<RuntimePermissions>("/api/permissions"', app)
+        self.assertIn('value="danger-full-access"', app)
 
     def test_new_conversation_uses_a_fresh_agent_session(self) -> None:
         clients: list[RecordingClient] = []

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from types import MappingProxyType
-from typing import Mapping
+from dataclasses import dataclass
 
 from agent.protocol.mode import ModeKind
 from agent.skills.loader import Skill
@@ -20,7 +18,3 @@ class TurnContext:
     skill_snapshot: tuple[Skill, ...] = ()
     mentioned_skills: tuple[Skill, ...] = ()
     mode: ModeKind = ModeKind.DEFAULT
-    metadata: Mapping[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))

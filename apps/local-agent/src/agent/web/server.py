@@ -8,7 +8,7 @@ import ipaddress
 import json
 import logging
 import mimetypes
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,7 +30,6 @@ from agent.protocol.event import Event, EventKind
 from agent.protocol.mode import ModeKind
 from agent.protocol.op import ResolveApproval, UserInput
 from agent.storage import SessionStore, StoredSession
-from agent.tools.handlers.base import ToolHandler
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,19 +50,10 @@ class AgentRuntime:
     """
 
     def __init__(
-        self,
-        settings: Settings,
-        client_factory: Callable[[], object] | None = None,
-        *,
-        extra_handlers: tuple[ToolHandler, ...] = (),
-        enable_apply_patch: bool = True,
-        include_world_state: bool = True,
+        self, settings: Settings, client_factory: Callable[[], object] | None = None
     ) -> None:
         self._settings = settings
         self._client_factory = client_factory
-        self._extra_handlers = extra_handlers
-        self._enable_apply_patch = enable_apply_patch
-        self._include_world_state = include_world_state
         self._store = SessionStore(settings.session_db_path)
         self._sessions: dict[str, LiveSession] = {}
         self._next_generation = 0
@@ -152,18 +142,16 @@ class AgentRuntime:
         text: str,
         session_id: str | None = None,
         mode: ModeKind | None = None,
-        metadata: Mapping[str, object] | None = None,
     ) -> list[Event]:
         """提交一条消息，并收集该回合的全部可展示事件。"""
 
-        return list(self.ask_events(text, session_id, mode, metadata))
+        return list(self.ask_events(text, session_id, mode))
 
     def ask_events(
         self,
         text: str,
         session_id: str | None = None,
         mode: ModeKind | None = None,
-        metadata: Mapping[str, object] | None = None,
     ) -> Iterator[Event]:
         """逐条产出回合事件，供 SSE 在模型生成期间立即转发。"""
 
@@ -177,9 +165,7 @@ class AgentRuntime:
             resolved_session_id = session_id or self._default_session_id
             if resolved_session_id is None:
                 raise RuntimeError("请先创建或选择会话")
-            turn_key = self._call(
-                self._submit(resolved_session_id, text, mode, metadata or {})
-            )
+            turn_key = self._call(self._submit(resolved_session_id, text, mode))
         try:
             while True:
                 event = self._call(self._next_turn_event(turn_key))
@@ -263,9 +249,6 @@ class AgentRuntime:
             client,
             session_id=session_id,
             store=self._store,
-            extra_handlers=self._extra_handlers,
-            enable_apply_patch=self._enable_apply_patch,
-            include_world_state=self._include_world_state,
         )
         live = LiveSession(handle, runner, generation)
         self._sessions[session_id] = live
@@ -310,14 +293,10 @@ class AgentRuntime:
         self._turn_events.pop(turn_key, None)
 
     async def _submit(
-        self,
-        session_id: str,
-        text: str,
-        mode: ModeKind | None,
-        metadata: Mapping[str, object],
+        self, session_id: str, text: str, mode: ModeKind | None
     ) -> tuple[str, int, int]:
         live = await self._ensure_live(session_id)
-        submission_id = live.handle.submit(UserInput(text, mode, metadata))
+        submission_id = live.handle.submit(UserInput(text, mode))
         turn_key = (session_id, live.generation, submission_id)
         # submit() 不会让出事件循环，因此调度器还没来得及发 TurnStarted；
         # 在这里建队列可确保新 turn 的首个事件不会丢失。

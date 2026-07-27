@@ -5,7 +5,7 @@ from __future__ import annotations
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
 from agent.tools.processes import ProcessManager, validate_yield_time
-from agent.tools.types import ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolSpec
 
 
 class WriteStdinTool:
@@ -45,7 +45,6 @@ class WriteStdinTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str:
         process_id = arguments.get("process_id")
         if (

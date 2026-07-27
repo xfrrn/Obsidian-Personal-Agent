@@ -13,7 +13,7 @@ from agent.protocol.mode import ModeKind
 from agent.sandbox import SandboxBackend
 from agent.sandbox import windows as windows_sandbox
 from agent.tools.processes import ProcessHandle, ProcessManager, validate_yield_time
-from agent.tools.types import ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolSpec
 
 
 class _AsyncioProcess:
@@ -149,7 +149,6 @@ class ExecCommandTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str:
         command = _shell_command(arguments)
         yield_time_ms = validate_yield_time(arguments.get("yield_time_ms"), 10_000)

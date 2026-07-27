@@ -6,7 +6,7 @@ from typing import Protocol
 
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
-from agent.tools.types import ToolExecution, ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolExecution, ToolSpec
 
 
 class ToolHandler(Protocol):
@@ -23,5 +23,4 @@ class ToolHandler(Protocol):
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str | ToolExecution: ...

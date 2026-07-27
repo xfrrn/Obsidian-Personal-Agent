@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from types import MappingProxyType
-from typing import Any, Mapping
-
-from agent.protocol.mode import ModeKind
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,16 +114,3 @@ class ToolExecution:
     is_error: bool = False
     interrupted: bool = False
     plan_update: PlanUpdate | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ToolExecutionContext:
-    """一次工具调用可读取但不能改写的宿主上下文。"""
-
-    session_id: str | None
-    submission_id: int | None
-    mode: ModeKind
-    metadata: Mapping[str, object]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))

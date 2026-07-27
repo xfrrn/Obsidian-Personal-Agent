@@ -6,9 +6,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from types import MappingProxyType
-from typing import Mapping, TypeAlias
+from dataclasses import dataclass
+from typing import TypeAlias
 
 from agent.protocol.mode import ModeKind
 
@@ -20,11 +19,6 @@ class UserInput:
     text: str
     # None 沿用会话当前选择，让既有嵌入式调用保持兼容。
     mode: ModeKind | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        # 回合开始后调用方上下文不可变，避免活跃笔记等状态在工具执行期间漂移。
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 @dataclass(frozen=True, slots=True)

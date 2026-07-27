@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
-from agent.tools.types import PlanUpdate, ToolExecution, ToolExecutionContext, ToolSpec
+from agent.tools.types import PlanUpdate, ToolExecution, ToolSpec
 
 
 class UpdatePlanTool:
@@ -53,7 +53,6 @@ class UpdatePlanTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> ToolExecution:
         if mode is ModeKind.PLAN:
             raise PermissionError("update_plan 在 Plan Mode 中不可用")

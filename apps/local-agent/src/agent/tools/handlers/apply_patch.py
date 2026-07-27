@@ -12,7 +12,7 @@ from uuid import uuid4
 from agent.config.settings import Settings
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
-from agent.tools.types import ToolExecutionContext, ToolSpec
+from agent.tools.types import ToolSpec
 
 
 _HUNK_HEADER = re.compile(
@@ -109,7 +109,6 @@ class ApplyPatchTool:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        context: ToolExecutionContext | None = None,
     ) -> str:
         patch = arguments.get("patch")
         if not isinstance(patch, str) or not patch.strip():

@@ -7,7 +7,6 @@ import logging
 
 from agent.config.settings import Settings
 from agent.core.context_injection.current_time import CurrentTimeContributor
-from agent.core.context_injection.obsidian import ObsidianContextContributor
 from agent.core.context_injection.skills import AvailableSkillsContributor
 from agent.core.context_injection.world_state import WorldStateContributor
 from agent.core.context_window import ContextWindow
@@ -30,7 +29,6 @@ from agent.tools.handlers.get_context_remaining import GetContextRemainingTool
 from agent.tools.handlers.new_context_window import NewContextWindowTool
 from agent.tools.handlers.update_plan import UpdatePlanTool
 from agent.tools.handlers.write_stdin import WriteStdinTool
-from agent.tools.handlers.base import ToolHandler
 from agent.tools.invocation import ToolInvocation
 from agent.tools.processes import ProcessManager
 from agent.tools.registry import ToolRegistry
@@ -49,15 +47,13 @@ def create_session(
     session_id: str | None = None,
     store: SessionStore | None = None,
     stored_session: StoredSession | None = None,
-    extra_handlers: tuple[ToolHandler, ...] = (),
-    enable_apply_patch: bool = True,
-    include_world_state: bool = True,
 ) -> Session:
     """在唯一组合根创建服务；核心模块只接收已组合好的依赖。"""
 
     token_counter = TokenCounter(settings.model)
     context_window = ContextWindow()
-    handlers: list[ToolHandler] = [
+    handlers = [
+        ApplyPatchTool(settings),
         CurrentTimeTool(),
         GetContextRemainingTool(
             token_counter,
@@ -68,9 +64,6 @@ def create_session(
         NewContextWindowTool(context_window),
         UpdatePlanTool(),
     ]
-    if enable_apply_patch:
-        handlers.insert(0, ApplyPatchTool(settings))
-    handlers.extend(extra_handlers)
     process_manager = None
     if settings.shell_enabled:
         process_manager = ProcessManager(settings.request_timeout_seconds)
@@ -114,8 +107,7 @@ def create_session(
         context_contributors=(
             AvailableSkillsContributor(),
             CurrentTimeContributor(),
-            ObsidianContextContributor(),
-            *((WorldStateContributor(settings.workspace),) if include_world_state else ()),
+            WorldStateContributor(settings.workspace),
         ),
         input_queue=InputQueue(),
         token_counter=token_counter,
@@ -140,9 +132,6 @@ async def start_agent(
     *,
     session_id: str | None = None,
     store: SessionStore | None = None,
-    extra_handlers: tuple[ToolHandler, ...] = (),
-    enable_apply_patch: bool = True,
-    include_world_state: bool = True,
 ) -> tuple[AgentHandle, asyncio.Task[None]]:
     """嵌入式入口：调用方取得 handle 后即可提交操作并消费事件。"""
 
@@ -167,9 +156,6 @@ async def start_agent(
         session_id=session_id,
         store=store,
         stored_session=stored_session,
-        extra_handlers=extra_handlers,
-        enable_apply_patch=enable_apply_patch,
-        include_world_state=include_world_state,
     )
     if stored_session is not None:
         if stored_session.last_turn_state == "running":

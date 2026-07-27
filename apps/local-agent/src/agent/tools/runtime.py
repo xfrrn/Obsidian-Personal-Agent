@@ -15,7 +15,7 @@ from agent.permissions import (
 from agent.protocol.mode import ModeKind
 from agent.tools.invocation import ToolInvocation
 from agent.tools.router import ToolRouter
-from agent.tools.types import ToolExecution, ToolExecutionContext
+from agent.tools.types import ToolExecution
 
 
 class _ToolExecutionGate:
@@ -74,12 +74,9 @@ class ToolCallRuntime:
         invocation: ToolInvocation,
         submission_id: int | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
-        *,
-        session_id: str | None = None,
-        metadata: dict[str, object] | None = None,
     ) -> ToolExecution:
         task = asyncio.create_task(
-            self._dispatch_with_gate(invocation, submission_id, mode, session_id, metadata or {}),
+            self._dispatch_with_gate(invocation, submission_id, mode),
             name=f"agent-tool-{invocation.call_id}",
         )
         self._running[invocation.call_id] = task
@@ -104,10 +101,7 @@ class ToolCallRuntime:
         invocation: ToolInvocation,
         submission_id: int | None,
         mode: ModeKind,
-        session_id: str | None,
-        metadata: dict[str, object],
     ) -> ToolExecution:
-        context = ToolExecutionContext(session_id, submission_id, mode, metadata)
         async with self._execution_gate.hold(
             self._router.supports_parallel_tool_calls(invocation)
         ):
@@ -118,7 +112,7 @@ class ToolCallRuntime:
                     f"工具 {invocation.name} 权限参数无效: {exc}", is_error=True
                 )
             if requirement is None:
-                return await self._router.dispatch(invocation, mode=mode, context=context)
+                return await self._router.dispatch(invocation, mode=mode)
             request = PermissionRequest(
                 submission_id=submission_id,
                 call_id=invocation.call_id,
@@ -132,7 +126,7 @@ class ToolCallRuntime:
             except PermissionDenied as exc:
                 return ToolExecution(str(exc), is_error=True)
             return await self._router.dispatch(
-                invocation, granted_access=grant.access, mode=mode, context=context
+                invocation, granted_access=grant.access, mode=mode
             )
 
     def resolve_approval(

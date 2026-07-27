@@ -156,7 +156,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
 
             if response.tool_calls:
                 await _run_tool_calls(
-                    session, context, response.tool_calls
+                    session, context.submission_id, response.tool_calls, context.mode
                 )
 
         await session.mark_turn_state("failed")
@@ -242,8 +242,9 @@ def _needs_follow_up(response: AssistantResponse) -> bool:
 
 async def _run_tool_calls(
     session: Session,
-    context: TurnContext,
+    submission_id: int,
     calls: tuple[ToolCall, ...],
+    mode: ModeKind = ModeKind.DEFAULT,
 ) -> None:
     """并发提交同一响应的调用；运行时按 Handler 的声明隔离有副作用的工具。"""
 
@@ -251,11 +252,11 @@ async def _run_tool_calls(
         session.tool_router.build_invocation(call.id, call.name, call.arguments) for call in calls
     )
     for invocation in invocations:
-        session.emit(ToolRequested(context.submission_id, invocation))
+        session.emit(ToolRequested(submission_id, invocation))
 
     executions = await asyncio.gather(
         *(
-            _execute_tool(session, context, invocation)
+            _execute_tool(session, submission_id, invocation, mode)
             for invocation in invocations
         )
     )
@@ -276,7 +277,7 @@ async def _run_tool_calls(
         None,
     )
     await session.persist_messages(
-        context.submission_id,
+        submission_id,
         tuple((message, False) for _, _, _, message in completed),
         "running",
         plan_update,
@@ -284,7 +285,7 @@ async def _run_tool_calls(
     for invocation, execution, status, _ in completed:
         session.emit(
             ToolResult(
-                context.submission_id,
+                submission_id,
                 invocation.call_id,
                 invocation.name,
                 execution.content,
@@ -292,23 +293,18 @@ async def _run_tool_calls(
             )
         )
         if status is ToolResultStatus.SUCCESS and execution.plan_update is not None:
-            session.emit(PlanUpdated(context.submission_id, execution.plan_update))
+            session.emit(PlanUpdated(submission_id, execution.plan_update))
 
 
 async def _execute_tool(
     session: Session,
-    context: TurnContext,
+    submission_id: int,
     invocation: ToolInvocation,
+    mode: ModeKind = ModeKind.DEFAULT,
 ) -> tuple[ToolExecution, ToolResultStatus]:
     tool_started_at = time.monotonic()
     with log_context(tool_name=invocation.name, tool_call_id=invocation.call_id):
-        execution = await session.tool_runtime.execute(
-            invocation,
-            context.submission_id,
-            context.mode,
-            session_id=session.session_id,
-            metadata=dict(context.metadata),
-        )
+        execution = await session.tool_runtime.execute(invocation, submission_id, mode)
         status = (
             ToolResultStatus.INTERRUPTED
             if execution.interrupted
