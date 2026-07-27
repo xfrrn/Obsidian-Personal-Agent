@@ -6,8 +6,8 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
-  CircleDot,
   FileText,
+  Loader2,
   Menu,
   Moon,
   Plus,
@@ -137,6 +137,7 @@ type RuntimePermissions = {
 }
 
 const markdownClassName = "text-[15px] leading-7 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
+const traceMarkdownClassName = "text-[13px] leading-6 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
 const messageClasses: Record<MessageRole, string> = {
   assistant: "",
   user: "ml-auto justify-end",
@@ -225,22 +226,22 @@ function ToolGroup({ tools }: { tools: ToolTraceStep[] }) {
       : tools.length > 1 ? "运行了多个工具" : `运行了 ${tools[0].name}`
 
   return (
-    <details className="group/tool mb-2.5" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px] font-semibold [&::-webkit-details-marker]:hidden">
+    <details className="group/tool" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 text-[13px] font-semibold [&::-webkit-details-marker]:hidden">
         {finished
           ? failed
             ? <CircleAlert className="size-4 text-red-600" />
             : interrupted
               ? <CircleAlert className="size-4 text-muted-foreground" />
               : <CheckCircle2 className="size-4 text-success" />
-          : <CircleDot className="size-4 animate-spin" />}
-        <span>{summary}</span><ChevronRight className="size-3.5 text-muted-foreground transition-transform group-open/tool:rotate-90" aria-hidden="true" />
+          : <Loader2 className="size-4 animate-spin" />}
+        <span>{summary}</span><ChevronRight className="ml-auto size-3.5 text-muted-foreground transition-transform group-open/tool:rotate-90" aria-hidden="true" />
       </summary>
-      <div className="grid gap-0.5 pt-1.5 pl-6">
+      <div className="grid gap-1 pt-2 pl-6">
         {tools.map((tool) => (
-          <div className="flex min-w-0 items-center gap-2 py-[7px] text-[13px] text-muted-foreground" key={tool.id}>
+          <div className="flex min-w-0 items-center gap-2 text-[13px] leading-6 text-muted-foreground" key={tool.id}>
             {tool.state === "running"
-              ? <CircleDot className="size-4 shrink-0 animate-spin" />
+              ? <Loader2 className="size-4 shrink-0 animate-spin" />
               : tool.state === "success"
                 ? <CheckCircle2 className="size-4 shrink-0 text-success" />
                 : <CircleAlert className={`size-4 shrink-0 ${tool.state === "error" ? "text-red-600" : "text-muted-foreground"}`} />}
@@ -275,19 +276,23 @@ function RunTrace({ trace }: { trace: RunTrace }) {
   }, [trace.startedAt, trace.completedAt])
 
   const groups = groupTraceSteps(trace.steps)
+  const running = !trace.completedAt
+  const status = running ? trace.responseStarted ? "正在回复" : groups.length ? "正在处理" : "思考中" : "已处理"
 
   return (
-    <details className="group/trace mb-[26px] max-w-[760px] text-muted-foreground" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} aria-live="polite">
-      <summary className="flex cursor-pointer list-none items-center gap-1 border-b border-border pb-2.5 text-[13px] font-semibold [&::-webkit-details-marker]:hidden">
-        已处理 {formatElapsed(elapsed)}<ChevronRight className="size-[15px] transition-transform group-open/trace:rotate-90" aria-hidden="true" />
+    <details className="group/trace mb-4 max-w-[760px] rounded-md border border-border bg-background px-3 py-2 text-muted-foreground" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} aria-live="polite">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px] font-semibold [&::-webkit-details-marker]:hidden">
+        {running ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4 text-success" />}
+        <span>{status} · {formatElapsed(elapsed)}</span>
+        <ChevronRight className="ml-auto size-[15px] transition-transform group-open/trace:rotate-90" aria-hidden="true" />
       </summary>
-      <div className="pt-[18px]">
+      <div className="mt-3 grid gap-3 border-t border-border pt-3">
         {groups.length ? groups.map((group) => group.kind === "thought" ? (
-          <Streamdown className={markdownClassName} isAnimating={!trace.completedAt} key={group.id} mode={trace.completedAt ? "static" : "streaming"}>{group.text}</Streamdown>
+          <Streamdown className={traceMarkdownClassName} isAnimating={!trace.completedAt} key={group.id} mode={trace.completedAt ? "static" : "streaming"}>{group.text}</Streamdown>
         ) : (
           <ToolGroup key={`${group.id}:${group.tools.every((tool) => tool.state !== "running")}`} tools={group.tools} />
         )) : !trace.completedAt && (
-          <p className="m-0 text-muted-foreground">正在思考</p>
+          <p className="m-0 text-[13px] leading-6 text-muted-foreground">正在思考</p>
         )}
       </div>
     </details>
@@ -295,11 +300,15 @@ function RunTrace({ trace }: { trace: RunTrace }) {
 }
 
 function PlanPanel({ plan }: { plan: PlanState }) {
+  const completed = plan.plan.filter(({ status }) => status === "completed").length
+  const activeStep = plan.plan.find(({ status }) => status === "in_progress")?.step
+
   return (
     <details className="agent-plan" aria-label="当前计划">
       <summary>
         <strong>当前计划</strong>
-        <span>{plan.plan.filter(({ status }) => status === "completed").length}/{plan.plan.length}</span>
+        {activeStep && <small>{activeStep}</small>}
+        <span>{completed}/{plan.plan.length}</span>
         <ChevronRight aria-hidden="true" />
       </summary>
       {plan.explanation && <p>{plan.explanation}</p>}

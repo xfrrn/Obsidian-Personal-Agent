@@ -361,7 +361,7 @@ textarea {
   cursor: pointer;
   display: flex;
   font-size: 12px;
-  gap: 7px;
+  gap: 8px;
   list-style: none;
   min-height: 38px;
 }
@@ -375,8 +375,20 @@ textarea {
   margin-left: auto;
 }
 
+.agent-plan summary small {
+  color: var(--muted-foreground);
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 400;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-plan summary svg {
   height: 14px;
+  flex: 0 0 auto;
   transition: transform 150ms ease;
   width: 14px;
 }
@@ -400,10 +412,17 @@ textarea {
 }
 
 .agent-plan li {
+  align-items: flex-start;
   color: var(--muted-foreground);
   display: flex;
   font-size: 12px;
   gap: 7px;
+  line-height: 1.45;
+}
+
+.agent-plan li > span:first-child {
+  flex: 0 0 14px;
+  text-align: center;
 }
 
 .agent-plan li[data-status="completed"] {
