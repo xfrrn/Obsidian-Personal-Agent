@@ -7,7 +7,10 @@
     "dev": "node apps/obsidian-plugin/esbuild.config.mjs",
     "build": "node apps/obsidian-plugin/esbuild.config.mjs production",
     "check": "tsc --noEmit -p apps/obsidian-plugin/tsconfig.json",
-    "test": "esbuild apps/obsidian-plugin/tests/protocol.test.ts apps/obsidian-plugin/tests/operations.test.ts apps/obsidian-plugin/tests/operation-executor.test.ts apps/obsidian-plugin/tests/search-notes.test.ts apps/obsidian-plugin/tests/list-tasks.test.ts apps/obsidian-plugin/tests/file-references.test.ts --bundle --platform=node --format=cjs --alias:obsidian=./apps/obsidian-plugin/tests/obsidian-stub.ts --outdir=.test-build && node --test .test-build/*.js"
+    "test": "npm run test:plugin",
+    "test:plugin": "esbuild apps/obsidian-plugin/tests/protocol.test.ts apps/obsidian-plugin/tests/file-references.test.ts --bundle --platform=node --format=cjs --alias:obsidian=./apps/obsidian-plugin/tests/obsidian-stub.ts --outdir=.test-build && node --test .test-build/protocol.test.js .test-build/file-references.test.js",
+    "test:python": "python -m pytest -q -p no:cacheprovider tests/unit",
+    "verify": "npm run check && npm run test:plugin && npm run test:python && npm run build"
   },
   "engines": {
     "node": ">=20"

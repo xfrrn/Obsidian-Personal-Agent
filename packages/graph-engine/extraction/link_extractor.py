@@ -1,1 +1,0 @@
-"""Wikilink extractor."""

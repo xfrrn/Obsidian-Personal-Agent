@@ -1,1 +1,0 @@
-"""Metadata database adapter bootstrap."""

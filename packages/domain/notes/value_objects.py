@@ -1,1 +1,0 @@
-"""Note value objects."""

@@ -12,6 +12,8 @@ export class TFolder {
   constructor(public path: string) {}
 }
 
+export class MarkdownView {}
+
 export const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 export const getAllTags = (): string[] => [];
 export const getFrontMatterInfo = (): { exists: false; contentStart: 0 } => ({ exists: false, contentStart: 0 });

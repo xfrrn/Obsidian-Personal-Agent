@@ -10,7 +10,6 @@ import {
   updateLocalAgentPolicy,
   type LocalAgentTool
 } from "../api/local-agent-client";
-import { callModel } from "../api/model-client";
 import type PersonalKnowledgeAgentPlugin from "../main";
 
 export interface AgentSettings {
@@ -21,6 +20,7 @@ export interface AgentSettings {
   localAgentPort: string;
   localAgentToken: string;
   executionMode: ExecutionMode;
+  activeConversationId: string;
 }
 
 export type ExecutionMode = "confirm_all" | "risk_based" | "unattended";
@@ -54,7 +54,8 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   secretId: "personal-knowledge-agent-api-key",
   localAgentPort: "8765",
   localAgentToken: "",
-  executionMode: "confirm_all"
+  executionMode: "confirm_all",
+  activeConversationId: ""
 };
 
 export function providerById(id: string): ProviderPreset {
@@ -76,7 +77,7 @@ export class AgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("本地 Agent 端口")
-      .setDesc("local-agent HTTP 端口；留空则只使用插件内置流程。")
+      .setDesc("local-agent HTTP 端口；服务不可用时插件会提示重连，不会降级到旧流程。")
       .addText((text) =>
         text
           .setPlaceholder("8765")
@@ -267,51 +268,7 @@ export class AgentSettingTab extends PluginSettingTab {
     );
     if (keyInput) keyInput.type = "password";
 
-    const testSetting = new Setting(containerEl)
-      .setName("连接测试")
-      .setDesc("使用当前供应商、模型和密钥发送一次最小请求。")
-      .addButton((button) =>
-        button
-          .setButtonText("测试连接")
-          .onClick(async () => {
-            button.setDisabled(true).setButtonText("测试中...");
-            const startedAt = performance.now();
-            testStatusEl.setText("测试中...");
-            testStatusEl.removeClass("is-success", "is-error");
-            try {
-              await withTimeout(
-                callModel(this.app, this.agentPlugin.settings, [
-                  { role: "system", content: "只返回 ok。" },
-                  { role: "user", content: "ping" }
-                ]),
-                12_000
-              );
-              testStatusEl.setText(`连接成功。耗时 ${elapsedMs(startedAt)} ms。`);
-              testStatusEl.addClass("is-success");
-            } catch (error) {
-              testStatusEl.setText(`${error instanceof Error ? error.message : "连接失败。"} 耗时 ${elapsedMs(startedAt)} ms。`);
-              testStatusEl.addClass("is-error");
-            } finally {
-              button.setDisabled(false).setButtonText("测试连接");
-            }
-          })
-      );
-    const testStatusEl = containerEl.createDiv({ cls: "pka-setting-status" });
-    testSetting.settingEl.insertAdjacentElement("afterend", testStatusEl);
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_resolve, reject) => {
-      setTimeout(() => reject(new Error("连接测试超时，请稍后重试或直接使用对话验证。")), ms);
-    })
-  ]);
-}
-
-function elapsedMs(startedAt: number): number {
-  return Math.round(performance.now() - startedAt);
 }
 
 function renderToolsPanel(

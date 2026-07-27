@@ -1,1 +1,0 @@
-"""External messaging gateway entrypoint."""

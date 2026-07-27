@@ -700,3 +700,224 @@
 .pka-tool-schema {
   margin-top: var(--size-4-2);
 }
+
+.pka-agent-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  height: 100%;
+  padding: var(--size-4-3);
+}
+
+.pka-agent-header,
+.pka-agent-title,
+.pka-session-bar,
+.pka-agent-controls,
+.pka-panel-title,
+.pka-panel-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--size-4-2);
+}
+
+.pka-agent-header,
+.pka-panel-title {
+  justify-content: space-between;
+}
+
+.pka-agent-title {
+  font-weight: 650;
+}
+
+.pka-agent-title-icon,
+.pka-icon-button svg,
+.pka-send-button svg {
+  height: 17px;
+  width: 17px;
+}
+
+.pka-agent-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.pka-agent-status.is-error,
+.pka-message.is-error {
+  color: var(--text-error);
+}
+
+.pka-session-bar select,
+.pka-agent-controls select {
+  min-width: 0;
+}
+
+.pka-session-bar select {
+  flex: 1;
+}
+
+.pka-icon-button,
+.pka-send-button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  padding: 6px;
+}
+
+.pka-agent-plan,
+.pka-operation-panel,
+.pka-approval-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-3);
+}
+
+.pka-agent-plan ol,
+.pka-operation-panel ol {
+  margin-bottom: var(--size-4-2);
+  margin-top: var(--size-4-2);
+  padding-inline-start: 22px;
+}
+
+.pka-agent-plan li.is-completed {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.pka-agent-plan li.is-in_progress {
+  font-weight: 650;
+}
+
+.pka-plan-count,
+.pka-risk {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 400;
+}
+
+.pka-agent-timeline {
+  flex: 1;
+  min-height: 160px;
+  overflow-y: auto;
+  padding: var(--size-4-2) 0;
+}
+
+.pka-empty-state {
+  color: var(--text-muted);
+  padding: 15vh var(--size-4-4);
+  text-align: center;
+}
+
+.pka-message {
+  display: flex;
+  margin-bottom: var(--size-4-4);
+}
+
+.pka-message.is-user {
+  justify-content: flex-end;
+}
+
+.pka-message-body {
+  max-width: 92%;
+  overflow-wrap: anywhere;
+}
+
+.pka-message.is-user .pka-message-body {
+  background: var(--background-secondary);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+}
+
+.pka-message.is-notice .pka-message-body,
+.pka-message.is-error .pka-message-body {
+  background: var(--background-secondary);
+  border-radius: var(--radius-s);
+  padding: var(--size-4-2);
+  width: 100%;
+}
+
+.pka-message-body > :first-child {
+  margin-top: 0;
+}
+
+.pka-message-body > :last-child {
+  margin-bottom: 0;
+}
+
+.pka-run-trace {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-3);
+}
+
+.pka-run-trace summary {
+  cursor: pointer;
+}
+
+.pka-tool-row {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) 0 var(--size-4-1) var(--size-4-3);
+}
+
+.pka-tool-row pre {
+  flex-basis: 100%;
+  font-size: var(--font-ui-smaller);
+  margin: 0 0 0 22px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.pka-tool-row.is-success .pka-tool-state {
+  color: var(--text-success);
+}
+
+.pka-tool-row.is-error .pka-tool-state {
+  color: var(--text-error);
+}
+
+.pka-agent-approvals,
+.pka-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+
+.pka-approval-card {
+  width: 100%;
+}
+
+.pka-panel-actions {
+  justify-content: flex-end;
+  margin-top: var(--size-4-3);
+}
+
+.pka-risk.is-high {
+  color: var(--text-error);
+}
+
+.pka-risk.is-medium {
+  color: var(--text-warning);
+}
+
+.pka-operation-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.pka-agent-composer {
+  display: grid;
+  gap: var(--size-4-2);
+  grid-template-columns: 1fr auto;
+}
+
+.pka-agent-composer textarea {
+  min-height: 70px;
+  resize: vertical;
+  width: 100%;
+}
+
+.pka-send-button {
+  align-self: end;
+}

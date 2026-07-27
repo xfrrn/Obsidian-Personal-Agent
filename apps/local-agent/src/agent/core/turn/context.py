@@ -1,0 +1,26 @@
+"""单个 Agent 回合不可变的配置快照。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Mapping
+
+from agent.protocol.mode import ModeKind
+from agent.skills.loader import Skill
+
+@dataclass(frozen=True, slots=True)
+class TurnContext:
+    """调度器创建后不再改变，避免运行中的回合读取到后续输入的配置。"""
+
+    submission_id: int
+    user_text: str
+    system_prompt: str
+    max_tool_rounds: int
+    skill_snapshot: tuple[Skill, ...] = ()
+    mentioned_skills: tuple[Skill, ...] = ()
+    mode: ModeKind = ModeKind.DEFAULT
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))

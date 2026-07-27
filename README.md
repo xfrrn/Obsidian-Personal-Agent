@@ -1,88 +1,51 @@
 # Personal Knowledge Agent
 
-一个以 Markdown 为事实源、规则优先，并通过预览和确认安全修改知识库的 Obsidian Agent。
-
-当前已完成第一阶段的只读问答和修改计划：支持当前笔记、整个知识库查询、真实路径引用校验，以及确认后的安全执行。
+一个以 Markdown 为事实源、由本机 Python Agent 驱动的 Obsidian 知识助手。插件负责原生交互，Agent 负责会话、模型循环、工具、Skills、Plan Mode、压缩和持久化；Vault 写入始终经过 OperationPlan 预览、确认、审计与回滚。
 
 ## 结构
 
 ```text
 apps/
-  obsidian-plugin/              当前可运行 Obsidian 插件
-  local-agent/                  后续本地 Agent 服务
-  gateway/                      外部通讯网关
-  admin-web/                    管理后台
-packages/
-  contracts/                    插件 / Agent / 网关协议
-  domain/                       笔记、任务、项目等领域模型
-  application/                  业务用例
-  agent-core/                   Agent 对话、意图、规划、工具
-  rule-engine/                  确定性规则
-  knowledge-engine/             解析、索引、检索
-  graph-engine/                 知识图谱
-  integration-sdk/              扩展接口
-  shared/                       共享工具
-adapters/                       具体模型、存储、文件系统、插件适配器
-
-apps/obsidian-plugin/
-  src/
-    bootstrap/                  插件注册入口
-    features/assistant/         Agent 调度与提示词
-    features/knowledge-search/  笔记候选选择
-    features/operation-preview/ 修改计划与执行
-    obsidian/                   Vault / Workspace 适配
-    api/                        模型 API 调用
-    settings/                   插件设置
-    utils/                      协议和 JSON 校验
-    views/assistant-view/       侧边栏对话视图
+  obsidian-plugin/              Obsidian 原生侧栏、设置和 SSE 客户端
+  local-agent/src/agent/        从 CodeX-Agent bdbd148 迁入的唯一 Agent 内核
+  local-agent/src/main.py       本机鉴权 HTTP/SSE 服务
+apps/local-agent/src/agent/obsidian/
+                                Vault 工具、OperationPlan 与运行时装配
 ```
 
-Agent 第一阶段设计见 [docs/agent-design.md](docs/agent-design.md)。
+详细边界见 [Agent 设计](docs/agent-design.md)。
 
 ## 已实现
 
-- Obsidian 侧边栏对话视图。
-- 当前笔记问答。
-- 全库目录筛选和候选笔记问答。
-- 真实路径引用和点击跳转。
-- OpenAI-compatible API 配置。
-- SecretStorage API 密钥选择。
-- API 地址、模型响应和引用路径校验。
-- 修改计划预览、确认执行和回滚。
+- 多会话创建、切换、归档、持久化恢复和同会话 steering。
+- 流式回答、工具轨迹、Agent 工作计划、Default/Plan 模式。
+- 当前笔记、选中文本、显式 `@` 引用和全库范围上下文。
+- `search_notes`、`read_note`、任务、项目、规则与知识分析工具。
+- Vault `skills/*/SKILL.md` 动态发现。
+- 独立 OperationPlan 预览、确认、执行、冲突拒绝、回滚和审计。
+- API Key 只从 Obsidian SecretStorage 读取，并在握手时传入 Agent 内存。
+
+模型不能使用 `apply_patch`、`exec_command`、`write_stdin`，也不能直接调用计划执行或回滚。服务断开时插件只显示重连状态，不保留旧 Agent 降级链路。
 
 ## 使用
 
-1. 在插件设置中填写 OpenAI-compatible API 地址和模型名称。
-2. 通过 SecretStorage 选择或创建 API 密钥；本地无认证服务可以留空。
-3. 点击左侧机器人图标，选择“当前笔记”或“整个知识库”后提问。
-4. 回答下方的引用可以直接打开对应笔记或标题。
+1. 安装依赖：`npm install` 和 `python -m pip install -e apps/local-agent`。
+2. 启动本机服务：`python apps/local-agent/src/main.py`。
+3. 在 Obsidian 插件设置中配置 OpenAI-compatible 地址、模型和 SecretStorage 密钥。
+4. 点击“自动连接”，或等待插件自动发现 `8765-8785` 端口。
+5. 打开侧栏后选择会话、Default/Plan 模式和知识范围。
 
-## 开发环境
+运行数据位于当前 Vault 的 `.obsidian-agent-data/`：`sessions.sqlite3` 保存 Agent 会话，`state.sqlite3` 保存操作状态，`audit.jsonl` 保存写入审计。Skills 默认从 Vault 的 `skills/` 加载。
 
-- Node.js 20+
-- Obsidian 1.11.4+
+## 开发
 
-## 开发命令
+要求 Node.js 20+、Python 3.11+。
 
 ```bash
-npm install
 npm run check
-npm test
+npm run test:plugin
+npm run test:python
 npm run build
-npm run dev
 ```
 
-`npm run dev` 会监听源码并持续生成 `apps/obsidian-plugin/main.js`；`npm run build` 生成生产构建。
-
-## 本地安装
-
-将以下文件放入测试 Vault 的 `.obsidian/plugins/personal-knowledge-agent/`：
-
-```text
-apps/obsidian-plugin/main.js
-apps/obsidian-plugin/manifest.json
-apps/obsidian-plugin/styles.css
-```
-
-重新加载 Obsidian 后，在社区插件设置中启用 `Personal Knowledge Agent`。
-开发和测试必须使用独立测试 Vault，不直接操作主知识库。
+也可一次运行 `npm run verify`。生产插件文件为 `apps/obsidian-plugin/main.js`、`manifest.json` 和 `styles.css`；开发和测试请使用独立 Vault。

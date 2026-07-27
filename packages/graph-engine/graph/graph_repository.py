@@ -1,1 +1,0 @@
-"""Graph repository port."""

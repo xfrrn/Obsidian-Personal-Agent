@@ -1,1 +1,0 @@
-"""Validate note use case."""

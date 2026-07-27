@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [
     str(ROOT),
     str(ROOT / "packages"),
-    str(ROOT / "packages" / "agent-core"),
     str(ROOT / "apps" / "local-agent" / "src"),
 ]
 
-from infrastructure.operation_plans import (  # noqa: E402
+from agent.obsidian.operation_plans import (  # noqa: E402
     ExecutionMode,
     ExecutionPolicy,
     FilesystemOperationPlanExecutor,
@@ -254,5 +255,49 @@ def test_delete_folder_rejects_non_empty_directory(tmp_path: Path) -> None:
             assert "folder is not empty" in str(error)
         else:
             raise AssertionError("non-empty folders must not be deleted")
+
+    asyncio.run(run())
+
+
+def test_existing_path_without_access_ledger_fails_closed(tmp_path: Path) -> None:
+    (tmp_path / ".obsidian").mkdir()
+    (tmp_path / "Note.md").write_text("before\n", encoding="utf-8")
+    manager = _manager(tmp_path, ExecutionMode.CONFIRM_ALL)
+
+    async def run() -> None:
+        try:
+            await manager.stage({
+                "operations": [
+                    {"type": "update-note", "path": "Note.md", "oldText": "before", "newText": "after"},
+                ],
+                "context": {},
+            })
+        except PermissionError as error:
+            assert "outside the planning context" in str(error)
+        else:
+            raise AssertionError("existing paths require an explicit access ledger")
+
+    asyncio.run(run())
+
+
+def test_expired_plan_cannot_execute(tmp_path: Path) -> None:
+    (tmp_path / ".obsidian").mkdir()
+    manager = _manager(tmp_path, ExecutionMode.CONFIRM_ALL)
+
+    async def run() -> None:
+        with patch("agent.obsidian.operation_plans._plan_ttl", return_value=timedelta(seconds=-1)):
+            plan = await manager.stage({
+                "operations": [
+                    {"type": "create-note", "path": "00-Inbox/Expired.md", "content": "no\n"},
+                ],
+                "context": {"source": "interactive"},
+            })
+        try:
+            await manager.execute(plan["id"], confirmation_token=plan["confirmationToken"])
+        except ValueError as error:
+            assert "expired" in str(error)
+        else:
+            raise AssertionError("expired plans must fail closed")
+        assert not (tmp_path / "00-Inbox" / "Expired.md").exists()
 
     asyncio.run(run())

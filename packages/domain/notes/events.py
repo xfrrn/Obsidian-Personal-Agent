@@ -1,1 +1,0 @@
-"""Note domain events."""

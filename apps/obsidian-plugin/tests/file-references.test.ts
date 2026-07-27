@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { App } from "obsidian";
 import { TFile } from "obsidian";
-import { extractFileReferencePaths } from "../src/obsidian/vault-reader";
+import { extractFileReferencePaths } from "../src/obsidian/file-references";
 
 test("@ file references resolve markdown paths", () => {
   const app = fakeApp([

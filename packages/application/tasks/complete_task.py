@@ -1,1 +1,0 @@
-"""Complete task use case."""

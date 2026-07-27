@@ -1,1 +1,0 @@
-"""Background graph update worker."""
