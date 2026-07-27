@@ -66,7 +66,9 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
     started_at = time.monotonic()
     _LOGGER.info("turn.started")
     try:
-        user_message = session.conversation.append_user(context.user_text)
+        user_message = session.conversation.append_user(
+            context.user_text, context.file_references
+        )
         await session.persist_messages(
             context.submission_id, ((user_message, True),), "running"
         )

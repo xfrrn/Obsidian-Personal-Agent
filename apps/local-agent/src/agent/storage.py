@@ -344,7 +344,15 @@ def _message_from_row(row: sqlite3.Row) -> StoredMessage:
 
 
 def _title_from_message(message: dict[str, Any]) -> str:
-    content = message.get("content")
+    content = message.get("display_content")
+    if (not isinstance(content, str) or not content.strip()) and isinstance(
+        message.get("references"), list
+    ):
+        first = message["references"][0] if message["references"] else None
+        if isinstance(first, dict) and isinstance(first.get("path"), str):
+            return f"@{first['path']}"[:60]
+    if not isinstance(content, str) or not content.strip():
+        content = message.get("content")
     if not isinstance(content, str):
         return "新对话"
     return " ".join(content.split())[:60] or "新对话"

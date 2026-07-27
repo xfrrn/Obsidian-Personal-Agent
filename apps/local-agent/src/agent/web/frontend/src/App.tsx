@@ -33,6 +33,10 @@ type MessageRole = "user" | "assistant" | "error" | "notice"
 type ToolState = "running" | "success" | "error" | "interrupted"
 type PlanStepStatus = "pending" | "in_progress" | "completed"
 
+type FileReference = {
+  path: string
+}
+
 type PlanState = {
   explanation?: string
   plan: Array<{ step: string; status: PlanStepStatus }>
@@ -69,6 +73,7 @@ type ChatMessage = {
   text: string
   createdAt: number
   streaming?: boolean
+  references?: FileReference[]
 }
 
 type Conversation = {
@@ -85,7 +90,7 @@ type Conversation = {
 
 type ConversationDetail = {
   session: Conversation
-  messages: Array<{ id: string; role: "user" | "assistant"; text: string; created_at: number }>
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string; created_at: number; references?: FileReference[] }>
   changes: ChangeSet[]
 }
 
@@ -93,6 +98,7 @@ type QueuedMessage = {
   id: string
   text: string
   mode: ModeKind
+  references: FileReference[]
 }
 
 type ApprovalRequest = {
@@ -173,11 +179,11 @@ async function requestJson<T>(path: string, body?: unknown): Promise<T> {
   return data as T
 }
 
-async function streamEvents(sessionId: string, text: string, mode: ModeKind, onEvent: (event: AgentEvent) => void) {
+async function streamEvents(sessionId: string, text: string, mode: ModeKind, references: FileReference[], onEvent: (event: AgentEvent) => void) {
   const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, mode }),
+    body: JSON.stringify({ text, mode, references }),
   })
   if (!response.ok || !response.body) {
     const data = await response.json().catch(() => ({}))
@@ -214,6 +220,42 @@ function groupTraceSteps(steps: TraceStep[]) {
     else groups.push({ id: step.id, kind: "tools", tools: [step] })
   }
   return groups
+}
+
+function trailingFileMention(text: string) {
+  return /(?:^|\s)@([^\s@]*)$/.exec(text)?.[1] ?? null
+}
+
+function removeTrailingFileMention(text: string) {
+  return text.replace(/(^|\s)@[^\s@]*$/, "$1")
+}
+
+function fileName(path: string) {
+  return path.split("/").pop() || path
+}
+
+function parentPath(path: string) {
+  const parts = path.split("/")
+  return parts.length > 1 ? parts.slice(0, -1).join("/") : ""
+}
+
+function FileReferenceBadges({ references, onRemove, className = "mt-2" }: { references?: FileReference[]; onRemove?: (path: string) => void; className?: string }) {
+  if (!references?.length) return null
+  return (
+    <div className={`flex max-w-full flex-wrap gap-1.5 ${className}`}>
+      {references.map((reference) => (
+        <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-background px-1.5 py-1 text-[11px] font-medium text-muted-foreground" key={reference.path}>
+          <FileText className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 truncate">@{reference.path}</span>
+          {onRemove && (
+            <button className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" type="button" onClick={() => onRemove(reference.path)} aria-label={`移除引用 ${reference.path}`}>
+              <X className="size-3" aria-hidden="true" />
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 function ToolGroup({ tools }: { tools: ToolTraceStep[] }) {
@@ -434,10 +476,16 @@ function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; ch
   )
 }
 
-function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend }: { sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind) => Promise<void> }) {
+function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend }: { sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind, references: FileReference[]) => Promise<void> }) {
   const [input, setInput] = useState("")
+  const [selectedReferences, setSelectedReferences] = useState<FileReference[]>([])
+  const [fileSuggestions, setFileSuggestions] = useState<FileReference[]>([])
+  const [fileSuggestionsLoading, setFileSuggestionsLoading] = useState(false)
+  const [fileSuggestionsError, setFileSuggestionsError] = useState<string | null>(null)
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([])
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const referenceQuery = trailingFileMention(input)
   const timeline: TimelineEntry[] = [
     ...messages.map((message) => ({ kind: "message" as const, at: message.createdAt, message })),
     ...traces.map((trace) => ({ kind: "trace" as const, at: trace.startedAt, trace })),
@@ -449,21 +497,54 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" })
   }, [messages, traces, changes])
 
+  useEffect(() => {
+    if (referenceQuery === null) {
+      setFileSuggestions([])
+      setFileSuggestionsLoading(false)
+      setFileSuggestionsError(null)
+      return
+    }
+    let cancelled = false
+    setFileSuggestionsLoading(true)
+    setFileSuggestionsError(null)
+    requestJson<{ files: FileReference[] }>(`/api/workspace/files?q=${encodeURIComponent(referenceQuery)}`)
+      .then((data) => {
+        if (!cancelled) setFileSuggestions(data.files)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFileSuggestions([])
+          setFileSuggestionsError("无法读取工作区文件")
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setFileSuggestionsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [referenceQuery])
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     const text = input.trim()
-    if (!text) return
+    const references = selectedReferences
+    if (!text && references.length === 0) return
     setInput("")
+    setSelectedReferences([])
+    setFileSuggestions([])
+    setFileSuggestionsLoading(false)
+    setFileSuggestionsError(null)
     if (busy) {
-      setQueuedMessages((messages) => [...messages, { id: id("queued"), text, mode }])
+      setQueuedMessages((messages) => [...messages, { id: id("queued"), text, mode, references }])
       return
     }
-    await onSend(text, mode)
+    await onSend(text, mode, references)
   }
 
   const guideMessage = async (message: QueuedMessage) => {
     setQueuedMessages((messages) => messages.filter(({ id }) => id !== message.id))
-    await onSend(message.text, message.mode)
+    await onSend(message.text, message.mode, message.references)
   }
 
   const removeQueuedMessage = (messageId: string) => {
@@ -476,6 +557,23 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
       event.currentTarget.form?.requestSubmit()
     }
   }
+
+  const addReference = (reference: FileReference) => {
+    setSelectedReferences((references) => references.some(({ path }) => path === reference.path) ? references : [...references, reference])
+    setInput((value) => removeTrailingFileMention(value))
+    setFileSuggestions([])
+    setFileSuggestionsLoading(false)
+    setFileSuggestionsError(null)
+    textareaRef.current?.focus()
+  }
+
+  const removeReference = (path: string) => {
+    setSelectedReferences((references) => references.filter((reference) => reference.path !== path))
+  }
+  const visibleFileSuggestions = referenceQuery === null
+    ? []
+    : fileSuggestions.filter((file) => !selectedReferences.some((reference) => reference.path === file.path))
+  const showFileSuggestions = referenceQuery !== null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -502,7 +600,10 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
                   {message.role === "assistant" ? (
                     <Streamdown className={markdownClassName} isAnimating={Boolean(message.streaming)} mode={message.streaming ? "streaming" : "static"}>{message.text}</Streamdown>
                   ) : (
-                    <p className="m-0 whitespace-pre-wrap">{message.text}</p>
+                    <>
+                      {message.text && <p className="m-0 whitespace-pre-wrap">{message.text}</p>}
+                      <FileReferenceBadges references={message.references} />
+                    </>
                   )}
                 </div>
               </article>
@@ -531,7 +632,10 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
         <section className="mx-auto grid w-full max-w-[820px] gap-2 px-4 pb-1" aria-label="待引导消息">
           {queuedMessages.map((message) => (
             <article className="relative flex min-h-[52px] items-center gap-3 rounded-[10px] border border-border bg-background py-[9px] pr-2.5 pl-3.5 shadow-[0_4px_14px_rgb(0_0_0/.035)] before:text-[15px] before:text-muted-foreground before:content-['⠿']" key={message.id}>
-              <p className="m-0 min-w-0 flex-1 truncate text-sm leading-[1.45] text-foreground">{message.text}</p>
+              <div className="min-w-0 flex-1">
+                {message.text && <p className="m-0 truncate text-sm leading-[1.45] text-foreground">{message.text}</p>}
+                <FileReferenceBadges references={message.references} className="mt-1" />
+              </div>
               <div className="flex shrink-0 items-center gap-1">
                 <button className="cursor-pointer rounded-md bg-transparent px-2 py-1.5 text-[13px] font-semibold text-muted-foreground hover:bg-accent hover:text-foreground" type="button" onClick={() => void guideMessage(message)}>引导</button>
                 <button className="grid size-[30px] cursor-pointer place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground [&>svg]:size-4" type="button" title="删除排队消息" aria-label="删除排队消息" onClick={() => removeQueuedMessage(message.id)}><Trash2 /></button>
@@ -541,28 +645,59 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
         </section>
       )}
       <form className="bg-[var(--page)] px-3 pt-2.5 pb-3" onSubmit={submit}>
-        <div className="mx-auto w-full max-w-[820px] rounded-xl border border-border bg-background px-3.5 pt-[13px] pb-2.5 shadow-[0_8px_24px_rgb(0_0_0/.04)]">
-          <textarea
-            className="min-h-[58px] w-full resize-y border-0 bg-transparent p-0 leading-normal text-foreground outline-0 placeholder:text-muted-foreground"
-            aria-label="消息"
-            maxLength={20_000}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="给 Agent 下达任务…"
-            value={input}
-          />
-          <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <select className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50" aria-label="协作模式" disabled={busy} onChange={(event) => onModeChange(event.target.value as ModeKind)} value={mode}>
-                <option value="default">Default</option>
-                <option value="plan">Plan</option>
-              </select>
-              <span className="max-[520px]:hidden">Enter 发送 · Shift + Enter 换行</span>
+        <div className="mx-auto w-full max-w-[820px] space-y-2">
+          {showFileSuggestions && (
+            <div className="overflow-hidden rounded-[18px] border border-border bg-background p-2 shadow-[0_18px_50px_rgb(0_0_0/.22)]">
+              <div className="px-2 pb-1 text-[12px] font-medium text-muted-foreground">添加</div>
+              <div className="max-h-[340px] overflow-y-auto pr-1">
+                {fileSuggestionsLoading ? (
+                  <div className="flex items-center gap-2 rounded-xl px-2 py-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    正在读取工作区文件
+                  </div>
+                ) : fileSuggestionsError ? (
+                  <div className="rounded-xl px-2 py-2 text-sm text-muted-foreground">{fileSuggestionsError}</div>
+                ) : visibleFileSuggestions.length === 0 ? (
+                  <div className="rounded-xl px-2 py-2 text-sm text-muted-foreground">没有匹配的文件</div>
+                ) : (
+                  visibleFileSuggestions.map((file, index) => (
+                    <button className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left hover:bg-accent ${index === 0 ? "bg-accent" : ""}`} key={file.path} type="button" onClick={() => addReference(file)}>
+                      <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-foreground">{fileName(file.path)}</span>
+                        {parentPath(file.path) && <span className="block truncate text-xs text-muted-foreground">{parentPath(file.path)}</span>}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
-            <button className="inline-flex cursor-pointer items-center gap-[7px] rounded-[7px] bg-primary px-[11px] py-2 text-[13px] font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45 [&>svg]:size-[15px]" disabled={!input.trim()} type="submit">
-              {busy ? <Plus aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
-              {busy ? "加入队列" : "发送"}
-            </button>
+          )}
+          <div className="rounded-xl border border-border bg-background px-3.5 pt-[13px] pb-2.5 shadow-[0_8px_24px_rgb(0_0_0/.04)]">
+            <FileReferenceBadges references={selectedReferences} onRemove={removeReference} className="mb-2" />
+            <textarea
+              ref={textareaRef}
+              className="min-h-[58px] w-full resize-y border-0 bg-transparent p-0 leading-normal text-foreground outline-0 placeholder:text-muted-foreground"
+              aria-label="消息"
+              maxLength={20_000}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="给 Agent 下达任务…"
+              value={input}
+            />
+            <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <select className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50" aria-label="协作模式" disabled={busy} onChange={(event) => onModeChange(event.target.value as ModeKind)} value={mode}>
+                  <option value="default">Default</option>
+                  <option value="plan">Plan</option>
+                </select>
+                <span className="max-[520px]:hidden">Enter 发送 · Shift + Enter 换行</span>
+              </div>
+              <button className="inline-flex cursor-pointer items-center gap-[7px] rounded-[7px] bg-primary px-[11px] py-2 text-[13px] font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-45 [&>svg]:size-[15px]" disabled={!input.trim() && selectedReferences.length === 0} type="submit">
+                {busy ? <Plus aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
+                {busy ? "加入队列" : "发送"}
+              </button>
+            </div>
           </div>
         </div>
       </form>
@@ -632,6 +767,7 @@ export default function App() {
         role: message.role,
         text: message.text,
         createdAt: message.created_at,
+        references: message.references,
       })),
       traces: [],
       changes: detail.changes,
@@ -765,7 +901,7 @@ export default function App() {
     localStorage.setItem("codex-agent-theme", themeMode)
   }, [dark, themeMode])
 
-  const sendMessage = async (text: string, mode: ModeKind) => {
+  const sendMessage = async (text: string, mode: ModeKind, references: FileReference[]) => {
     const sessionId = activeConversationId
     if (!sessionId) return
     const traceId = id("trace")
@@ -791,7 +927,7 @@ export default function App() {
       if (activeConversationIdRef.current === sessionId) setChanges(nextChanges)
     }
 
-    updateSessionMessages((current) => [...current, { id: id("user"), role: "user", text, createdAt: Date.now() }])
+    updateSessionMessages((current) => [...current, { id: id("user"), role: "user", text, references, createdAt: Date.now() }])
     updateSessionTraces((traces) => [...traces, { id: traceId, startedAt: Date.now(), steps: [] }])
     setRunningTurns((current) => ({
       ...current,
@@ -859,7 +995,7 @@ export default function App() {
       }))
     }
     try {
-      await streamEvents(sessionId, text, mode, (event) => {
+      await streamEvents(sessionId, text, mode, references, (event) => {
         if (event.kind === "turn_started" && event.data.mode) {
           setConversations((current) => current.map((conversation) =>
             conversation.id === sessionId ? { ...conversation, mode: event.data.mode! } : conversation

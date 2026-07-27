@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.protocol.mode import ModeKind
+from agent.protocol.op import FileReference
 from agent.skills.loader import Skill
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,7 @@ class TurnContext:
     submission_id: int
     user_text: str
     system_prompt: str
+    file_references: tuple[FileReference, ...] = ()
     skill_snapshot: tuple[Skill, ...] = ()
     mentioned_skills: tuple[Skill, ...] = ()
     mode: ModeKind = ModeKind.DEFAULT

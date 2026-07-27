@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent.llm.types import AssistantResponse
+from agent.protocol.op import FileReference
 
 
 INTERRUPTED_TOOL_CONTENT = "工具调用因回合中断而未完成。"
@@ -35,8 +36,13 @@ class ConversationHistory:
     def snapshot(self) -> list[dict[str, Any]]:
         return [dict(message) for message in self._messages]
 
-    def append_user(self, text: str) -> dict[str, Any]:
-        message = {"role": "user", "content": text}
+    def append_user(
+        self, text: str, references: tuple[FileReference, ...] = ()
+    ) -> dict[str, Any]:
+        message = {"role": "user", "content": _render_user_content(text, references)}
+        if references:
+            message["display_content"] = text
+            message["references"] = [{"path": reference.path} for reference in references]
         self._messages.append(message)
         return message
 
@@ -87,3 +93,10 @@ class ConversationHistory:
                 call_id = message.get("tool_call_id")
                 if isinstance(call_id, str):
                     self._pending_tool_calls.pop(call_id, None)
+
+
+def _render_user_content(text: str, references: tuple[FileReference, ...]) -> str:
+    if not references:
+        return text
+    paths = "\n".join(f"@{reference.path}" for reference in references)
+    return f"{text.strip()}\n\n{paths}" if text.strip() else paths

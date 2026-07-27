@@ -30,6 +30,7 @@ async def user_input_or_turn(session: Session) -> None:
         submission_id=submission.id,
         user_text=submission.op.text,
         system_prompt=build_mode_system_prompt(session.config.system_prompt, session.mode),
+        file_references=submission.op.references,
         skill_snapshot=skill_snapshot,
         mentioned_skills=collect_explicit_mentions(submission.op.text, skill_snapshot),
         mode=session.mode,

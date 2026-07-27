@@ -472,6 +472,72 @@ class WebRuntimeTest(unittest.TestCase):
             "data": {"delta": True, "reasoning_delta": True},
         })
 
+    def test_http_file_references_are_workspace_bound_and_persisted(self) -> None:
+        clients: list[RecordingClient] = []
+
+        def client_factory() -> RecordingClient:
+            client = RecordingClient()
+            clients.append(client)
+            return client
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            (workspace / "docs").mkdir()
+            (workspace / "docs" / "note.md").write_text("alpha reference", encoding="utf-8")
+            runtime = AgentRuntime(_settings(workspace), client_factory)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            try:
+                session_id = _post_json(f"{address}/api/sessions", {})["id"]
+                files = _get_json(f"{address}/api/workspace/files?q=note")["files"]
+                _post_sse(
+                    f"{address}/api/sessions/{session_id}/messages/stream",
+                    {"text": "read this", "references": ["docs/note.md"]},
+                )
+                detail = _get_json(f"{address}/api/sessions/{session_id}")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        user_message = next(
+            message for message in clients[0].requests[0] if message["role"] == "user"
+        )
+        self.assertIn({"path": "docs/note.md"}, files)
+        self.assertIn("@docs/note.md", user_message["content"])
+        self.assertNotIn("alpha reference", user_message["content"])
+        self.assertEqual(detail["messages"][0]["text"], "read this")
+        self.assertEqual(detail["messages"][0]["references"], [{"path": "docs/note.md"}])
+
+    def test_http_file_references_reject_outside_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (root / "outside.md").write_text("outside", encoding="utf-8")
+            runtime = AgentRuntime(_settings(workspace), RecordingClient)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            try:
+                session_id = _post_json(f"{address}/api/sessions", {})["id"]
+                with self.assertRaises(HTTPError) as rejected:
+                    _post_sse(
+                        f"{address}/api/sessions/{session_id}/messages/stream",
+                        {"text": "read outside", "references": ["../outside.md"]},
+                    )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        self.assertEqual(rejected.exception.code, 400)
+
     def test_http_approval_resumes_the_waiting_shell_call_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings = Settings(

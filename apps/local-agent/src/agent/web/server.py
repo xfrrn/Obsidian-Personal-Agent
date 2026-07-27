@@ -8,6 +8,7 @@ import ipaddress
 import json
 import logging
 import mimetypes
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from http import HTTPStatus
@@ -15,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from agent.changes import ChangeJournal
 from agent.config.settings import Settings
@@ -29,11 +30,14 @@ from agent.utils.logging import configure_logging
 from agent.web.metrics import AgentMetrics
 from agent.protocol.event import Event, EventKind
 from agent.protocol.mode import ModeKind
-from agent.protocol.op import ResolveApproval, UserInput
+from agent.protocol.op import FileReference, ResolveApproval, UserInput
 from agent.storage import SessionStore, StoredSession
 
 
 _LOGGER = logging.getLogger(__name__)
+MAX_FILE_REFERENCES = 5
+MAX_WORKSPACE_FILE_RESULTS = 80
+SKIPPED_WORKSPACE_DIRS = {".git", ".obsidian", ".pytest_cache", "__pycache__", "node_modules"}
 
 
 @dataclass(slots=True)
@@ -105,6 +109,30 @@ class AgentRuntime:
             "session_db_path": str(self._settings.session_db_path),
         }
 
+    def workspace_files(self, query: str = "") -> dict[str, Any]:
+        workspace = self._settings.workspace.resolve()
+        needle = query.strip().lower()[:200]
+        files: list[dict[str, str]] = []
+        for root, dirnames, filenames in os.walk(workspace):
+            dirnames[:] = sorted(
+                name for name in dirnames if not _skip_workspace_entry(name)
+            )
+            for filename in sorted(filenames):
+                if _skip_workspace_entry(filename):
+                    continue
+                path = Path(root) / filename
+                try:
+                    relative = path.resolve().relative_to(workspace)
+                except (OSError, ValueError):
+                    continue
+                display_path = relative.as_posix()
+                if needle and needle not in display_path.lower():
+                    continue
+                files.append({"path": display_path})
+                if len(files) >= MAX_WORKSPACE_FILE_RESULTS:
+                    return {"files": files}
+        return {"files": files}
+
     def update_configuration(self, settings: Settings) -> dict[str, Any]:
         """在空闲边界替换冻结配置，后续会话使用新的模型、工具和工作区。"""
 
@@ -150,7 +178,10 @@ class AgentRuntime:
                 {
                     "id": f"{stored.id}:{message.seq}",
                     "role": message.role,
-                    "text": message.payload.get("content", ""),
+                    "text": message.payload.get(
+                        "display_content", message.payload.get("content", "")
+                    ),
+                    "references": _message_references(message.payload),
                     "created_at": message.created_at,
                 }
                 for message in stored.messages
@@ -187,30 +218,44 @@ class AgentRuntime:
         text: str,
         session_id: str | None = None,
         mode: ModeKind | None = None,
+        references: tuple[str, ...] = (),
     ) -> list[Event]:
         """提交一条消息，并收集该回合的全部可展示事件。"""
 
-        return list(self.ask_events(text, session_id, mode))
+        return list(self.ask_events(text, session_id, mode, references))
 
     def ask_events(
         self,
         text: str,
         session_id: str | None = None,
         mode: ModeKind | None = None,
+        references: tuple[str, ...] = (),
     ) -> Iterator[Event]:
         """逐条产出回合事件，供 SSE 在模型生成期间立即转发。"""
 
-        if not text.strip():
+        file_references = self._resolve_file_references(references)
+        if not text.strip() and not file_references:
             raise ValueError("消息不能为空")
         if len(text) > 20_000:
             raise ValueError("消息不能超过 20000 个字符")
+        return self._ask_events(text, session_id, mode, file_references)
+
+    def _ask_events(
+        self,
+        text: str,
+        session_id: str | None,
+        mode: ModeKind | None,
+        references: tuple[FileReference, ...],
+    ) -> Iterator[Event]:
         # 只保护提交动作。持锁等完整 SSE 会使下一条输入无法到达调度器，
         # 从而把可取消的 steering 又变回串行对话。
         with self._request_lock:
             resolved_session_id = session_id or self._default_session_id
             if resolved_session_id is None:
                 raise RuntimeError("请先创建或选择会话")
-            turn_key = self._call(self._submit(resolved_session_id, text, mode))
+            turn_key = self._call(
+                self._submit(resolved_session_id, text, mode, references)
+            )
         try:
             while True:
                 event = self._call(self._next_turn_event(turn_key))
@@ -229,6 +274,32 @@ class AgentRuntime:
                 with self._request_lock:
                     if not self._closed:
                         self._call(self._discard_turn_events(turn_key))
+
+    def _resolve_file_references(self, paths: tuple[str, ...]) -> tuple[FileReference, ...]:
+        if len(paths) > MAX_FILE_REFERENCES:
+            raise ValueError(f"references 不能超过 {MAX_FILE_REFERENCES} 个文件")
+        workspace = self._settings.workspace.resolve()
+        references: list[FileReference] = []
+        seen: set[str] = set()
+        for raw_path in paths:
+            if not isinstance(raw_path, str) or not raw_path.strip() or len(raw_path) > 2_000:
+                raise ValueError("reference path 必须是有效的工作区相对路径")
+            path_text = raw_path.strip().replace("\\", "/")
+            if Path(path_text).is_absolute():
+                raise ValueError("@ 引用只能使用工作区内的相对路径")
+            target = (workspace / path_text).resolve()
+            try:
+                relative = target.relative_to(workspace)
+            except ValueError as exc:
+                raise ValueError("@ 引用不能指向工作区外的文件") from exc
+            display_path = relative.as_posix()
+            if display_path in seen:
+                continue
+            if not target.is_file():
+                raise ValueError(f"@ 引用文件不存在: {display_path}")
+            references.append(FileReference(display_path))
+            seen.add(display_path)
+        return tuple(references)
 
     def resolve_approval(
         self,
@@ -351,10 +422,14 @@ class AgentRuntime:
         self._turn_events.pop(turn_key, None)
 
     async def _submit(
-        self, session_id: str, text: str, mode: ModeKind | None
+        self,
+        session_id: str,
+        text: str,
+        mode: ModeKind | None,
+        references: tuple[FileReference, ...],
     ) -> tuple[str, int, int]:
         live = await self._ensure_live(session_id)
-        submission_id = live.handle.submit(UserInput(text, mode))
+        submission_id = live.handle.submit(UserInput(text, mode, references))
         turn_key = (session_id, live.generation, submission_id)
         # submit() 不会让出事件循环，因此调度器还没来得及发 TurnStarted；
         # 在这里建队列可确保新 turn 的首个事件不会丢失。
@@ -431,7 +506,8 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的固定方法名。
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/api/config":
             if not _is_loopback_client(self.client_address[0]):
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "配置只允许本机读取"})
@@ -443,6 +519,10 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/permissions":
             self._send_json(HTTPStatus.OK, self.server.runtime.permissions())
+            return
+        if path == "/api/workspace/files":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            self._send_json(HTTPStatus.OK, self.server.runtime.workspace_files(query))
             return
         if path == "/api/sessions":
             self._send_json(
@@ -560,12 +640,13 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(text, str):
                     raise ValueError("text 必须是字符串")
                 mode = _mode_body(body)
+                references = _reference_paths(body)
                 if route[1] == "messages/stream":
                     self._stream_events(
-                        self.server.runtime.ask_events(text, route[0], mode)
+                        self.server.runtime.ask_events(text, route[0], mode, references)
                     )
                 else:
-                    events = self.server.runtime.ask(text, route[0], mode)
+                    events = self.server.runtime.ask(text, route[0], mode, references)
                     self._send_json(
                         HTTPStatus.OK,
                         {"events": [_event_json(event) for event in events]},
@@ -586,7 +667,8 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 text = body.get("text")
                 if not isinstance(text, str):
                     raise ValueError("text 必须是字符串")
-                events = self.server.runtime.ask(text, mode=_mode_body(body))
+                references = _reference_paths(body)
+                events = self.server.runtime.ask(text, mode=_mode_body(body), references=references)
                 self._send_json(HTTPStatus.OK, {"events": [_event_json(event) for event in events]})
                 return
             if path == "/api/messages/stream":
@@ -594,8 +676,9 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 text = body.get("text")
                 if not isinstance(text, str):
                     raise ValueError("text 必须是字符串")
+                references = _reference_paths(body)
                 self._stream_events(
-                    self.server.runtime.ask_events(text, mode=_mode_body(body))
+                    self.server.runtime.ask_events(text, mode=_mode_body(body), references=references)
                 )
                 return
             if path == "/api/approvals":
@@ -687,6 +770,23 @@ def _mode_body(body: dict[str, Any]) -> ModeKind | None:
     if not isinstance(value, str):
         raise ValueError("mode 必须是字符串")
     return ModeKind.parse(value)
+
+
+def _reference_paths(body: dict[str, Any]) -> tuple[str, ...]:
+    if "references" not in body or body.get("references") is None:
+        return ()
+    raw_references = body["references"]
+    if not isinstance(raw_references, list):
+        raise ValueError("references 必须是数组")
+    paths: list[str] = []
+    for item in raw_references:
+        if isinstance(item, str):
+            paths.append(item)
+        elif isinstance(item, dict) and isinstance(item.get("path"), str):
+            paths.append(item["path"])
+        else:
+            raise ValueError("references 只能包含文件路径")
+    return tuple(paths)
 
 
 def _undo_paths(body: dict[str, Any]) -> list[str]:
@@ -825,6 +925,21 @@ def _session_json(session: StoredSession) -> dict[str, Any]:
         "mode": session.mode.value,
         "plan": session.current_plan.as_dict() if session.current_plan is not None else None,
     }
+
+
+def _message_references(payload: dict[str, Any]) -> list[dict[str, str]]:
+    references = payload.get("references")
+    if not isinstance(references, list):
+        return []
+    return [
+        {"path": item["path"]}
+        for item in references
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    ]
+
+
+def _skip_workspace_entry(name: str) -> bool:
+    return name in SKIPPED_WORKSPACE_DIRS or name.startswith(".")
 
 
 def _session_route(path: str) -> tuple[str, str] | None:

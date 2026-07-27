@@ -13,12 +13,18 @@ from agent.protocol.mode import ModeKind
 
 
 @dataclass(frozen=True, slots=True)
+class FileReference:
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class UserInput:
     """一条来自用户的新输入。"""
 
     text: str
     # None 沿用会话当前选择，让既有嵌入式调用保持兼容。
     mode: ModeKind | None = None
+    references: tuple[FileReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

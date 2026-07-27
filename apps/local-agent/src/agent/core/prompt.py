@@ -21,7 +21,7 @@ def build_messages(
         {"role": "system", "content": system_prompt},
         *({"role": "system", "content": message} for message in context_messages),
         *([{"role": "assistant", "content": compacted_summary}] if compacted_summary else []),
-        *(dict(message) for message in history),
+        *(_model_message(message) for message in history),
     ]
 
 
@@ -70,3 +70,10 @@ def _has_complete_tool_results(block: list[dict[str, Any]]) -> bool:
                 return False
             pending_call_ids.remove(call_id)
     return not pending_call_ids
+
+
+def _model_message(message: dict[str, Any]) -> dict[str, Any]:
+    model_message = dict(message)
+    model_message.pop("display_content", None)
+    model_message.pop("references", None)
+    return model_message
