@@ -5,13 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date
 import json
-import os
 from pathlib import Path
-from uuid import uuid4
 
 from agent.config.settings import Settings
 from agent.permissions import ToolAccess
 from agent.protocol.mode import ModeKind
+from agent.tools.handlers.note_files import note_path, read_note, write_note_if_unchanged, yaml_scalar
 from agent.tools.types import ToolExecution, ToolSpec
 
 
@@ -67,28 +66,13 @@ class CreateFrontmatterTool:
         if granted_access is not ToolAccess.WORKSPACE_WRITE:
             raise PermissionError("本次 frontmatter 创建尚未获得工作区写入权限")
         target, title, status, tags = _parse_arguments(self._workspace, arguments)
-        if not target.is_file():
-            raise ValueError(f"笔记不存在: {target.relative_to(self._workspace)}")
-
-        original = target.read_bytes()
-        body = original.removeprefix(b"\xef\xbb\xbf")
-        try:
-            text = body.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError("笔记必须使用 UTF-8 编码") from exc
+        original, text = read_note(target)
         if text.startswith("---\n") or text.startswith("---\r\n"):
             raise ValueError("笔记已经包含 frontmatter，不会重复创建")
 
         created = self._today()
-        content = _render_frontmatter(title, status, created, tags).encode("utf-8") + body
-        temporary = target.with_name(f".{target.name}.frontmatter-{uuid4().hex}")
-        try:
-            temporary.write_bytes(content)
-            if target.read_bytes() != original:
-                raise RuntimeError("笔记在写入期间发生变化，未创建 frontmatter")
-            os.replace(temporary, target)
-        finally:
-            temporary.unlink(missing_ok=True)
+        content = _render_frontmatter(title, status, created, tags).encode("utf-8") + text.encode("utf-8")
+        write_note_if_unchanged(target, original, content)
 
         relative_path = target.relative_to(self._workspace).as_posix()
         return ToolExecution(
@@ -106,7 +90,7 @@ def _parse_arguments(
     if unknown:
         raise ValueError(f"包含未知字段: {', '.join(sorted(unknown))}")
 
-    target = _note_path(workspace, arguments.get("path"))
+    target = note_path(workspace, arguments.get("path"))
     title = _text(arguments.get("title"), "title", 500)
     status = arguments.get("status")
     if status not in {"todo", "doing", "done"}:
@@ -119,24 +103,6 @@ def _parse_arguments(
         raise ValueError("tags 不能超过 50 个")
     tags = [_text(value, f"tags[{index}]", 100) for index, value in enumerate(raw_tags)]
     return target, title, status, tags
-
-
-def _note_path(workspace: Path, value: object) -> Path:
-    path_text = _text(value, "path", 1_000)
-    raw_path = Path(path_text)
-    if raw_path.is_absolute() or raw_path.drive:
-        raise ValueError("path 必须是 Vault 内的相对路径")
-    if any(part.startswith(".") for part in raw_path.parts):
-        raise ValueError("path 不能包含隐藏目录或路径跳转")
-    if raw_path.suffix.lower() != ".md":
-        raise ValueError("path 必须以 .md 结尾")
-    try:
-        target = (workspace / raw_path).resolve()
-    except OSError as exc:
-        raise ValueError("path 不是有效路径") from exc
-    if not target.is_relative_to(workspace):
-        raise ValueError("path 超出 Vault")
-    return target
 
 
 def _text(value: object, name: str, limit: int) -> str:
@@ -155,21 +121,13 @@ def _render_frontmatter(
 ) -> str:
     lines = [
         "---",
-        f"title: {_yaml_scalar(title)}",
+        f"title: {yaml_scalar(title)}",
         f"status: {status}",
         f"created: {created.isoformat()}",
     ]
     if tags:
         lines.append("tags:")
-        lines.extend(f"  - {_yaml_scalar(tag)}" for tag in tags)
+        lines.extend(f"  - {yaml_scalar(tag)}" for tag in tags)
     else:
         lines.append("tags: []")
     return "\n".join((*lines, "---", "", ""))
-
-
-def _yaml_scalar(value: str) -> str:
-    ambiguous = {"null", "true", "false", "yes", "no", "on", "off", "~"}
-    plain = value[0].isalpha() and all(
-        character.isalnum() or character in " _-/+." for character in value
-    )
-    return value if plain and value.lower() not in ambiguous else json.dumps(value, ensure_ascii=False)

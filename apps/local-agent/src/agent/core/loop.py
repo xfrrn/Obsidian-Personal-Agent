@@ -28,9 +28,11 @@ from agent.tools.handlers.create_frontmatter import CreateFrontmatterTool
 from agent.tools.handlers.current_time import CurrentTimeTool
 from agent.tools.handlers.exec_command import ExecCommandTool
 from agent.tools.handlers.get_context_remaining import GetContextRemainingTool
+from agent.tools.handlers.tasks import MutateTaskTool, QueryTasksTool
 from agent.tools.handlers.new_context_window import NewContextWindowTool
 from agent.tools.handlers.obsidian_command import ObsidianCommandTool
 from agent.tools.handlers.update_plan import UpdatePlanTool
+from agent.tools.handlers.update_properties import UpdatePropertiesTool
 from agent.tools.handlers.write_stdin import WriteStdinTool
 from agent.tools.invocation import ToolInvocation
 from agent.tools.processes import ProcessManager
@@ -69,9 +71,12 @@ def create_session(
             settings.input_token_budget,
             settings.system_prompt,
         ),
+        MutateTaskTool(settings),
         NewContextWindowTool(context_window),
         ObsidianCommandTool(settings),
+        QueryTasksTool(settings),
         UpdatePlanTool(),
+        UpdatePropertiesTool(settings),
     ]
     process_manager = None
     if settings.shell_enabled:

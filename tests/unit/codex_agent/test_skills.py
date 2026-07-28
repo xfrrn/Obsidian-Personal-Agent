@@ -85,9 +85,12 @@ class SkillInjectionTest(unittest.IsolatedAsyncioTestCase):
                 "create_frontmatter",
                 "current_time",
                 "get_context_remaining",
+                "mutate_task",
                 "new_context_window",
                 "obsidian_command",
+                "query_tasks",
                 "update_plan",
+                "update_properties",
             ],
         )
 

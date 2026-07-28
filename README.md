@@ -53,6 +53,14 @@ obsidian commands filter=linter
 
 工具只接受 Vault 内已有的 `.md` 相对路径，不允许写入隐藏目录；笔记已有 frontmatter 时拒绝重复创建，正文保持不变。写入遵循现有工作区权限，Plan Mode 和只读模式下禁止执行，变更可通过现有文件记录撤销。它负责字段语义和初始结构；Linter 可以在之后继续统一空格、换行等格式，两者不冲突。
 
+### Properties 与 Tasks
+
+`update_properties` 更新已有 frontmatter 的顶层字段，支持字符串、数字、布尔值和字符串数组；正文及未指定字段保持不变。复杂嵌套 YAML 不在首版写入范围内。
+
+`query_tasks` 直接查询 Vault 中的 Markdown 任务，可按完成状态、路径前缀、截止日期和标签过滤。`mutate_task` 支持创建、完成、重新打开、改期和设置优先级；修改既有任务必须提交 `query_tasks` 返回的行号和原文，文件变化后会拒绝误写。循环任务的完成仍交给 Tasks 插件，以保留其生成下一次任务的行为。
+
+三个工具都直接维护 Markdown，不依赖 Bases 或 Tasks 私有 API。Properties 修改会自动反映到 Bases；需要统一格式时，在一次 Agent 操作结束后再通过 `obsidian_command` 运行 Linter。
+
 ## 开发
 
 ```powershell

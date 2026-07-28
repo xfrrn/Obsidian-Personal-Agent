@@ -17,3 +17,5 @@ Web 服务提供多会话、SSE 消息流、审批、权限、指标和 `/api/co
 `obsidian_command` 始终可用且不依赖通用 Shell 开关。它通过 Obsidian 1.12.7+ 安装器自带的官方 CLI 列出或执行命令面板命令；执行动作复用现有宿主执行审批，Plan Mode 下禁止执行。
 
 `create_frontmatter` 为 Vault 内已有的 Markdown 笔记添加固定的 `title`、`status`、`created`、`tags` frontmatter，不改正文、不重复创建，并复用现有工作区写权限和撤销记录。
+
+`update_properties` 安全更新已有顶层 Properties；`query_tasks` 查询 Tasks 兼容任务；`mutate_task` 以路径、行号和原文复核创建或修改任务。写工具均复用现有工作区权限和撤销记录。
