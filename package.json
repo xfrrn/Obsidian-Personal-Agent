@@ -10,7 +10,7 @@
     "start:agent": "python -m agent.web.server --host 127.0.0.1 --port 8000",
     "check": "tsc --noEmit -p apps/obsidian-plugin/tsconfig.json",
     "test": "npm run test:plugin",
-    "test:plugin": "esbuild apps/obsidian-plugin/tests/url.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/url.test.js",
+    "test:plugin": "esbuild apps/obsidian-plugin/tests/url.test.ts apps/obsidian-plugin/tests/file-suggestions.test.ts --bundle --platform=node --format=cjs --outdir=.test-build && node --test .test-build/url.test.js .test-build/file-suggestions.test.js",
     "test:python": "python -m pytest -q -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function tests/unit",
     "verify": "npm run check && npm run test:plugin && npm run test:python && npm run build"
   },

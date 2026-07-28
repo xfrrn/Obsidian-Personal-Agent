@@ -28,6 +28,7 @@ import {
   ThemeMode,
   updateObsidianSettings,
 } from "./obsidian-bridge"
+import { fileSuggestionIndex, type FileSuggestionKey } from "./file-suggestions"
 
 type ModeKind = "default" | "plan"
 type MessageRole = "user" | "assistant" | "error" | "notice"
@@ -483,11 +484,19 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
   const [fileSuggestions, setFileSuggestions] = useState<FileReference[]>([])
   const [fileSuggestionsLoading, setFileSuggestionsLoading] = useState(false)
   const [fileSuggestionsError, setFileSuggestionsError] = useState<string | null>(null)
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(0)
   const [stopping, setStopping] = useState(false)
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const referenceQuery = trailingFileMention(input)
+  const visibleFileSuggestions = referenceQuery === null
+    ? []
+    : fileSuggestions.filter((file) => !selectedReferences.some((reference) => reference.path === file.path))
+  const showFileSuggestions = referenceQuery !== null
+  const activeSuggestionIndex = visibleFileSuggestions.length
+    ? Math.min(highlightedSuggestionIndex, visibleFileSuggestions.length - 1)
+    : 0
   const hasInput = Boolean(input.trim() || selectedReferences.length)
   const timeline: TimelineEntry[] = [
     ...messages.map((message) => ({ kind: "message" as const, at: message.createdAt, message })),
@@ -503,6 +512,10 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
   useEffect(() => {
     if (!busy) setStopping(false)
   }, [busy])
+
+  useEffect(() => {
+    setHighlightedSuggestionIndex(0)
+  }, [referenceQuery])
 
   useEffect(() => {
     if (referenceQuery === null) {
@@ -569,6 +582,22 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return
+    const suggestionKey = ["ArrowUp", "ArrowDown", "Enter"].includes(event.key)
+      ? event.key as FileSuggestionKey
+      : null
+    if (showFileSuggestions && suggestionKey && !(suggestionKey === "Enter" && event.shiftKey)) {
+      event.preventDefault()
+      const index = fileSuggestionIndex(
+        activeSuggestionIndex,
+        visibleFileSuggestions.length,
+        suggestionKey,
+      )
+      if (index === null) return
+      if (suggestionKey === "Enter") addReference(visibleFileSuggestions[index])
+      else setHighlightedSuggestionIndex(index)
+      return
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault()
       event.currentTarget.form?.requestSubmit()
@@ -587,10 +616,6 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
   const removeReference = (path: string) => {
     setSelectedReferences((references) => references.filter((reference) => reference.path !== path))
   }
-  const visibleFileSuggestions = referenceQuery === null
-    ? []
-    : fileSuggestions.filter((file) => !selectedReferences.some((reference) => reference.path === file.path))
-  const showFileSuggestions = referenceQuery !== null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -666,7 +691,7 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
           {showFileSuggestions && (
             <div className="overflow-hidden rounded-[18px] border border-border bg-background p-2 shadow-[0_18px_50px_rgb(0_0_0/.22)]">
               <div className="px-2 pb-1 text-[12px] font-medium text-muted-foreground">添加</div>
-              <div className="max-h-[340px] overflow-y-auto pr-1">
+              <div className="max-h-[340px] overflow-y-auto pr-1" id="file-reference-suggestions" role="listbox" aria-label="文件候选">
                 {fileSuggestionsLoading ? (
                   <div className="flex items-center gap-2 rounded-xl px-2 py-2 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -678,7 +703,17 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
                   <div className="rounded-xl px-2 py-2 text-sm text-muted-foreground">没有匹配的文件</div>
                 ) : (
                   visibleFileSuggestions.map((file, index) => (
-                    <button className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left hover:bg-accent ${index === 0 ? "bg-accent" : ""}`} key={file.path} type="button" onClick={() => addReference(file)}>
+                    <button
+                      id={`file-reference-suggestion-${index}`}
+                      className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left hover:bg-accent ${index === activeSuggestionIndex ? "bg-accent" : ""}`}
+                      key={file.path}
+                      type="button"
+                      role="option"
+                      aria-selected={index === activeSuggestionIndex}
+                      onMouseEnter={() => setHighlightedSuggestionIndex(index)}
+                      onClick={() => addReference(file)}
+                      ref={index === activeSuggestionIndex ? (element) => element?.scrollIntoView({ block: "nearest" }) : undefined}
+                    >
                       <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium text-foreground">{fileName(file.path)}</span>
@@ -696,6 +731,11 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
               ref={textareaRef}
               className="min-h-[58px] w-full resize-y border-0 bg-transparent p-0 leading-normal text-foreground outline-0 placeholder:text-muted-foreground"
               aria-label="消息"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={showFileSuggestions}
+              aria-controls={showFileSuggestions ? "file-reference-suggestions" : undefined}
+              aria-activedescendant={showFileSuggestions && visibleFileSuggestions.length ? `file-reference-suggestion-${activeSuggestionIndex}` : undefined}
               maxLength={20_000}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={onKeyDown}
