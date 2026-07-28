@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fileSuggestionIndex } from "../../local-agent/src/agent/web/frontend/src/file-suggestions";
+import { fileSuggestionIndex } from "../ui/src/file-suggestions";
 
 test("arrow keys move and wrap the active file suggestion", () => {
   assert.equal(fileSuggestionIndex(0, 3, "ArrowDown"), 1);

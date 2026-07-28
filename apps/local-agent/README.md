@@ -1,22 +1,21 @@
 # CodeX-Agent Local Service
 
-## 启动 Web 控制台
+## 启动 API 后端
 
 ```powershell
 python -m pip install -e apps/local-agent
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="model-name"
-npm run build:agent-ui
 python -m agent.web.server --host 127.0.0.1 --port 8000
 ```
 
-正常使用 Windows 一体包时不需要安装 Python 或执行上述命令：插件会启动包内 EXE。源码开发时插件回退到系统 Python；最后一条命令仅保留用于独立调试服务。
+正常使用 Windows 一体包时不需要安装 Python 或执行上述命令：插件会启动包内 EXE。源码开发时插件回退到系统 Python；最后一条命令仅用于独立调试 API。
 
-Windows Agent 由仓库根目录的 `npm run package:windows` 在隔离 venv 中构建；入口为 `scripts/windows-agent-entry.py`，系统指令和 Web 前端静态文件会一同进入包内。
+Windows Agent 由仓库根目录的 `npm run package:windows` 在隔离 venv 中构建；入口为 `scripts/windows-agent-entry.py`。Python 包只包含后端和系统指令，React 界面与样式编译在 Obsidian 插件的 `main.js` 中。
 
 终端模式使用 `python -m agent.cli.main`。模型地址、沙盒、Shell 和会话数据库分别由 `OPENAI_BASE_URL`、`AGENT_SANDBOX_*`、`AGENT_ENABLE_SHELL` 和 `AGENT_SESSION_DB` 配置。
 
-Web 服务提供多会话、SSE 消息流、审批、权限、指标和 `/api/config` 运行时配置接口。Obsidian 插件首次连接时会把当前 Vault 设置为工作区；配置接口只接受本机请求，修改配置时不能有正在运行的回合。默认服务没有请求令牌，不要绑定到公网地址。
+HTTP 服务提供多会话、SSE 消息流、审批、权限、指标和 `/api/config` 运行时配置接口，根路径返回 404。Obsidian 插件首次连接时会把当前 Vault 设置为工作区；服务只为 `app://obsidian.md` 返回跨源许可，其他网页来源仍被浏览器拦截。配置接口只接受本机请求，修改配置时不能有正在运行的回合；默认服务没有请求令牌，不要绑定到公网地址。
 
 `obsidian_command` 始终可用且不依赖通用 Shell 开关。它通过 Obsidian 1.12.7+ 安装器自带的官方 CLI 列出或执行命令面板命令；执行动作复用现有宿主执行审批，Plan Mode 下禁止执行。
 

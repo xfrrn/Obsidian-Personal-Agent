@@ -24,9 +24,6 @@ Push-Location $repoRoot
 try {
     & npm run verify
     if ($LASTEXITCODE -ne 0) { throw "Project verification failed." }
-    & npm run build:agent-ui
-    if ($LASTEXITCODE -ne 0) { throw "Agent UI build failed." }
-
     Reset-WorkspaceDirectory $workRoot
     New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
     $packagePython = Join-Path $workRoot "venv/Scripts/python.exe"
@@ -39,14 +36,9 @@ try {
     $agentWork = Join-Path $workRoot "agent-work"
     $agentSource = Join-Path $repoRoot "apps/local-agent/src"
     $instructions = Join-Path $agentSource "agent/config/instructions"
-    $frontend = Join-Path $agentSource "agent/web/frontend/dist"
-    $fallbackPage = Join-Path $agentSource "agent/web/index.html"
-
     & $packagePython -m PyInstaller --noconfirm --clean --onedir --name codex-agent `
         --paths $agentSource `
         --add-data "$($instructions):agent/config/instructions" `
-        --add-data "$($frontend):agent/web/frontend/dist" `
-        --add-data "$($fallbackPage):agent/web" `
         --distpath $agentDist --workpath $agentWork --specpath $workRoot `
         "scripts/windows-agent-entry.py"
     if ($LASTEXITCODE -ne 0) { throw "Agent EXE build failed." }

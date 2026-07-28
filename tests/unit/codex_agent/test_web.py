@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from dataclasses import replace
+from http import HTTPStatus
 from pathlib import Path
 from threading import Event as ThreadEvent, Thread
 from unittest.mock import AsyncMock, patch
@@ -21,6 +22,7 @@ from agent.web.server import AgentHTTPServer, AgentRuntime, _is_loopback_client
 
 
 AGENT_ROOT = Path(__file__).resolve().parents[3] / "apps" / "local-agent" / "src" / "agent"
+UI_ROOT = Path(__file__).resolve().parents[3] / "apps" / "obsidian-plugin" / "ui" / "src"
 
 
 class RecordingClient:
@@ -168,13 +170,14 @@ class CommandEditingClient:
 
 
 class WebRuntimeTest(unittest.TestCase):
-    def test_unbuilt_frontend_fallback_has_no_second_agent_ui(self) -> None:
-        page = (AGENT_ROOT / "web" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("npm run build:agent-ui", page)
-        self.assertNotIn("/api/messages", page)
+    def test_backend_does_not_keep_a_second_agent_ui(self) -> None:
+        server = (AGENT_ROOT / "web" / "server.py").read_text(encoding="utf-8")
+        self.assertFalse((AGENT_ROOT / "web" / "index.html").exists())
+        self.assertNotIn("_static_file", server)
+        self.assertNotIn('path == "/api/new"', server)
 
     def test_frontend_keeps_session_navigation_enabled_while_a_turn_runs(self) -> None:
-        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")
         self.assertNotIn("disabled={busy || creatingConversation}", app)
         self.assertIn("conversationViews.current[sessionId]", app)
         self.assertIn("const nextMessages = update(view.messages)", app)
@@ -184,7 +187,7 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertIn("/interrupt`, {})", app)
 
     def test_frontend_exposes_archive_and_inline_approval_flows(self) -> None:
-        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")
 
         self.assertIn("/archive`, {})", app)
         self.assertIn("pendingApprovals", app)
@@ -192,23 +195,24 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertNotIn("window.confirm(\n            `允许这一次命令", app)
 
     def test_frontend_exposes_runtime_permission_switch(self) -> None:
-        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")
 
         self.assertIn('aria-label="沙盒权限"', app)
-        self.assertIn('requestJson<RuntimePermissions>("/api/permissions"', app)
+        self.assertIn('requestJson<RuntimePermissions>(agentUrl, "/api/permissions"', app)
         self.assertIn('value="danger-full-access"', app)
 
     def test_frontend_is_a_sidebar_chat_without_metrics_dashboard(self) -> None:
-        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")
 
         self.assertIn("session-drawer", app)
-        self.assertIn("subscribeToObsidian", app)
+        self.assertIn("hostState.context.activeFile", app)
+        self.assertNotIn("subscribeToObsidian", app)
         self.assertIn("connection-banner", app)
         self.assertNotIn('requestJson<Metrics>("/api/metrics"', app)
         self.assertNotIn("function Monitor", app)
 
     def test_frontend_shows_clickable_file_diffs_and_selective_undo(self) -> None:
-        app = (AGENT_ROOT / "web" / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+        app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")
 
         self.assertIn("function ChangeSetCard", app)
         self.assertIn("void showDiff(file.path)", app)
@@ -363,7 +367,7 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertFalse(first.is_alive())
         self.assertFalse(second.is_alive())
 
-    def test_http_page_creates_and_uses_a_conversation(self) -> None:
+    def test_http_backend_is_api_only_and_accepts_obsidian_cors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings = Settings(
                 api_key=None,
@@ -381,13 +385,26 @@ class WebRuntimeTest(unittest.TestCase):
             thread.start()
             address = f"http://127.0.0.1:{server.server_port}"
             try:
-                with urlopen(address) as response:
-                    self.assertIn("CodeX Agent", response.read().decode("utf-8"))
+                with self.assertRaises(HTTPError) as missing_page:
+                    urlopen(address)
+                self.assertEqual(missing_page.exception.code, HTTPStatus.NOT_FOUND)
 
-                created = _post_json(f"{address}/api/new", {})
-                self.assertEqual(created.get("ok"), True)
+                preflight = Request(
+                    f"{address}/api/sessions",
+                    headers={
+                        "Origin": "app://obsidian.md",
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
+                    },
+                    method="OPTIONS",
+                )
+                with urlopen(preflight) as cors_response:
+                    self.assertEqual(cors_response.status, HTTPStatus.NO_CONTENT)
+                    self.assertEqual(cors_response.headers["Access-Control-Allow-Origin"], "app://obsidian.md")
+
+                created = _post_json(f"{address}/api/sessions", {})
                 response = _post_json(
-                    f"{address}/api/messages",
+                    f"{address}/api/sessions/{created['id']}/messages",
                     {"text": "网页消息", "mode": "plan"},
                 )
                 with urlopen(f"{address}/api/sessions/{created['id']}") as detail_response:
@@ -423,8 +440,8 @@ class WebRuntimeTest(unittest.TestCase):
             thread.start()
             address = f"http://127.0.0.1:{server.server_port}"
             try:
-                self.assertEqual(_post_json(f"{address}/api/new", {}).get("ok"), True)
-                events = _post_sse(f"{address}/api/messages/stream", {"text": "网页消息"})
+                session_id = _post_json(f"{address}/api/sessions", {})["id"]
+                events = _post_sse(f"{address}/api/sessions/{session_id}/messages/stream", {"text": "网页消息"})
             finally:
                 server.shutdown()
                 server.server_close()
@@ -460,8 +477,8 @@ class WebRuntimeTest(unittest.TestCase):
             thread.start()
             address = f"http://127.0.0.1:{server.server_port}"
             try:
-                self.assertEqual(_post_json(f"{address}/api/new", {}).get("ok"), True)
-                events = _post_sse(f"{address}/api/messages/stream", {"text": "网页消息"})
+                session_id = _post_json(f"{address}/api/sessions", {})["id"]
+                events = _post_sse(f"{address}/api/sessions/{session_id}/messages/stream", {"text": "网页消息"})
             finally:
                 server.shutdown()
                 server.server_close()

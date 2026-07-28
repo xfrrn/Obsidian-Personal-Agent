@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type CodeXAgentPlugin from "./main";
-import type { ThemeMode } from "./bridge";
+import type { ThemeMode } from "./theme";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "never" | "on-request";

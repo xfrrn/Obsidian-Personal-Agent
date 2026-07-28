@@ -1,6 +1,6 @@
 # Personal Knowledge Agent
 
-一个将本机 CodeX-Agent Web 控制台嵌入 Obsidian 的桌面插件。插件负责侧栏、本机地址校验、配置同步和 Agent 进程托管；会话、模型循环、工具、Skills、Plan Mode、权限、沙盒和持久化由 Python Agent 负责。
+一个把 CodeX-Agent React 界面直接挂载到 Obsidian 侧栏的桌面插件。插件负责界面、本机地址校验、配置同步和 Agent 进程托管；会话、模型循环、工具、Skills、Plan Mode、权限、沙盒和持久化由 Python Agent 负责。
 
 ## 结构
 
@@ -8,17 +8,18 @@
 apps/
   obsidian-plugin/
     src/                    插件宿主、侧栏、设置与进程托管
+    ui/                     直接挂载到 ItemView 的 React 界面
   local-agent/src/agent/
     core/                   回合、调度和上下文压缩
     tools/                  工具、路由与执行
     permissions/ sandbox/   权限和 Windows 沙盒
     skills/                 工作区 Skills
-    web/                    HTTP/SSE 服务和 React 前端
+    web/                    JSON API 和 SSE 服务
     cli/                    终端入口
 tests/unit/codex_agent/     Agent 单元测试
 ```
 
-Obsidian 侧栏通过 iframe 加载默认地址 `http://127.0.0.1:8000`。插件只接受 localhost、`127.0.0.1` 和 `::1`，不维护第二套 Agent。
+React 界面编译进插件 `main.js`，通过 Shadow DOM 直接挂载到 Obsidian `ItemView`，保留原前端样式且不污染 Obsidian；Python 服务只提供 JSON API 和 SSE，不再提供网页。默认 Agent 地址为 `http://127.0.0.1:8000`，插件只接受 localhost、`127.0.0.1` 和 `::1`。
 
 模型地址、模型、工作区、权限、Shell 和会话数据库路径在插件设置面板持久化；API Key 单独保存在 Obsidian SecretStorage。侧栏打开或重新加载时，插件通过本机 `/api/config` 把配置同步给空闲的 Agent 运行时。
 
@@ -44,10 +45,10 @@ npm run package:windows
 python -m pip install -e apps/local-agent
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="model-name"
-npm run build:agent-ui
+npm run build
 ```
 
-以上安装与前端构建只需在源码开发环境准备一次。插件加载时会探测配置的本机地址；服务未运行时，一体包优先启动内置 EXE，源码环境回退到 `python -m agent.web.server`。插件卸载时关闭自己创建的进程，手动启动的已有服务会直接复用且不会被关闭。
+以上安装与构建只需在源码开发环境准备。`npm run build` 会先构建 React 界面，再将界面与样式编译进插件。插件加载时会探测配置的本机地址；服务未运行时，一体包优先启动内置 EXE，源码环境回退到 `python -m agent.web.server`。插件卸载时关闭自己创建的进程，手动启动的已有服务会直接复用且不会被关闭。
 
 插件首次加载时自动把当前 Vault 根目录设置为 Agent 工作区，不需要配置 `AGENT_WORKSPACE`。其他环境变量仍是服务首次启动时的后备配置；插件面板保存过配置后，以插件配置为准。会话默认保存在 `~/.codex-agent/sessions.db`，Skills 从工作区的 `skills/` 加载。`apply_patch` 默认可用，Shell 工具由插件设置开关控制。
 

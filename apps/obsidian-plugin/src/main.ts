@@ -2,7 +2,7 @@ import { Notice, Plugin, requestUrl } from "obsidian";
 import { AgentSettingTab, AgentSettings, ApprovalPolicy, DEFAULT_SETTINGS, SandboxMode } from "./settings";
 import { normalizeAgentUrl, normalizeApiBaseUrl } from "./url";
 import { CODEX_AGENT_VIEW_TYPE, CodeXAgentView } from "./codex-agent-view";
-import { isThemeMode, ThemeMode } from "./bridge";
+import { isThemeMode, ThemeMode } from "./theme";
 import { agentLaunchSpec } from "./agent-process";
 
 const API_KEY_SECRET_ID = "personal-knowledge-agent-api-key";
@@ -25,7 +25,7 @@ const { spawn } = require("node:child_process") as {
 };
 
 export default class CodeXAgentPlugin extends Plugin {
-  settings!: AgentSettings;
+  declare settings: AgentSettings;
   private apiKey = "";
   private agentProcess: AgentChildProcess | null = null;
   private agentStartPromise: Promise<void> | null = null;

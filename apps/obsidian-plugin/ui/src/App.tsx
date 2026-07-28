@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { FormEvent, KeyboardEvent, MouseEvent, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Streamdown } from "streamdown"
 import {
   Archive,
@@ -23,11 +23,12 @@ import {
 import {
   applyThemeTokens,
   clearThemeTokens,
+  HostSettingsPatch,
+  HostState,
   SandboxMode,
-  subscribeToObsidian,
   ThemeMode,
-  updateObsidianSettings,
-} from "./obsidian-bridge"
+} from "./host"
+import { codeDownloadName, writeCodeToClipboard } from "./code-actions"
 import { fileSuggestionIndex, type FileSuggestionKey } from "./file-suggestions"
 
 type ModeKind = "default" | "plan"
@@ -145,9 +146,17 @@ type RuntimePermissions = {
   sandbox_network: string
 }
 
+export type AgentAppProps = {
+  agentUrl: string
+  hostState: HostState
+  onSettingsChange: (settings: HostSettingsPatch) => void | Promise<void>
+}
+
 const markdownClassName = "text-[15px] leading-7 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
 const traceMarkdownClassName = "text-[13px] leading-6 [&_[data-streamdown=code-block]]:![content-visibility:visible] [&_[data-streamdown=code-block]]:![contain-intrinsic-size:auto]"
 const traceNoteClassName = `${traceMarkdownClassName} font-semibold text-foreground`
+// ponytail: Streamdown 全屏表格会挂到 document.body；原生侧栏先关闭它，需要时再提供 ItemView 内的 portal 容器。
+const markdownControls = { table: { fullscreen: false } } as const
 const messageClasses: Record<MessageRole, string> = {
   assistant: "",
   user: "ml-auto justify-end",
@@ -160,6 +169,67 @@ const messageBodyClasses: Record<MessageRole, string> = {
   notice: "w-full rounded border-l-2 border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground",
   error: "w-full rounded border-l-2 border-red-500 bg-muted px-3 py-2.5 text-xs text-red-600 dark:text-red-300",
 }
+
+function showCodeActionStatus(button: HTMLButtonElement, status: "done" | "error", label: string) {
+  window.clearTimeout(Number(button.dataset.resetTimer || 0))
+  button.dataset.actionStatus = status
+  button.ariaLabel = label
+  button.title = label
+  button.dataset.resetTimer = String(window.setTimeout(() => {
+    delete button.dataset.actionStatus
+    delete button.dataset.resetTimer
+    button.removeAttribute("aria-label")
+    button.title = button.dataset.streamdown === "code-block-copy-button" ? "Copy Code" : "Download file"
+  }, 1800))
+}
+
+// Streamdown 的原生 Clipboard API 在 Obsidian 权限环境中不稳定；统一接管代码块的两个操作按钮。
+async function handleCodeAction(event: MouseEvent<HTMLElement>) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  const button = target.closest<HTMLButtonElement>("[data-streamdown='code-block-copy-button'], [data-streamdown='code-block-download-button']")
+  if (!button || button.disabled) return
+  const block = button.closest<HTMLElement>("[data-streamdown='code-block']")
+  const codeElement = block?.querySelector<HTMLElement>("pre code")
+  if (!block || !codeElement) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  const code = codeElement.innerText
+
+  if (button.dataset.streamdown === "code-block-copy-button") {
+    const textarea = document.createElement("textarea")
+    textarea.value = code
+    textarea.readOnly = true
+    textarea.style.cssText = "position:fixed;opacity:0;pointer-events:none"
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      await writeCodeToClipboard(code, () => document.execCommand("copy"), (value) => navigator.clipboard.writeText(value))
+      showCodeActionStatus(button, "done", "已复制")
+    } catch {
+      showCodeActionStatus(button, "error", "复制失败")
+    } finally {
+      textarea.remove()
+    }
+    return
+  }
+
+  try {
+    const url = URL.createObjectURL(new Blob([code], { type: "text/plain;charset=utf-8" }))
+    const link = document.createElement("a")
+    link.href = url
+    link.download = codeDownloadName(block.dataset.language)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    showCodeActionStatus(button, "done", `已下载 ${link.download}`)
+  } catch {
+    showCodeActionStatus(button, "error", "下载失败")
+  }
+}
+
 function id(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`
 }
@@ -170,8 +240,8 @@ function formatElapsed(seconds: number) {
   return minutes ? `${minutes}m ${remaining}s` : `${remaining}s`
 }
 
-async function requestJson<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
+async function requestJson<T>(agentUrl: string, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${agentUrl}${path}`, {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -181,8 +251,8 @@ async function requestJson<T>(path: string, body?: unknown): Promise<T> {
   return data as T
 }
 
-async function streamEvents(sessionId: string, text: string, mode: ModeKind, references: FileReference[], onEvent: (event: AgentEvent) => void) {
-  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
+async function streamEvents(agentUrl: string, sessionId: string, text: string, mode: ModeKind, references: FileReference[], onEvent: (event: AgentEvent) => void) {
+  const response = await fetch(`${agentUrl}/api/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, mode, references }),
@@ -334,7 +404,7 @@ function RunTrace({ trace }: { trace: RunTrace }) {
       </summary>
       <div className="mt-3 grid gap-3 border-t border-border pt-3">
         {groups.length ? groups.map((group) => group.kind !== "tools" ? (
-          <Streamdown className={group.kind === "note" ? traceNoteClassName : traceMarkdownClassName} isAnimating={!trace.completedAt} key={group.id} mode={trace.completedAt ? "static" : "streaming"}>{group.text}</Streamdown>
+          <Streamdown className={group.kind === "note" ? traceNoteClassName : traceMarkdownClassName} controls={markdownControls} isAnimating={!trace.completedAt} key={group.id} mode={trace.completedAt ? "static" : "streaming"}>{group.text}</Streamdown>
         ) : (
           <ToolGroup key={`${group.id}:${group.tools.every((tool) => tool.state !== "running")}`} tools={group.tools} />
         )) : !trace.completedAt && (
@@ -388,7 +458,7 @@ function DiffView({ file }: { file: FileChange }) {
   )
 }
 
-function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; change: ChangeSet; onUpdated: (change: ChangeSet) => void }) {
+function ChangeSetCard({ agentUrl, sessionId, change, onUpdated }: { agentUrl: string; sessionId: string; change: ChangeSet; onUpdated: (change: ChangeSet) => void }) {
   const [detail, setDetail] = useState<ChangeSet | null>(null)
   const [openPath, setOpenPath] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -407,7 +477,7 @@ function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; ch
     try {
       let loaded = detail
       if (!loaded) {
-        loaded = await requestJson<ChangeSet>(`/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(change.id)}`)
+        loaded = await requestJson<ChangeSet>(agentUrl, `/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(change.id)}`)
         setDetail(loaded)
       }
       setOpenPath(path)
@@ -421,7 +491,7 @@ function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; ch
     setBusy(true)
     setError(null)
     try {
-      const updated = await requestJson<ChangeSet>(`/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(change.id)}/undo`, { paths })
+      const updated = await requestJson<ChangeSet>(agentUrl, `/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(change.id)}/undo`, { paths })
       setDetail(updated)
       setSelected(new Set())
       onUpdated(updated)
@@ -478,7 +548,7 @@ function ChangeSetCard({ sessionId, change, onUpdated }: { sessionId: string; ch
   )
 }
 
-function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend, onStop }: { sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind, references: FileReference[]) => Promise<void>; onStop: () => Promise<void> }) {
+function Chat({ agentUrl, sessionId, messages, traces, changes, approvals, busy, mode, plan, onChangeUpdated, onModeChange, onResolveApproval, onSend, onStop }: { agentUrl: string; sessionId: string; messages: ChatMessage[]; traces: RunTrace[]; changes: ChangeSet[]; approvals: ApprovalRequest[]; busy: boolean; mode: ModeKind; plan: PlanState | null; onChangeUpdated: (change: ChangeSet) => void; onModeChange: (mode: ModeKind) => void; onResolveApproval: (approval: ApprovalRequest, approved: boolean) => Promise<void>; onSend: (text: string, mode: ModeKind, references: FileReference[]) => Promise<void>; onStop: () => Promise<void> }) {
   const [input, setInput] = useState("")
   const [selectedReferences, setSelectedReferences] = useState<FileReference[]>([])
   const [fileSuggestions, setFileSuggestions] = useState<FileReference[]>([])
@@ -527,7 +597,7 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
     let cancelled = false
     setFileSuggestionsLoading(true)
     setFileSuggestionsError(null)
-    requestJson<{ files: FileReference[] }>(`/api/workspace/files?q=${encodeURIComponent(referenceQuery)}`)
+    requestJson<{ files: FileReference[] }>(agentUrl, `/api/workspace/files?q=${encodeURIComponent(referenceQuery)}`)
       .then((data) => {
         if (!cancelled) setFileSuggestions(data.files)
       })
@@ -543,7 +613,7 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
     return () => {
       cancelled = true
     }
-  }, [referenceQuery])
+  }, [agentUrl, referenceQuery])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -620,7 +690,7 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {plan && <PlanPanel plan={plan} />}
-      <section className="min-h-0 flex-1 overflow-y-auto" aria-live="polite">
+      <section className="min-h-0 flex-1 overflow-y-auto" aria-live="polite" onClickCapture={(event) => void handleCodeAction(event)}>
         <div className="mx-auto min-h-full w-full max-w-[820px] px-4 pt-5 pb-7">
           {messages.length === 0 && (
             <div className="mx-auto my-[13vh] max-w-[390px] text-center text-muted-foreground">
@@ -633,14 +703,14 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
           )}
           {timeline.map((item) => {
             if (item.kind === "trace") return <RunTrace key={`${item.trace.id}:${item.trace.completedAt ?? "running"}`} trace={item.trace} />
-            if (item.kind === "change") return <ChangeSetCard sessionId={sessionId} change={item.change} onUpdated={onChangeUpdated} key={item.change.id} />
+            if (item.kind === "change") return <ChangeSetCard agentUrl={agentUrl} sessionId={sessionId} change={item.change} onUpdated={onChangeUpdated} key={item.change.id} />
             const message = item.message
             return (
               <article key={message.id} className={`mb-[26px] flex max-w-[760px] gap-2.5 ${messageClasses[message.role]}`}>
                 {message.role === "assistant" && <Bot className="mt-[3px] size-[21px] shrink-0 text-foreground" aria-hidden="true" />}
                 <div className={messageBodyClasses[message.role]}>
                   {message.role === "assistant" ? (
-                    <Streamdown className={markdownClassName} isAnimating={Boolean(message.streaming)} mode={message.streaming ? "streaming" : "static"}>{message.text}</Streamdown>
+                    <Streamdown className={markdownClassName} controls={markdownControls} isAnimating={Boolean(message.streaming)} mode={message.streaming ? "streaming" : "static"}>{message.text}</Streamdown>
                   ) : (
                     <>
                       {message.text && <p className="m-0 whitespace-pre-wrap">{message.text}</p>}
@@ -686,7 +756,7 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
           ))}
         </section>
       )}
-      <form className="bg-[var(--page)] px-3 pt-2.5 pb-3" onSubmit={submit}>
+      <form className="shrink-0 bg-[var(--page)] px-3 pt-2.5 pb-3" onSubmit={submit}>
         <div className="mx-auto w-full max-w-[820px] space-y-2">
           {showFileSuggestions && (
             <div className="overflow-hidden rounded-[18px] border border-border bg-background p-2 shadow-[0_18px_50px_rgb(0_0_0/.22)]">
@@ -762,7 +832,7 @@ function Chat({ sessionId, messages, traces, changes, approvals, busy, mode, pla
   )
 }
 
-export default function App() {
+export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppProps) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -775,28 +845,24 @@ export default function App() {
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null)
   const [updatingPermissions, setUpdatingPermissions] = useState(false)
   const [conversationVersion, setConversationVersion] = useState(0)
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem("codex-agent-theme")
-    return saved === "light" || saved === "dark" ? saved : "system"
-  })
-  const [hostDark, setHostDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches)
-  const [activeFile, setActiveFile] = useState<string | null>(null)
+  const [themeMode, setThemeMode] = useState<ThemeMode>(hostState.theme.mode)
   const [connectionState, setConnectionState] = useState<"connecting" | "online" | "offline">("connecting")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const initialized = useRef(false)
   const activeConversationIdRef = useRef<string | null>(null)
   const conversationViews = useRef<Record<string, ConversationView>>({})
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const refreshPermissions = async () => {
     try {
-      setPermissions(await requestJson<RuntimePermissions>("/api/permissions"))
+      setPermissions(await requestJson<RuntimePermissions>(agentUrl, "/api/permissions"))
     } catch {
       // 权限接口不可用时只禁用切换，不影响兼容旧后端的对话能力。
     }
   }
 
   const refreshConversations = async () => {
-    const data = await requestJson<{ sessions: Conversation[] }>("/api/sessions")
+    const data = await requestJson<{ sessions: Conversation[] }>(agentUrl, "/api/sessions")
     setConversations(data.sessions)
     return data.sessions
   }
@@ -816,7 +882,7 @@ export default function App() {
     setMessages([])
     setTraces([])
     setChanges([])
-    const detail = await requestJson<ConversationDetail>(`/api/sessions/${encodeURIComponent(sessionId)}`)
+    const detail = await requestJson<ConversationDetail>(agentUrl, `/api/sessions/${encodeURIComponent(sessionId)}`)
     setConversations((current) => current.map((item) => item.id === sessionId ? detail.session : item))
     const view: ConversationView = {
       messages: detail.messages.map((message) => ({
@@ -839,7 +905,7 @@ export default function App() {
   const newConversation = async () => {
     setCreatingConversation(true)
     try {
-      const conversation = await requestJson<Conversation>("/api/sessions", {})
+      const conversation = await requestJson<Conversation>(agentUrl, "/api/sessions", {})
       setConversations((current) => [conversation, ...current])
       activeConversationIdRef.current = conversation.id
       setActiveConversationId(conversation.id)
@@ -874,7 +940,7 @@ export default function App() {
 
     setArchivingConversationId(conversation.id)
     try {
-      await requestJson(`/api/sessions/${encodeURIComponent(conversation.id)}/archive`, {})
+      await requestJson(agentUrl, `/api/sessions/${encodeURIComponent(conversation.id)}/archive`, {})
       const remaining = conversations.filter(({ id: sessionId }) => sessionId !== conversation.id)
       delete conversationViews.current[conversation.id]
       clearSessionApprovals(conversation.id)
@@ -905,7 +971,7 @@ export default function App() {
         : item),
     }))
     try {
-      await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}/approvals`, {
+      await requestJson(agentUrl, `/api/sessions/${encodeURIComponent(sessionId)}/approvals`, {
         call_id: approval.callId,
         approved,
         submission_id: approval.submissionId,
@@ -943,20 +1009,17 @@ export default function App() {
       initialized.current = true
       void initialize()
     }
-    return subscribeToObsidian((state) => {
-      if (state.theme.mode === "system") applyThemeTokens(state.theme.tokens)
-      else clearThemeTokens()
-      setHostDark(state.theme.isDark)
-      setThemeMode(state.theme.mode)
-      setActiveFile(state.context.activeFile)
-    })
-  }, [])
+  }, [agentUrl])
 
-  const dark = themeMode === "system" ? hostDark : themeMode === "dark"
+  useEffect(() => setThemeMode(hostState.theme.mode), [hostState.theme.mode])
+
+  const dark = themeMode === "system" ? hostState.theme.isDark : themeMode === "dark"
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark)
-    localStorage.setItem("codex-agent-theme", themeMode)
-  }, [dark, themeMode])
+    const root = rootRef.current
+    if (!root) return
+    if (themeMode === "system") applyThemeTokens(root, hostState.theme.tokens)
+    else clearThemeTokens(root)
+  }, [hostState.theme.tokens, themeMode])
 
   const sendMessage = async (text: string, mode: ModeKind, references: FileReference[]) => {
     const sessionId = activeConversationId
@@ -1052,7 +1115,7 @@ export default function App() {
       }))
     }
     try {
-      await streamEvents(sessionId, text, mode, references, (event) => {
+      await streamEvents(agentUrl, sessionId, text, mode, references, (event) => {
         if (event.kind === "turn_started" && event.data.mode) {
           setConversations((current) => current.map((conversation) =>
             conversation.id === sessionId ? { ...conversation, mode: event.data.mode! } : conversation
@@ -1214,7 +1277,7 @@ export default function App() {
 
   const stopMessage = async () => {
     if (!activeConversationId) return
-    await requestJson(`/api/sessions/${encodeURIComponent(activeConversationId)}/interrupt`, {})
+    await requestJson(agentUrl, `/api/sessions/${encodeURIComponent(activeConversationId)}/interrupt`, {})
   }
 
   const busy = activeConversationId !== null && Boolean(runningTurns[activeConversationId])
@@ -1243,12 +1306,12 @@ export default function App() {
 
     setUpdatingPermissions(true)
     try {
-      const updated = await requestJson<RuntimePermissions>("/api/permissions", {
+      const updated = await requestJson<RuntimePermissions>(agentUrl, "/api/permissions", {
         sandbox_mode: sandboxMode,
         confirmed: sandboxMode === "danger-full-access",
       })
       setPermissions(updated)
-      updateObsidianSettings({ sandboxMode: updated.sandbox_mode })
+      void onSettingsChange({ sandboxMode: updated.sandbox_mode })
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "无法切换权限")
     } finally {
@@ -1263,9 +1326,8 @@ export default function App() {
   }
   const toggleTheme = () => {
     const next: ThemeMode = dark ? "light" : "dark"
-    clearThemeTokens()
     setThemeMode(next)
-    updateObsidianSettings({ themeMode: next })
+    void onSettingsChange({ themeMode: next })
   }
 
   useEffect(() => {
@@ -1278,12 +1340,12 @@ export default function App() {
   }, [sidebarOpen])
 
   return (
-    <div className="agent-shell">
+    <div className={`codex-agent-root agent-shell ${dark ? "dark" : ""}`} ref={rootRef}>
       <header className="agent-toolbar">
         <button className="agent-icon-button" onClick={() => setSidebarOpen(true)} type="button" aria-label="打开会话列表"><Menu /></button>
         <div className="agent-title" title={activeConversation?.title}>
           <strong>{activeConversation?.title || "CodeX Agent"}</strong>
-          <span>{activeFile || (connectionState === "online" ? "当前知识库" : "Agent 未连接")}</span>
+          <span>{hostState.context.activeFile || (connectionState === "online" ? "当前知识库" : "Agent 未连接")}</span>
         </div>
         <select
           className="agent-permission"
@@ -1348,7 +1410,7 @@ export default function App() {
             <button type="button" onClick={() => void initialize()}><RefreshCw />重连</button>
           </div>
         )}
-        {activeConversationId && <Chat key={conversationVersion} sessionId={activeConversationId} messages={messages} traces={traces} changes={changes} approvals={pendingApprovals[activeConversationId] || []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onChangeUpdated={updateVisibleChangeSet} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => resolveApproval(activeConversationId, approval, approved)} onSend={sendMessage} onStop={stopMessage} />}
+        {activeConversationId && <Chat agentUrl={agentUrl} key={conversationVersion} sessionId={activeConversationId} messages={messages} traces={traces} changes={changes} approvals={pendingApprovals[activeConversationId] || []} busy={busy} mode={activeConversation?.mode ?? "default"} plan={activeConversation?.plan ?? null} onChangeUpdated={updateVisibleChangeSet} onModeChange={setActiveMode} onResolveApproval={(approval, approved) => resolveApproval(activeConversationId, approval, approved)} onSend={sendMessage} onStop={stopMessage} />}
       </main>
     </div>
   )

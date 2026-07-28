@@ -23,7 +23,20 @@
   --color-success: var(--success);
 }
 
-:root {
+:host,
+#root {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:host {
+  display: block;
+  inset: 0;
+  position: absolute;
+}
+
+.codex-agent-root {
   --accent: #ececea;
   --background: #ffffff;
   --border: #ddddda;
@@ -42,7 +55,7 @@
   font-family: var(--font-interface, system-ui, sans-serif);
 }
 
-:root.dark {
+.codex-agent-root.dark {
   --accent: #30302d;
   --background: #1f1f1d;
   --border: #3a3a36;
@@ -60,22 +73,40 @@
   color-scheme: dark;
 }
 
-html,
-body,
-#root {
+.codex-agent-root {
+  box-sizing: border-box;
   height: 100%;
   min-width: 0;
-}
-
-body {
   margin: 0;
   overflow: hidden;
+  position: relative;
+  width: 100%;
 }
 
-button,
-select,
-textarea {
+.codex-agent-root *,
+.codex-agent-root *::before,
+.codex-agent-root *::after {
+  box-sizing: border-box;
+}
+
+.codex-agent-root button,
+.codex-agent-root select,
+.codex-agent-root textarea {
   font: inherit;
+}
+
+.codex-agent-root [data-streamdown^="code-block-"][data-action-status] svg {
+  display: none;
+}
+
+.codex-agent-root [data-streamdown^="code-block-"][data-action-status]::after {
+  content: "✓";
+  font-weight: 700;
+}
+
+.codex-agent-root [data-streamdown^="code-block-"][data-action-status="error"]::after {
+  content: "!";
+  color: var(--error);
 }
 
 .agent-shell {
@@ -83,7 +114,8 @@ textarea {
   color: var(--foreground);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
+  isolation: isolate;
   min-width: 0;
   overflow: hidden;
 }
@@ -190,7 +222,7 @@ textarea {
   display: flex;
   flex-direction: column;
   left: 0;
-  position: fixed;
+  position: absolute;
   top: 0;
   transform: translateX(-105%);
   transition: transform 160ms ease;
@@ -290,7 +322,7 @@ textarea {
   border: 0;
   inset: 0;
   padding: 0;
-  position: fixed;
+  position: absolute;
   z-index: 19;
 }
 
@@ -573,16 +605,16 @@ textarea {
 }
 
 @media (max-width: 380px) {
-  .agent-toolbar {
+  .codex-agent-root .agent-toolbar {
     padding-inline: 5px;
   }
 
-  .agent-permission {
+  .codex-agent-root .agent-permission {
     max-width: 58px;
     min-width: 50px;
   }
 
-  .session-archive {
+  .codex-agent-root .session-archive {
     opacity: 1;
   }
 }

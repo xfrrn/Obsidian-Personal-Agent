@@ -1,4 +1,4 @@
-"""本地单页前端的标准库 HTTP 服务。"""
+"""供 Obsidian 原生侧栏调用的本机 HTTP/SSE 后端。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import asyncio
 import ipaddress
 import json
 import logging
-import mimetypes
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
@@ -38,6 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 MAX_FILE_REFERENCES = 5
 MAX_WORKSPACE_FILE_RESULTS = 80
 SKIPPED_WORKSPACE_DIRS = {".git", ".obsidian", ".pytest_cache", "__pycache__", "node_modules"}
+OBSIDIAN_APP_ORIGIN = "app://obsidian.md"
 
 
 @dataclass(slots=True)
@@ -513,7 +513,7 @@ class AgentHTTPServer(ThreadingHTTPServer):
 
 
 class AgentRequestHandler(BaseHTTPRequestHandler):
-    """提供静态页面、持久化会话 API 和按会话隔离的消息流。"""
+    """提供持久化会话 API 和按会话隔离的消息流。"""
 
     server: AgentHTTPServer
 
@@ -528,6 +528,31 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             "http.request",
             extra={"http_method": self.command, "http_path": urlparse(self.path).path},
         )
+
+    def end_headers(self) -> None:
+        """仅向 Obsidian 桌面宿主开放跨源响应，普通本机客户端不受影响。"""
+
+        if self.headers.get("Origin") == OBSIDIAN_APP_ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", OBSIDIAN_APP_ORIGIN)
+            self.send_header("Vary", "Origin")
+        super().end_headers()
+
+    def do_OPTIONS(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的固定方法名。
+        """处理 Obsidian 对 JSON POST 发起的 CORS 预检。"""
+
+        if self.headers.get("Origin") != OBSIDIAN_APP_ORIGIN:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "不允许的请求来源"})
+            return
+        requested_method = self.headers.get("Access-Control-Request-Method", "")
+        if requested_method not in {"GET", "POST"}:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "不允许的请求方法"})
+            return
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的固定方法名。
         parsed = urlparse(self.path)
@@ -572,38 +597,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             except KeyError as exc:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
             return
-        page = self._static_file(path)
-        if page is None:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "未找到页面"})
-            return
-        content_type = mimetypes.guess_type(page.name)[0] or "application/octet-stream"
-        body = page.read_bytes()
-        self.send_response(HTTPStatus.OK)
-        self.send_header(
-            "Content-Type",
-            f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type,
-        )
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    @staticmethod
-    def _static_file(path: str) -> Path | None:
-        """优先读取 React 构建产物；未构建时保留原来的无依赖页面入口。"""
-
-        root = Path(__file__).with_name("frontend") / "dist"
-        relative_path = "index.html" if path in {"/", "/index.html"} else path.lstrip("/")
-        candidate = (root / relative_path).resolve()
-        try:
-            candidate.relative_to(root.resolve())
-        except ValueError:
-            return None
-        if candidate.is_file():
-            return candidate
-        if path in {"/", "/index.html"}:
-            return Path(__file__).with_name("index.html")
-        return None
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "未找到接口"})
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler 的固定方法名。
         try:
@@ -686,39 +680,6 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, {"ok": True})
                 return
 
-            # 保留旧入口给未构建时的兼容页面；新前端始终使用带 session_id 的 API。
-            if path == "/api/new":
-                session_id = self.server.runtime.new_conversation()
-                self._send_json(HTTPStatus.CREATED, {"ok": True, "id": session_id})
-                return
-            if path == "/api/messages":
-                body = self._read_json_body()
-                text = body.get("text")
-                if not isinstance(text, str):
-                    raise ValueError("text 必须是字符串")
-                references = _reference_paths(body)
-                events = self.server.runtime.ask(text, mode=_mode_body(body), references=references)
-                self._send_json(HTTPStatus.OK, {"events": [_event_json(event) for event in events]})
-                return
-            if path == "/api/messages/stream":
-                body = self._read_json_body()
-                text = body.get("text")
-                if not isinstance(text, str):
-                    raise ValueError("text 必须是字符串")
-                references = _reference_paths(body)
-                self._stream_events(
-                    self.server.runtime.ask_events(text, mode=_mode_body(body), references=references)
-                )
-                return
-            if path == "/api/approvals":
-                body = self._read_json_body()
-                call_id, approved, submission_id = _approval_body(body)
-                if not self.server.runtime.resolve_approval(
-                    call_id, approved, submission_id
-                ):
-                    raise RuntimeError("审批请求已失效")
-                self._send_json(HTTPStatus.OK, {"ok": True})
-                return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "未找到接口"})
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

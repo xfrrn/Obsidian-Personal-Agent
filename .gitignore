@@ -5,6 +5,7 @@ node_modules/
 *.log
 /data.json
 /apps/obsidian-plugin/data.json
+/apps/obsidian-plugin/ui/dist/
 .env
 .env.*
 !.env.example
