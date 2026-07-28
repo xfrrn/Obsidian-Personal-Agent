@@ -7,6 +7,7 @@
     "dev": "node apps/obsidian-plugin/esbuild.config.mjs",
     "build": "node apps/obsidian-plugin/esbuild.config.mjs production",
     "build:agent-ui": "npm --prefix apps/local-agent/src/agent/web/frontend run build",
+    "package:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
     "start:agent": "python -m agent.web.server --host 127.0.0.1 --port 8000",
     "check": "tsc --noEmit -p apps/obsidian-plugin/tsconfig.json",
     "test": "npm run test:plugin",

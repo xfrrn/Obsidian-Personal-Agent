@@ -1,13 +1,13 @@
 # Personal Knowledge Agent
 
-一个将本机 CodeX-Agent Web 控制台嵌入 Obsidian 的桌面插件。插件只负责侧栏和本机地址校验；会话、模型循环、工具、Skills、Plan Mode、权限、沙盒和持久化全部由 Python Agent 负责。
+一个将本机 CodeX-Agent Web 控制台嵌入 Obsidian 的桌面插件。插件负责侧栏、本机地址校验、配置同步和 Agent 进程托管；会话、模型循环、工具、Skills、Plan Mode、权限、沙盒和持久化由 Python Agent 负责。
 
 ## 结构
 
 ```text
 apps/
   obsidian-plugin/
-    src/                    四个扁平的插件源码文件
+    src/                    插件宿主、侧栏、设置与进程托管
   local-agent/src/agent/
     core/                   回合、调度和上下文压缩
     tools/                  工具、路由与执行
@@ -22,15 +22,30 @@ Obsidian 侧栏通过 iframe 加载默认地址 `http://127.0.0.1:8000`。插件
 
 模型地址、模型、工作区、权限、Shell 和会话数据库路径在插件设置面板持久化；API Key 单独保存在 Obsidian SecretStorage。侧栏打开或重新加载时，插件通过本机 `/api/config` 把配置同步给空闲的 Agent 运行时。
 
-## 运行
+## Windows 一体包
+
+在 64 位 Windows 开发机运行：
+
+```powershell
+npm run package:windows
+```
+
+构建机需要 Node.js 20+、64 位 Python、`venv` 和 `pip`；脚本会在 `.package-build` 创建隔离环境、执行完整测试并打包，不会向系统 Python 安装运行依赖。
+
+产物位于 `dist/personal-knowledge-agent-windows-x64-<version>.zip`。将 ZIP 解压到 Vault 的 `.obsidian/plugins`，确认形成 `.obsidian/plugins/personal-knowledge-agent/manifest.json`，再在 Obsidian 中启用插件。目标电脑不需要安装 Python、Node.js 或 Agent 依赖。
+
+一体包内的 `agent/codex-agent.exe` 尚未进行代码签名，仅适合个人侧载；公开分发前应增加 Windows 代码签名。
+
+## 源码开发
 
 ```powershell
 python -m pip install -e apps/local-agent
 $env:OPENAI_API_KEY="..."
 $env:OPENAI_MODEL="model-name"
 npm run build:agent-ui
-npm run start:agent
 ```
+
+以上安装与前端构建只需在源码开发环境准备一次。插件加载时会探测配置的本机地址；服务未运行时，一体包优先启动内置 EXE，源码环境回退到 `python -m agent.web.server`。插件卸载时关闭自己创建的进程，手动启动的已有服务会直接复用且不会被关闭。
 
 插件首次加载时自动把当前 Vault 根目录设置为 Agent 工作区，不需要配置 `AGENT_WORKSPACE`。其他环境变量仍是服务首次启动时的后备配置；插件面板保存过配置后，以插件配置为准。会话默认保存在 `~/.codex-agent/sessions.db`，Skills 从工作区的 `skills/` 加载。`apply_patch` 默认可用，Shell 工具由插件设置开关控制。
 
@@ -66,6 +81,7 @@ obsidian commands filter=linter
 ```powershell
 npm run verify
 npm run build:agent-ui
+npm run package:windows
 ```
 
-生产插件文件为 `apps/obsidian-plugin/main.js`、`manifest.json` 和 `styles.css`。
+源码插件文件为 `apps/obsidian-plugin/main.js`、`manifest.json` 和 `styles.css`；Windows 一体包还包含 `agent/codex-agent.exe` 及其 `_internal` 运行目录。

@@ -7,7 +7,7 @@ const production = process.argv[2] === "production";
 const context = await esbuild.context({
   entryPoints: [join(pluginDir, "src/main.ts")],
   bundle: true,
-  external: ["obsidian"],
+  external: ["obsidian", "node:child_process", "node:fs"],
   format: "cjs",
   target: "es2018",
   outfile: join(pluginDir, "main.js"),

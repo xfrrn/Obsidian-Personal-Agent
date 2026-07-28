@@ -173,9 +173,9 @@ var CodeXAgentView = class extends import_obsidian2.ItemView {
     content.addClass("codex-agent-view");
     try {
       const agentUrl = normalizeAgentUrl(this.getAgentUrl());
+      await this.syncAgentSettings();
       const response = await (0, import_obsidian2.requestUrl)({ url: `${agentUrl}/api/config`, method: "GET", throw: false });
       if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
-      await this.syncAgentSettings().catch(() => void 0);
       const frame = content.createEl("iframe", { cls: "codex-agent-frame" });
       this.frame = frame;
       frame.src = agentUrl;
@@ -237,12 +237,41 @@ var CodeXAgentView = class extends import_obsidian2.ItemView {
   }
 };
 
+// apps/obsidian-plugin/src/agent-process.ts
+function agentLaunchSpec(agentUrl, executable = "") {
+  const url = new URL(agentUrl);
+  if (url.protocol !== "http:") {
+    throw new Error("\u81EA\u52A8\u542F\u52A8\u672C\u5730 Agent \u53EA\u652F\u6301 HTTP \u5730\u5740\u3002");
+  }
+  if (url.hostname === "[::1]") {
+    throw new Error("\u81EA\u52A8\u542F\u52A8\u672C\u5730 Agent \u6682\u4E0D\u652F\u6301 IPv6 \u5730\u5740\u3002");
+  }
+  const host = url.hostname === "localhost" ? "127.0.0.1" : url.hostname;
+  return {
+    command: executable || "python",
+    args: [
+      ...executable ? [] : ["-m", "agent.web.server"],
+      "--host",
+      host,
+      "--port",
+      url.port || "80"
+    ]
+  };
+}
+
 // apps/obsidian-plugin/src/main.ts
 var API_KEY_SECRET_ID = "personal-knowledge-agent-api-key";
+var AGENT_START_ATTEMPTS = 100;
+var { existsSync } = require("node:fs");
+var { spawn } = require("node:child_process");
 var CodeXAgentPlugin = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.apiKey = "";
+    this.agentProcess = null;
+    this.agentStartPromise = null;
+    this.agentStartError = "";
+    this.unloading = false;
   }
   async onload() {
     await this.loadSettings();
@@ -263,9 +292,15 @@ var CodeXAgentPlugin = class extends import_obsidian3.Plugin {
       callback: () => void this.activateView()
     });
     this.addSettingTab(new AgentSettingTab(this.app, this));
-    void this.syncAgentSettings().catch(() => void 0);
+    void this.syncAgentSettings().catch((error) => {
+      if (!this.unloading) {
+        new import_obsidian3.Notice(error instanceof Error ? error.message : "\u65E0\u6CD5\u81EA\u52A8\u542F\u52A8\u672C\u5730 Agent\u3002");
+      }
+    });
   }
   onunload() {
+    this.unloading = true;
+    this.stopLocalAgent();
     this.app.workspace.detachLeavesOfType(CODEX_AGENT_VIEW_TYPE);
   }
   getApiKey() {
@@ -276,6 +311,7 @@ var CodeXAgentPlugin = class extends import_obsidian3.Plugin {
     await this.saveData(this.settings);
   }
   async applySettings(value, apiKey) {
+    const previousAgentUrl = this.settings.agentUrl;
     try {
       const workspace = value.workspace.trim();
       const model = value.model.trim();
@@ -292,6 +328,7 @@ var CodeXAgentPlugin = class extends import_obsidian3.Plugin {
       this.apiKey = apiKey.trim();
       this.app.secretStorage.setSecret(API_KEY_SECRET_ID, this.apiKey);
       await this.saveData(this.settings);
+      if (this.settings.agentUrl !== previousAgentUrl) this.stopLocalAgent();
     } catch (error) {
       new import_obsidian3.Notice(error instanceof Error ? error.message : "\u65E0\u6CD5\u4FDD\u5B58 Agent \u914D\u7F6E\u3002");
       return;
@@ -308,6 +345,7 @@ var CodeXAgentPlugin = class extends import_obsidian3.Plugin {
     }
   }
   async syncAgentSettings(includeEmptyApiKey = false) {
+    await this.ensureAgentStarted();
     const body = this.settings.configured ? {
       base_url: this.settings.apiBaseUrl,
       model: this.settings.model,
@@ -364,6 +402,72 @@ var CodeXAgentPlugin = class extends import_obsidian3.Plugin {
       configured
     };
     this.apiKey = (_c = this.app.secretStorage.getSecret(API_KEY_SECRET_ID)) != null ? _c : "";
+  }
+  /** 已有服务直接复用；连接失败时只启动一个由插件托管的 Python 子进程。 */
+  async ensureAgentStarted() {
+    var _a;
+    if (await this.isAgentAvailable()) return;
+    (_a = this.agentStartPromise) != null ? _a : this.agentStartPromise = this.startLocalAgent().finally(() => {
+      this.agentStartPromise = null;
+    });
+    await this.agentStartPromise;
+  }
+  async isAgentAvailable() {
+    try {
+      const response = await (0, import_obsidian3.requestUrl)({
+        url: `${this.settings.agentUrl}/api/config`,
+        method: "GET",
+        throw: false
+      });
+      return response.status >= 200 && response.status < 300;
+    } catch (e) {
+      return false;
+    }
+  }
+  /** 启动 Agent 并等待 HTTP 入口就绪，避免侧栏先显示一次断线页。 */
+  async startLocalAgent() {
+    var _a;
+    if (!this.agentProcess) {
+      const spec = agentLaunchSpec(this.settings.agentUrl, this.bundledAgentPath());
+      this.agentStartError = "";
+      const child = spawn(spec.command, spec.args, {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"]
+      });
+      this.agentProcess = child;
+      (_a = child.stderr) == null ? void 0 : _a.on("data", (chunk) => {
+        this.agentStartError = `${this.agentStartError}${chunk.toString()}`.trim().slice(-1e3);
+      });
+      child.once("error", (error) => {
+        this.agentStartError = error.message;
+        if (this.agentProcess === child) this.agentProcess = null;
+      });
+      child.once("exit", (code) => {
+        if (!this.agentStartError) this.agentStartError = `Python \u8FDB\u7A0B\u5DF2\u9000\u51FA\uFF08\u4EE3\u7801 ${code != null ? code : "\u672A\u77E5"}\uFF09`;
+        if (this.agentProcess === child) this.agentProcess = null;
+      });
+    }
+    for (let attempt = 0; attempt < AGENT_START_ATTEMPTS; attempt += 1) {
+      if (await this.isAgentAvailable()) return;
+      if (!this.agentProcess) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    this.stopLocalAgent();
+    const detail = this.agentStartError ? `\uFF1A${this.agentStartError}` : "";
+    throw new Error(`\u65E0\u6CD5\u81EA\u52A8\u542F\u52A8\u672C\u5730 Agent\uFF0C\u8BF7\u68C0\u67E5 Windows \u4E00\u4F53\u5305\u662F\u5426\u5B8C\u6574${detail}`);
+  }
+  /** 返回插件包内 Agent EXE；源码开发时不存在则回退到系统 Python。 */
+  bundledAgentPath() {
+    const adapter = this.app.vault.adapter;
+    if (!this.manifest.dir || !adapter.getFullPath) return "";
+    const path = adapter.getFullPath(`${this.manifest.dir}/agent/codex-agent.exe`);
+    return existsSync(path) ? path : "";
+  }
+  /** 只终止本插件创建的子进程，不影响用户手动运行的 Agent。 */
+  stopLocalAgent() {
+    var _a;
+    (_a = this.agentProcess) == null ? void 0 : _a.kill();
+    this.agentProcess = null;
   }
 };
 function isSandboxMode2(value) {

@@ -3,12 +3,34 @@ import { AgentSettingTab, AgentSettings, ApprovalPolicy, DEFAULT_SETTINGS, Sandb
 import { normalizeAgentUrl, normalizeApiBaseUrl } from "./url";
 import { CODEX_AGENT_VIEW_TYPE, CodeXAgentView } from "./codex-agent-view";
 import { isThemeMode, ThemeMode } from "./bridge";
+import { agentLaunchSpec } from "./agent-process";
 
 const API_KEY_SECRET_ID = "personal-knowledge-agent-api-key";
+const AGENT_START_ATTEMPTS = 100;
+
+interface AgentChildProcess {
+  stderr: { on(event: "data", listener: (chunk: { toString(): string }) => void): void } | null;
+  kill(): boolean;
+  once(event: "error", listener: (error: Error) => void): this;
+  once(event: "exit", listener: (code: number | null) => void): this;
+}
+
+declare const require: (id: string) => unknown;
+const { existsSync } = require("node:fs") as { existsSync(path: string): boolean };
+const { spawn } = require("node:child_process") as {
+  spawn(command: string, args: string[], options: {
+    windowsHide: boolean;
+    stdio: ["ignore", "ignore", "pipe"];
+  }): AgentChildProcess;
+};
 
 export default class CodeXAgentPlugin extends Plugin {
   settings!: AgentSettings;
   private apiKey = "";
+  private agentProcess: AgentChildProcess | null = null;
+  private agentStartPromise: Promise<void> | null = null;
+  private agentStartError = "";
+  private unloading = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -29,10 +51,16 @@ export default class CodeXAgentPlugin extends Plugin {
       callback: () => void this.activateView()
     });
     this.addSettingTab(new AgentSettingTab(this.app, this));
-    void this.syncAgentSettings().catch(() => undefined);
+    void this.syncAgentSettings().catch((error) => {
+      if (!this.unloading) {
+        new Notice(error instanceof Error ? error.message : "无法自动启动本地 Agent。");
+      }
+    });
   }
 
   onunload(): void {
+    this.unloading = true;
+    this.stopLocalAgent();
     this.app.workspace.detachLeavesOfType(CODEX_AGENT_VIEW_TYPE);
   }
 
@@ -46,6 +74,7 @@ export default class CodeXAgentPlugin extends Plugin {
   }
 
   async applySettings(value: AgentSettings, apiKey: string): Promise<void> {
+    const previousAgentUrl = this.settings.agentUrl;
     try {
       const workspace = value.workspace.trim();
       const model = value.model.trim();
@@ -62,6 +91,7 @@ export default class CodeXAgentPlugin extends Plugin {
       this.apiKey = apiKey.trim();
       this.app.secretStorage.setSecret(API_KEY_SECRET_ID, this.apiKey);
       await this.saveData(this.settings);
+      if (this.settings.agentUrl !== previousAgentUrl) this.stopLocalAgent();
     } catch (error) {
       new Notice(error instanceof Error ? error.message : "无法保存 Agent 配置。");
       return;
@@ -79,6 +109,7 @@ export default class CodeXAgentPlugin extends Plugin {
   }
 
   private async syncAgentSettings(includeEmptyApiKey = false): Promise<void> {
+    await this.ensureAgentStarted();
     const body: Record<string, unknown> = this.settings.configured ? {
         base_url: this.settings.apiBaseUrl,
         model: this.settings.model,
@@ -139,6 +170,75 @@ export default class CodeXAgentPlugin extends Plugin {
       configured
     };
     this.apiKey = this.app.secretStorage.getSecret(API_KEY_SECRET_ID) ?? "";
+  }
+
+  /** 已有服务直接复用；连接失败时只启动一个由插件托管的 Python 子进程。 */
+  private async ensureAgentStarted(): Promise<void> {
+    if (await this.isAgentAvailable()) return;
+    this.agentStartPromise ??= this.startLocalAgent().finally(() => {
+      this.agentStartPromise = null;
+    });
+    await this.agentStartPromise;
+  }
+
+  private async isAgentAvailable(): Promise<boolean> {
+    try {
+      const response = await requestUrl({
+        url: `${this.settings.agentUrl}/api/config`,
+        method: "GET",
+        throw: false
+      });
+      return response.status >= 200 && response.status < 300;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 启动 Agent 并等待 HTTP 入口就绪，避免侧栏先显示一次断线页。 */
+  private async startLocalAgent(): Promise<void> {
+    if (!this.agentProcess) {
+      const spec = agentLaunchSpec(this.settings.agentUrl, this.bundledAgentPath());
+      this.agentStartError = "";
+      const child = spawn(spec.command, spec.args, {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"]
+      });
+      this.agentProcess = child;
+      child.stderr?.on("data", (chunk) => {
+        this.agentStartError = `${this.agentStartError}${chunk.toString()}`.trim().slice(-1000);
+      });
+      child.once("error", (error) => {
+        this.agentStartError = error.message;
+        if (this.agentProcess === child) this.agentProcess = null;
+      });
+      child.once("exit", (code) => {
+        if (!this.agentStartError) this.agentStartError = `Python 进程已退出（代码 ${code ?? "未知"}）`;
+        if (this.agentProcess === child) this.agentProcess = null;
+      });
+    }
+
+    for (let attempt = 0; attempt < AGENT_START_ATTEMPTS; attempt += 1) {
+      if (await this.isAgentAvailable()) return;
+      if (!this.agentProcess) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    this.stopLocalAgent();
+    const detail = this.agentStartError ? `：${this.agentStartError}` : "";
+    throw new Error(`无法自动启动本地 Agent，请检查 Windows 一体包是否完整${detail}`);
+  }
+
+  /** 返回插件包内 Agent EXE；源码开发时不存在则回退到系统 Python。 */
+  private bundledAgentPath(): string {
+    const adapter = this.app.vault.adapter as { getFullPath?: (path: string) => string };
+    if (!this.manifest.dir || !adapter.getFullPath) return "";
+    const path = adapter.getFullPath(`${this.manifest.dir}/agent/codex-agent.exe`);
+    return existsSync(path) ? path : "";
+  }
+
+  /** 只终止本插件创建的子进程，不影响用户手动运行的 Agent。 */
+  private stopLocalAgent(): void {
+    this.agentProcess?.kill();
+    this.agentProcess = null;
   }
 }
 

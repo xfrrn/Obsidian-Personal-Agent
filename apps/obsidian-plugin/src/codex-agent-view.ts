@@ -44,9 +44,9 @@ export class CodeXAgentView extends ItemView {
 
     try {
       const agentUrl = normalizeAgentUrl(this.getAgentUrl());
+      await this.syncAgentSettings();
       const response = await requestUrl({ url: `${agentUrl}/api/config`, method: "GET", throw: false });
       if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
-      await this.syncAgentSettings().catch(() => undefined);
       const frame = content.createEl("iframe", { cls: "codex-agent-frame" });
       this.frame = frame;
       frame.src = agentUrl;
