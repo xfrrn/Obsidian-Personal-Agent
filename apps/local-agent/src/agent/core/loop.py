@@ -28,6 +28,7 @@ from agent.tools.handlers.current_time import CurrentTimeTool
 from agent.tools.handlers.exec_command import ExecCommandTool
 from agent.tools.handlers.get_context_remaining import GetContextRemainingTool
 from agent.tools.handlers.new_context_window import NewContextWindowTool
+from agent.tools.handlers.obsidian_command import ObsidianCommandTool
 from agent.tools.handlers.update_plan import UpdatePlanTool
 from agent.tools.handlers.write_stdin import WriteStdinTool
 from agent.tools.invocation import ToolInvocation
@@ -67,6 +68,7 @@ def create_session(
             settings.system_prompt,
         ),
         NewContextWindowTool(context_window),
+        ObsidianCommandTool(settings),
         UpdatePlanTool(),
     ]
     process_manager = None

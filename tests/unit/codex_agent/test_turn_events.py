@@ -45,6 +45,19 @@ class TurnEventBusTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_approval_event_renders_obsidian_command_id(self) -> None:
+        adapter = PublicEventAdapter()
+        invocation = ToolInvocation(
+            "call-2",
+            "obsidian_command",
+            {"action": "execute", "command_id": "obsidian-linter:lint-file"},
+        )
+
+        adapter(ToolApprovalRequested(8, invocation, "执行 Obsidian 命令"))
+
+        event = await adapter.receive()
+        self.assertEqual(event.data["command"], "obsidian command id=obsidian-linter:lint-file")
+
     async def test_adapter_preserves_public_event_shape(self) -> None:
         invocation = ToolInvocation("call-1", "read_file", {"path": "README.md"})
         bus = TurnEventBus()

@@ -216,6 +216,7 @@ class ProcessInteractionTest(unittest.IsolatedAsyncioTestCase):
                 "exec_command",
                 "get_context_remaining",
                 "new_context_window",
+                "obsidian_command",
                 "update_plan",
                 "write_stdin",
             },

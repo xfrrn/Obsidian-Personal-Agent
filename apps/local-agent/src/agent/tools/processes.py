@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import json
+import os
 from typing import Protocol
 
 
@@ -51,6 +52,23 @@ class ProcessResult:
             },
             ensure_ascii=False,
         )
+
+
+def bounded_output(data: bytes) -> tuple[str, int]:
+    """按进程工具的共同上限保留输出首尾。"""
+
+    buffer = bytearray()
+    omitted = _append_bounded(buffer, data, 0)
+    return _render_output(buffer, omitted).decode("utf-8", errors="replace"), omitted
+
+
+def subprocess_environment() -> dict[str, str]:
+    """复制宿主环境，但不把模型凭据传给本地子进程。"""
+
+    environment = os.environ.copy()
+    for secret_name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+        environment.pop(secret_name, None)
+    return environment
 
 
 @dataclass(slots=True)

@@ -20,6 +20,7 @@ from agent.core.turn.events import (
     TurnStarted,
 )
 from agent.protocol.event import Event, EventKind
+from agent.tools.invocation import ToolInvocation
 
 
 class PublicEventAdapter:
@@ -77,7 +78,7 @@ class PublicEventAdapter:
                         "submission_id": submission_id,
                         "call_id": invocation.call_id,
                         "name": invocation.name,
-                        "command": invocation.arguments.get("command", ""),
+                        "command": _approval_command(invocation),
                         "justification": justification,
                     },
                 )
@@ -107,3 +108,14 @@ class PublicEventAdapter:
             case RuntimeShutdown():
                 return Event(EventKind.SHUTDOWN)
         return None
+
+
+def _approval_command(invocation: ToolInvocation) -> str:
+    command = invocation.arguments.get("command")
+    if isinstance(command, str):
+        return command
+    if invocation.name == "obsidian_command":
+        command_id = invocation.arguments.get("command_id")
+        if isinstance(command_id, str):
+            return f"obsidian command id={command_id}"
+    return ""

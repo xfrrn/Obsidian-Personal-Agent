@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import platform
 
 from agent.config.loader import shell_runtime_name
@@ -12,7 +11,12 @@ from agent.permissions import SandboxMode, ToolAccess, command_denial_reason
 from agent.protocol.mode import ModeKind
 from agent.sandbox import SandboxBackend
 from agent.sandbox import windows as windows_sandbox
-from agent.tools.processes import ProcessHandle, ProcessManager, validate_yield_time
+from agent.tools.processes import (
+    ProcessHandle,
+    ProcessManager,
+    subprocess_environment,
+    validate_yield_time,
+)
 from agent.tools.types import ToolSpec
 
 
@@ -174,7 +178,7 @@ class ExecCommandTool:
                     command,
                     cwd=str(self._settings.workspace),
                     # 子进程不应继承 Agent 自己的模型凭据，即使用户批准了宿主执行。
-                    env=_subprocess_environment(),
+                    env=subprocess_environment(),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
@@ -189,7 +193,7 @@ class ExecCommandTool:
                 state_dir=self._settings.sandbox_state_dir,
                 mode=effective_sandbox_mode,
                 network=self._settings.sandbox_network,
-                environment=_subprocess_environment(),
+                environment=subprocess_environment(),
             )
 
         read_only = (
@@ -232,10 +236,3 @@ def _shell_command(arguments: dict[str, object]) -> str:
 
 def _native_windows_available(backend: SandboxBackend) -> bool:
     return backend is not SandboxBackend.DISABLED and windows_sandbox.is_available()
-
-
-def _subprocess_environment() -> dict[str, str]:
-    environment = os.environ.copy()
-    for secret_name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
-        environment.pop(secret_name, None)
-    return environment

@@ -134,6 +134,7 @@ class ContextToolsTest(unittest.IsolatedAsyncioTestCase):
                 "current_time",
                 "get_context_remaining",
                 "new_context_window",
+                "obsidian_command",
                 "update_plan",
             ],
         )
