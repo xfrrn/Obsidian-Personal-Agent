@@ -1,5 +1,4 @@
 export type ThemeMode = "system" | "light" | "dark"
-export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access"
 
 export type HostState = {
   theme: {
@@ -8,10 +7,9 @@ export type HostState = {
     tokens: Record<ThemeToken, string>
   }
   context: { workspace: string; activeFile: string | null }
-  settings: { sandboxMode: SandboxMode }
 }
 
-export type HostSettingsPatch = { sandboxMode?: SandboxMode; themeMode?: ThemeMode }
+export type HostSettingsPatch = { themeMode?: ThemeMode }
 
 export type ThemeToken =
   | "backgroundPrimary"

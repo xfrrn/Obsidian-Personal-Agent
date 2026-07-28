@@ -43,7 +43,7 @@ export default class CodeXAgentPlugin extends Plugin {
         leaf,
         () => this.settings.agentUrl,
         () => this.syncAgentSettings(),
-        () => ({ sandboxMode: this.settings.sandboxMode, themeMode: this.settings.themeMode }),
+        () => ({ themeMode: this.settings.themeMode }),
         (settings) => this.persistPanelSettings(settings)
       )
     );
@@ -141,7 +141,7 @@ export default class CodeXAgentPlugin extends Plugin {
     return payload.skill;
   }
 
-  async persistPanelSettings(settings: { sandboxMode?: SandboxMode; themeMode?: ThemeMode }): Promise<void> {
+  async persistPanelSettings(settings: { themeMode?: ThemeMode }): Promise<void> {
     this.settings = { ...this.settings, ...settings };
     await this.saveData(this.settings);
   }

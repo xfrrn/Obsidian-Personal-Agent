@@ -188,24 +188,6 @@
   margin-top: 3px;
 }
 
-.agent-permission {
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--foreground);
-  flex: 0 0 auto;
-  font-size: 11px;
-  height: 30px;
-  max-width: 64px;
-  min-width: 54px;
-  outline: none;
-  padding: 0 4px;
-}
-
-.agent-permission:disabled {
-  opacity: 0.5;
-}
-
 .agent-main {
   display: flex;
   flex: 1 1 auto;
@@ -607,11 +589,6 @@
 @media (max-width: 380px) {
   .codex-agent-root .agent-toolbar {
     padding-inline: 5px;
-  }
-
-  .codex-agent-root .agent-permission {
-    max-width: 58px;
-    min-width: 50px;
   }
 
   .codex-agent-root .session-archive {

@@ -25,7 +25,6 @@ import {
   clearThemeTokens,
   HostSettingsPatch,
   HostState,
-  SandboxMode,
   ThemeMode,
 } from "./host"
 import { codeDownloadName, writeCodeToClipboard } from "./code-actions"
@@ -137,14 +136,6 @@ type TimelineEntry =
   | { kind: "message"; at: number; message: ChatMessage }
   | { kind: "trace"; at: number; trace: RunTrace }
   | { kind: "change"; at: number; change: ChangeSet }
-
-type RuntimePermissions = {
-  sandbox_mode: SandboxMode
-  approval_policy: "never" | "on-request"
-  shell_enabled: boolean
-  sandbox_backend: string
-  sandbox_network: string
-}
 
 export type AgentAppProps = {
   agentUrl: string
@@ -838,12 +829,10 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [traces, setTraces] = useState<RunTrace[]>([])
   const [changes, setChanges] = useState<ChangeSet[]>([])
-  const [permissions, setPermissions] = useState<RuntimePermissions | null>(null)
   const [runningTurns, setRunningTurns] = useState<Record<string, number>>({})
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest[]>>({})
   const [creatingConversation, setCreatingConversation] = useState(false)
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null)
-  const [updatingPermissions, setUpdatingPermissions] = useState(false)
   const [conversationVersion, setConversationVersion] = useState(0)
   const [themeMode, setThemeMode] = useState<ThemeMode>(hostState.theme.mode)
   const [connectionState, setConnectionState] = useState<"connecting" | "online" | "offline">("connecting")
@@ -852,14 +841,6 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
   const activeConversationIdRef = useRef<string | null>(null)
   const conversationViews = useRef<Record<string, ConversationView>>({})
   const rootRef = useRef<HTMLDivElement>(null)
-
-  const refreshPermissions = async () => {
-    try {
-      setPermissions(await requestJson<RuntimePermissions>(agentUrl, "/api/permissions"))
-    } catch {
-      // 权限接口不可用时只禁用切换，不影响兼容旧后端的对话能力。
-    }
-  }
 
   const refreshConversations = async () => {
     const data = await requestJson<{ sessions: Conversation[] }>(agentUrl, "/api/sessions")
@@ -996,7 +977,6 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
       const existing = await refreshConversations()
       if (existing.length) await openConversation(existing[0].id)
       else if (!await newConversation()) return
-      void refreshPermissions()
       setConnectionState("online")
     } catch (error) {
       setConnectionState("offline")
@@ -1293,31 +1273,6 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
     conversationViews.current[sessionId] = { ...view, changes: nextChanges }
     setChanges(nextChanges)
   }
-  const changeSandboxMode = async (sandboxMode: SandboxMode) => {
-    if (!permissions || updatingPermissions || sandboxMode === permissions.sandbox_mode) return
-    if (anyBusy) {
-      window.alert("运行中的回合结束后才能切换权限")
-      return
-    }
-    const confirmed = sandboxMode !== "danger-full-access" || window.confirm(
-      "切换到完全访问后，Agent 工具可以直接使用宿主用户权限。确定仅为当前服务进程启用吗？",
-    )
-    if (!confirmed) return
-
-    setUpdatingPermissions(true)
-    try {
-      const updated = await requestJson<RuntimePermissions>(agentUrl, "/api/permissions", {
-        sandbox_mode: sandboxMode,
-        confirmed: sandboxMode === "danger-full-access",
-      })
-      setPermissions(updated)
-      void onSettingsChange({ sandboxMode: updated.sandbox_mode })
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "无法切换权限")
-    } finally {
-      setUpdatingPermissions(false)
-    }
-  }
   const setActiveMode = (mode: ModeKind) => {
     if (!activeConversationId) return
     setConversations((current) => current.map((conversation) =>
@@ -1347,20 +1302,6 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
           <strong>{activeConversation?.title || "CodeX Agent"}</strong>
           <span>{hostState.context.activeFile || (connectionState === "online" ? "当前知识库" : "Agent 未连接")}</span>
         </div>
-        <select
-          className="agent-permission"
-          aria-label="沙盒权限"
-          aria-busy={updatingPermissions}
-          disabled={!permissions || anyBusy}
-          onChange={(event) => void changeSandboxMode(event.target.value as SandboxMode)}
-          title={permissions ? `审批：${permissions.approval_policy} · 网络：${permissions.sandbox_network}` : "权限接口不可用"}
-          value={permissions?.sandbox_mode || ""}
-        >
-          {!permissions && <option value="">权限</option>}
-          <option value="read-only">只读</option>
-          <option value="workspace-write">可写</option>
-          <option value="danger-full-access">完全</option>
-        </select>
         <button type="button" className="agent-icon-button" onClick={toggleTheme} aria-label={dark ? "切换到亮色" : "切换到暗色"} title={themeMode === "system" ? "当前跟随 Obsidian；点击后固定主题" : "切换主题"}>{dark ? <Sun /> : <Moon />}</button>
         <button type="button" className="agent-icon-button" onClick={() => void newConversation()} disabled={creatingConversation} aria-label="新对话"><Plus /></button>
       </header>

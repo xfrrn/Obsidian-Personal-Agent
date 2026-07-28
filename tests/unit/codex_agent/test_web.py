@@ -195,15 +195,13 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertIn("仅允许本次", app)
         self.assertNotIn("window.confirm(\n            `允许这一次命令", app)
 
-    def test_frontend_exposes_runtime_permission_switch(self) -> None:
+    def test_frontend_keeps_permission_switch_in_plugin_settings(self) -> None:
         app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")
+        settings = (UI_ROOT.parents[1] / "src" / "settings.ts").read_text(encoding="utf-8")
 
-        self.assertIn('aria-label="沙盒权限"', app)
-        self.assertIn('requestJson<RuntimePermissions>(agentUrl, "/api/permissions"', app)
-        self.assertIn('value="danger-full-access"', app)
-        self.assertIn("if (!permissions || updatingPermissions ||", app)
-        self.assertIn("disabled={!permissions || anyBusy}", app)
-        self.assertNotIn("disabled={!permissions || updatingPermissions || anyBusy}", app)
+        self.assertNotIn('aria-label="沙盒权限"', app)
+        self.assertNotIn('requestJson<RuntimePermissions>(agentUrl, "/api/permissions"', app)
+        self.assertIn('.setName("沙盒模式")', settings)
 
     def test_frontend_is_a_sidebar_chat_without_metrics_dashboard(self) -> None:
         app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")

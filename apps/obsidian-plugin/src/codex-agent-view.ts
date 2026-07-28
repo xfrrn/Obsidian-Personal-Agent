@@ -2,7 +2,6 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import { mountAgentApp, type MountedAgentApp } from "../ui/src/mount";
 import type { AgentAppProps } from "../ui/src/App";
 import { normalizeAgentUrl } from "./url";
-import type { SandboxMode } from "./settings";
 import type { ThemeMode } from "./theme";
 
 export const CODEX_AGENT_VIEW_TYPE = "codex-agent-view";
@@ -14,8 +13,8 @@ export class CodeXAgentView extends ItemView {
     leaf: WorkspaceLeaf,
     private readonly getAgentUrl: () => string,
     private readonly syncAgentSettings: () => Promise<void>,
-    private readonly getPanelSettings: () => { sandboxMode: SandboxMode; themeMode: ThemeMode },
-    private readonly persistPanelSettings: (settings: { sandboxMode?: SandboxMode; themeMode?: ThemeMode }) => Promise<void>
+    private readonly getPanelSettings: () => { themeMode: ThemeMode },
+    private readonly persistPanelSettings: (settings: { themeMode?: ThemeMode }) => Promise<void>
   ) {
     super(leaf);
   }
@@ -96,8 +95,7 @@ export class CodeXAgentView extends ItemView {
         context: {
           workspace: adapter.getBasePath?.() ?? "",
           activeFile: this.app.workspace.getActiveFile()?.path ?? null
-        },
-        settings: { sandboxMode: settings.sandboxMode }
+        }
       },
       onSettingsChange: async (next) => {
         await this.persistPanelSettings(next);

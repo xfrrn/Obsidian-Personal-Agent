@@ -14,7 +14,6 @@ const previewHost: HostState = {
     },
   },
   context: { workspace: "", activeFile: null },
-  settings: { sandboxMode: "workspace-write" },
 }
 
 mountAgentApp(document.getElementById("root")!, {
