@@ -14,8 +14,12 @@ class InstructionsTest(unittest.TestCase):
         )
 
         self.assertNotIn("{PERSONALITY}", instructions)
+        self.assertIn("Obsidian Vault 中的个人知识 Agent", instructions)
+        self.assertIn("用户只要求回答、解释或分析时，不要修改文件", instructions)
+        self.assertIn("`@路径` 是用户明确选择的文件引用", instructions)
         self.assertIn("优先给出简洁结论", instructions)
         self.assertIn("只处理当前项目", instructions)
+        self.assertIn("不把 Vault 内容上传、发布或同步到外部服务", instructions)
         self.assertLess(instructions.index("只处理当前项目"), instructions.index("# 安全约束"))
         self.assertLess(instructions.index("使用项目规则"), instructions.index("# 安全约束"))
 
