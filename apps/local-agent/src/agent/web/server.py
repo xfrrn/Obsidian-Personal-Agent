@@ -147,7 +147,7 @@ class AgentRuntime:
         return {
             "skills": [
                 {"name": skill.name, "description": skill.description}
-                for skill in discover_skills(self._settings.workspace / "skills")
+                for skill in discover_skills(self._settings.skills_dir)
             ]
         }
 
@@ -155,12 +155,14 @@ class AgentRuntime:
         """校验并原子导入一个 Skill 目录，不覆盖已有同名 Skill。"""
 
         with self._request_lock:
-            workspace = self._settings.workspace.resolve()
-            skills_root = workspace / "skills"
+            skills_root = self._settings.skills_dir
             if skills_root.is_symlink():
                 raise ValueError("skills 目录不能是符号链接")
             try:
-                with TemporaryDirectory(prefix=".skill-import-", dir=workspace) as directory:
+                skills_root.parent.mkdir(parents=True, exist_ok=True)
+                with TemporaryDirectory(
+                    prefix=".skill-import-", dir=skills_root.parent
+                ) as directory:
                     staging_root = Path(directory)
                     for relative, content in files.items():
                         target = staging_root.joinpath(*relative.parts)

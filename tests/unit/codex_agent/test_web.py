@@ -425,8 +425,14 @@ class WebRuntimeTest(unittest.TestCase):
 
     def test_http_imports_and_lists_a_complete_skill_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory)
-            runtime = AgentRuntime(_settings(workspace), RecordingClient)
+            root = Path(directory)
+            workspace = root / "vault"
+            workspace.mkdir()
+            settings = replace(
+                _settings(workspace),
+                session_db_path=root / "plugin-data" / "sessions.db",
+            )
+            runtime = AgentRuntime(settings, RecordingClient)
             server = AgentHTTPServer(("127.0.0.1", 0), runtime)
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -480,8 +486,12 @@ class WebRuntimeTest(unittest.TestCase):
                         },
                     )
                 rules_text = (
-                    workspace / "skills" / "code-review" / "references" / "rules.md"
+                    settings.skills_dir
+                    / "code-review"
+                    / "references"
+                    / "rules.md"
                 ).read_text(encoding="utf-8")
+                workspace_skills_created = (workspace / "skills").exists()
             finally:
                 server.shutdown()
                 server.server_close()
@@ -493,6 +503,7 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(invalid.exception.code, HTTPStatus.BAD_REQUEST)
         self.assertEqual(duplicate.exception.code, HTTPStatus.CONFLICT)
         self.assertEqual(rules_text, "# 规则\n")
+        self.assertFalse(workspace_skills_created)
 
     def test_http_stream_forwards_assistant_deltas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -135,7 +135,7 @@ export class AgentSettingTab extends PluginSettingTab {
       .addToggle((toggle) => toggle.setValue(next.shellEnabled).onChange((value) => { next.shellEnabled = value; }));
     new Setting(this.containerEl)
       .setName("会话数据库")
-      .setDesc("选择文件夹后自动使用默认 sessions.db。留空时继续使用 Agent 当前路径。")
+      .setDesc("选择文件夹后使用其中的 sessions.db，并把 Skills 保存在同目录；留空时继续使用 Agent 默认路径。")
       .addText((text) => {
         sessionDbText = text;
         text.setPlaceholder("未选择")
@@ -205,7 +205,7 @@ export class AgentSettingTab extends PluginSettingTab {
       const skills = await this.agentPlugin.listSkills();
       container.empty();
       if (!skills.length) {
-        new Setting(container).setName("尚未导入 Skill").setDesc("导入后会保存在当前工作区的 skills/ 目录。");
+        new Setting(container).setName("尚未导入 Skill").setDesc("导入后会保存在 sessions.db 同目录的 skills/ 文件夹。");
         return;
       }
       for (const skill of skills) new Setting(container).setName(skill.name).setDesc(skill.description);

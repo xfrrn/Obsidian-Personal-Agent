@@ -35,15 +35,18 @@ class RecordingClient:
 class SkillInjectionTest(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_is_visible_but_only_explicit_skill_body_is_injected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory)
+            root = Path(directory)
+            workspace = root / "vault"
+            workspace.mkdir()
+            session_db_path = root / "plugin-data" / "sessions.db"
             _write_skill(
-                workspace / "skills" / "code-review" / "SKILL.md",
+                session_db_path.parent / "skills" / "code-review" / "SKILL.md",
                 "code-review",
                 "审查 Python 代码",
                 "先列出严重问题，再给出最小修复建议。",
             )
             _write_skill(
-                workspace / "skills" / "secret-workflow" / "SKILL.md",
+                session_db_path.parent / "skills" / "secret-workflow" / "SKILL.md",
                 "secret-workflow",
                 "不应自动加载的工作流",
                 "这段正文绝不能在未显式提及时进入提示词。",
@@ -56,6 +59,7 @@ class SkillInjectionTest(unittest.IsolatedAsyncioTestCase):
                 workspace=workspace,
                 shell_enabled=False,
                 request_timeout_seconds=1,
+                session_db_path=session_db_path,
             )
             handle = AgentHandle()
             client = RecordingClient()

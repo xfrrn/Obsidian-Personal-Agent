@@ -119,7 +119,7 @@ def create_session(
             change_journal=change_journal,
             session_id=session_id,
         ),
-        skills_service=SkillsService(settings.workspace / "skills"),
+        skills_service=SkillsService(settings.skills_dir),
         context_contributors=(
             AvailableSkillsContributor(),
             CurrentTimeContributor(),

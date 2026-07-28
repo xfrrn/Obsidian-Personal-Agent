@@ -48,6 +48,12 @@ class Settings:
         return self.context_window_tokens - self.reserved_output_tokens
 
     @property
+    def skills_dir(self) -> Path:
+        """返回与会话数据库同目录、不会随插件升级覆盖的 Skill 目录。"""
+
+        return self.session_db_path.expanduser().resolve().parent / "skills"
+
+    @property
     def auto_compact_threshold(self) -> int:
         """返回 Codex 风格的 90% 压缩上限；配置只能让压缩更早。"""
 
