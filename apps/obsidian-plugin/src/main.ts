@@ -75,6 +75,29 @@ export default class CodeXAgentPlugin extends Plugin {
     return this.apiKey;
   }
 
+  async fetchModels(apiBaseUrl: string, apiKey: string): Promise<string[]> {
+    const baseUrl = normalizeApiBaseUrl(apiBaseUrl);
+    const response = await requestUrl({
+      url: `${baseUrl}/models`,
+      method: "GET",
+      headers: apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : undefined,
+      throw: false
+    });
+    const payload = response.json as {
+      data?: Array<{ id?: unknown }>;
+      error?: unknown;
+    };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(modelListError(payload.error, `获取模型失败：HTTP ${response.status}`));
+    }
+    const models = Array.from(new Set((payload.data ?? [])
+      .map((model) => model.id)
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0)))
+      .sort((a, b) => a.localeCompare(b));
+    if (!models.length) throw new Error("模型接口未返回可选模型。");
+    return models;
+  }
+
   async listSkills(): Promise<AgentSkill[]> {
     await this.ensureAgentReady();
     const response = await requestUrl({
@@ -303,6 +326,15 @@ function isSandboxMode(value: unknown): value is SandboxMode {
 
 function isApprovalPolicy(value: unknown): value is ApprovalPolicy {
   return value === "never" || value === "on-request";
+}
+
+function modelListError(error: unknown, fallback: string): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return fallback;
 }
 
 function readFileBase64(file: File): Promise<string> {

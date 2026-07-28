@@ -1,6 +1,10 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import type { DropdownComponent, TextComponent } from "obsidian";
 import type CodeXAgentPlugin from "./main";
 import type { ThemeMode } from "./theme";
+import { agentPortFromUrl } from "./url";
+
+declare const require: ((id: string) => unknown) | undefined;
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "never" | "on-request";
@@ -45,20 +49,59 @@ export class AgentSettingTab extends PluginSettingTab {
     this.containerEl.empty();
     const next = { ...this.agentPlugin.settings };
     let apiKey = this.agentPlugin.getApiKey();
+    const agentPort = agentPortFromUrl(next.agentUrl);
+    next.agentUrl = `http://127.0.0.1:${agentPort}`;
+    let modelDropdown: DropdownComponent | null = null;
+    let sessionDbText: TextComponent | null = null;
+
+    const renderModels = (models: readonly string[]) => {
+      const options = Array.from(new Set(models.filter(Boolean)));
+      modelDropdown?.selectEl.empty();
+      if (!options.length) {
+        modelDropdown?.addOption("", "请先获取模型");
+        modelDropdown?.setValue("");
+        modelDropdown?.setDisabled(true);
+        next.model = "";
+        return;
+      }
+      for (const model of options) modelDropdown?.addOption(model, model);
+      if (!options.includes(next.model)) next.model = options[0];
+      modelDropdown?.setValue(next.model);
+      modelDropdown?.setDisabled(false);
+    };
 
     new Setting(this.containerEl)
-      .setName("Agent 启动地址")
-      .setDesc("同时用于连接和自动启动内置 Agent；仅允许本机地址，例如 http://127.0.0.1:8000。")
+      .setName("Agent 启动端口")
+      .setDesc("同时用于连接和自动启动内置 Agent；固定使用 http://127.0.0.1。")
       .addText((text) => text
-        .setPlaceholder("http://127.0.0.1:8000")
-        .setValue(next.agentUrl)
-        .onChange((value) => { next.agentUrl = value; }));
+        .setPlaceholder("8000")
+        .setValue(agentPort)
+        .onChange((value) => { next.agentUrl = `http://127.0.0.1:${value.trim()}`; }));
     new Setting(this.containerEl)
       .setName("模型 API 地址")
-      .addText((text) => text.setValue(next.apiBaseUrl).onChange((value) => { next.apiBaseUrl = value; }));
+      .addText((text) => text.setValue(next.apiBaseUrl).onChange((value) => {
+        next.apiBaseUrl = value;
+        renderModels([]);
+      }))
+      .addButton((button) => button
+        .setButtonText("获取模型")
+        .onClick(async () => {
+          button.setDisabled(true).setButtonText("获取中…");
+          try {
+            renderModels(await this.agentPlugin.fetchModels(next.apiBaseUrl, apiKey));
+            new Notice("模型列表已更新。");
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : "无法获取模型列表。");
+          } finally {
+            button.setDisabled(false).setButtonText("获取模型");
+          }
+        }));
     new Setting(this.containerEl)
       .setName("模型")
-      .addText((text) => text.setValue(next.model).onChange((value) => { next.model = value; }));
+      .addDropdown((dropdown) => {
+        modelDropdown = dropdown.onChange((value) => { next.model = value; });
+        renderModels(next.model ? [next.model] : []);
+      });
     new Setting(this.containerEl)
       .setName("API Key")
       .setDesc("保存到 Obsidian SecretStorage，不写入 data.json。")
@@ -92,8 +135,25 @@ export class AgentSettingTab extends PluginSettingTab {
       .addToggle((toggle) => toggle.setValue(next.shellEnabled).onChange((value) => { next.shellEnabled = value; }));
     new Setting(this.containerEl)
       .setName("会话数据库")
-      .setDesc("留空时继续使用 Agent 当前路径。")
-      .addText((text) => text.setValue(next.sessionDbPath).onChange((value) => { next.sessionDbPath = value; }));
+      .setDesc("选择文件夹后自动使用默认 sessions.db。留空时继续使用 Agent 当前路径。")
+      .addText((text) => {
+        sessionDbText = text;
+        text.setPlaceholder("未选择")
+          .setValue(next.sessionDbPath)
+          .setDisabled(true);
+      })
+      .addButton((button) => button
+        .setButtonText("选择文件夹")
+        .onClick(async () => {
+          try {
+            const path = await chooseSessionDbPath(next.sessionDbPath, next.workspace);
+            if (!path) return;
+            next.sessionDbPath = path;
+            sessionDbText?.setValue(path);
+          } catch (error) {
+            new Notice(error instanceof Error ? error.message : "无法选择会话数据库文件夹。");
+          }
+        }));
     new Setting(this.containerEl)
       .setName("界面主题")
       .setDesc("默认跟随 Obsidian，也可固定为亮色或暗色。")
@@ -156,4 +216,51 @@ export class AgentSettingTab extends PluginSettingTab {
         .setDesc(error instanceof Error ? error.message : "Agent 暂时不可用。");
     }
   }
+}
+
+async function chooseSessionDbPath(sessionDbPath: string, workspace: string): Promise<string | null> {
+  const dialog = electronDialog();
+  if (!dialog) throw new Error("当前环境不支持选择文件夹。");
+  const defaultPath = sessionDbPath.trim() ? parentPath(sessionDbPath) : workspace.trim();
+  const result = await dialog.showOpenDialog({
+    properties: ["openDirectory", "createDirectory"],
+    ...(defaultPath ? { defaultPath } : {})
+  });
+  const folder = result.canceled ? "" : result.filePaths[0] ?? "";
+  return folder ? defaultSessionDbPath(folder) : null;
+}
+
+interface ElectronDialog {
+  showOpenDialog(options: {
+    properties: string[];
+    defaultPath?: string;
+  }): Promise<{ canceled: boolean; filePaths: string[] }>;
+}
+
+function electronDialog(): ElectronDialog | null {
+  if (typeof require !== "function") return null;
+  try {
+    const electron = require("electron") as {
+      dialog?: ElectronDialog;
+      remote?: { dialog?: ElectronDialog };
+    };
+    return electron.remote?.dialog ?? electron.dialog ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultSessionDbPath(folder: string): string {
+  const trimmed = folder.trim().replace(/[\\/]+$/, "");
+  const separator = trimmed.includes("\\") || /^[A-Za-z]:/.test(trimmed) ? "\\" : "/";
+  return `${trimmed}${separator}sessions.db`;
+}
+
+function parentPath(path: string): string {
+  const trimmed = path.trim().replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  if (index < 0) return trimmed;
+  if (index === 0) return trimmed.slice(0, 1);
+  if (index === 2 && /^[A-Za-z]:/.test(trimmed)) return trimmed.slice(0, 3);
+  return trimmed.slice(0, index);
 }

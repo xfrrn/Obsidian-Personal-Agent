@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from "node:fs";
 import test from 'node:test';
-import { normalizeAgentUrl, normalizeApiBaseUrl } from "../src/url";
+import { agentPortFromUrl, normalizeAgentUrl, normalizeApiBaseUrl } from "../src/url";
 import { agentLaunchSpec } from "../src/agent-process";
 import { isThemeMode } from "../src/theme";
 
 test('accepts only normalized loopback Agent URLs', () => {
   assert.equal(normalizeAgentUrl('http://127.0.0.1:8000/path?q=1'), 'http://127.0.0.1:8000');
   assert.equal(normalizeAgentUrl('http://localhost:8765'), 'http://localhost:8765');
+  assert.equal(agentPortFromUrl('http://127.0.0.1:3344/path?q=1'), '3344');
   assert.throws(() => normalizeAgentUrl('https://example.com'), /回环地址/);
   assert.throws(() => normalizeAgentUrl('file:///tmp/agent'), /HTTP/);
 });

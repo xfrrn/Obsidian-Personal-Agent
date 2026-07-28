@@ -1,7 +1,12 @@
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 export function normalizeAgentUrl(value: string): string {
-  const url = new URL(value.trim());
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("CodeX-Agent 地址必须是有效的 HTTP 或 HTTPS 本机地址。");
+  }
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("CodeX-Agent 地址必须使用 HTTP 或 HTTPS。");
   }
@@ -9,6 +14,11 @@ export function normalizeAgentUrl(value: string): string {
     throw new Error("CodeX-Agent 地址必须指向本机回环地址。");
   }
   return url.origin;
+}
+
+export function agentPortFromUrl(value: string): string {
+  const url = new URL(normalizeAgentUrl(value));
+  return url.port || (url.protocol === "https:" ? "443" : "80");
 }
 
 export function normalizeApiBaseUrl(value: string): string {

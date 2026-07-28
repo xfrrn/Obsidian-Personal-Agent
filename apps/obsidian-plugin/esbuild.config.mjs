@@ -12,7 +12,7 @@ const uiStyles = readFileSync(join(uiAssetDir, uiCssFiles[0]), "utf8");
 const context = await esbuild.context({
   entryPoints: [join(pluginDir, "src/main.ts")],
   bundle: true,
-  external: ["obsidian", "node:child_process", "node:fs"],
+  external: ["obsidian", "electron", "node:child_process", "node:fs"],
   format: "cjs",
   target: "es2022",
   outfile: join(pluginDir, "main.js"),
