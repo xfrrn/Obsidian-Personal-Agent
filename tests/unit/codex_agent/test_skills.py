@@ -82,6 +82,7 @@ class SkillInjectionTest(unittest.IsolatedAsyncioTestCase):
             [tool["function"]["name"] for tool in client.tools],
             [
                 "apply_patch",
+                "create_frontmatter",
                 "current_time",
                 "get_context_remaining",
                 "new_context_window",

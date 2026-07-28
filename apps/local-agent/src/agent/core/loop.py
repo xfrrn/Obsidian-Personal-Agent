@@ -24,6 +24,7 @@ from agent.protocol.op import CancelTool, Interrupt, ResolveApproval, Shutdown, 
 from agent.skills.service import SkillsService
 from agent.storage import SessionStore, StoredSession
 from agent.tools.handlers.apply_patch import ApplyPatchTool
+from agent.tools.handlers.create_frontmatter import CreateFrontmatterTool
 from agent.tools.handlers.current_time import CurrentTimeTool
 from agent.tools.handlers.exec_command import ExecCommandTool
 from agent.tools.handlers.get_context_remaining import GetContextRemainingTool
@@ -60,6 +61,7 @@ def create_session(
     context_window = ContextWindow()
     handlers = [
         ApplyPatchTool(settings),
+        CreateFrontmatterTool(settings),
         CurrentTimeTool(),
         GetContextRemainingTool(
             token_counter,

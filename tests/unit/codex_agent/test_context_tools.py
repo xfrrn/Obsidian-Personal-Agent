@@ -131,6 +131,7 @@ class ContextToolsTest(unittest.IsolatedAsyncioTestCase):
             [handler.spec.name for handler in session.tools.handlers()],
             [
                 "apply_patch",
+                "create_frontmatter",
                 "current_time",
                 "get_context_remaining",
                 "new_context_window",

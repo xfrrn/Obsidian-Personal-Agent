@@ -212,6 +212,7 @@ class ProcessInteractionTest(unittest.IsolatedAsyncioTestCase):
             client.visible_tools,
             {
                 "apply_patch",
+                "create_frontmatter",
                 "current_time",
                 "exec_command",
                 "get_context_remaining",

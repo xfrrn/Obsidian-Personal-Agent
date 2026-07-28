@@ -47,6 +47,12 @@ obsidian commands filter=linter
 
 工具每次调用都会重新读取 Windows 用户和系统 PATH，因此启用 CLI 后不必重启 Agent。如果命令仍不可用，工具会返回上述安装与启用提示。当前版本只支持列出命令和按命令 ID 执行，不包含 MCP、插件私有 API 或专用插件适配器。
 
+### 创建笔记 Frontmatter
+
+内置 `create_frontmatter` 工具为当前 Vault 中已有的 Markdown 笔记添加 YAML Properties，参数为 `path`、`title`、`status` 和可选的 `tags`。`status` 支持 `todo`、`doing`、`done`；`created` 使用本机当天日期自动生成，字段固定按 `title`、`status`、`created`、`tags` 排列。
+
+工具只接受 Vault 内已有的 `.md` 相对路径，不允许写入隐藏目录；笔记已有 frontmatter 时拒绝重复创建，正文保持不变。写入遵循现有工作区权限，Plan Mode 和只读模式下禁止执行，变更可通过现有文件记录撤销。它负责字段语义和初始结构；Linter 可以在之后继续统一空格、换行等格式，两者不冲突。
+
 ## 开发
 
 ```powershell
