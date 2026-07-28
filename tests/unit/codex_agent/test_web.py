@@ -201,6 +201,9 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertIn('aria-label="沙盒权限"', app)
         self.assertIn('requestJson<RuntimePermissions>(agentUrl, "/api/permissions"', app)
         self.assertIn('value="danger-full-access"', app)
+        self.assertIn("if (!permissions || updatingPermissions ||", app)
+        self.assertIn("disabled={!permissions || anyBusy}", app)
+        self.assertNotIn("disabled={!permissions || updatingPermissions || anyBusy}", app)
 
     def test_frontend_is_a_sidebar_chat_without_metrics_dashboard(self) -> None:
         app = (UI_ROOT / "App.tsx").read_text(encoding="utf-8")

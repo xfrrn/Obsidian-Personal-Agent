@@ -1294,7 +1294,7 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
     setChanges(nextChanges)
   }
   const changeSandboxMode = async (sandboxMode: SandboxMode) => {
-    if (!permissions || sandboxMode === permissions.sandbox_mode) return
+    if (!permissions || updatingPermissions || sandboxMode === permissions.sandbox_mode) return
     if (anyBusy) {
       window.alert("运行中的回合结束后才能切换权限")
       return
@@ -1350,7 +1350,8 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
         <select
           className="agent-permission"
           aria-label="沙盒权限"
-          disabled={!permissions || updatingPermissions || anyBusy}
+          aria-busy={updatingPermissions}
+          disabled={!permissions || anyBusy}
           onChange={(event) => void changeSandboxMode(event.target.value as SandboxMode)}
           title={permissions ? `审批：${permissions.approval_policy} · 网络：${permissions.sandbox_network}` : "权限接口不可用"}
           value={permissions?.sandbox_mode || ""}
