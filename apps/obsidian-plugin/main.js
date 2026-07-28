@@ -48,7 +48,7 @@ var AgentSettingTab = class extends import_obsidian.PluginSettingTab {
     this.containerEl.empty();
     const next = { ...this.agentPlugin.settings };
     let apiKey = this.agentPlugin.getApiKey();
-    new import_obsidian.Setting(this.containerEl).setName("CodeX-Agent \u5730\u5740").setDesc("\u4EC5\u5141\u8BB8\u672C\u673A\u56DE\u73AF\u5730\u5740\u3002").addText((text) => text.setValue(next.agentUrl).onChange((value) => {
+    new import_obsidian.Setting(this.containerEl).setName("Agent \u542F\u52A8\u5730\u5740").setDesc("\u540C\u65F6\u7528\u4E8E\u8FDE\u63A5\u548C\u81EA\u52A8\u542F\u52A8\u5185\u7F6E Agent\uFF1B\u4EC5\u5141\u8BB8\u672C\u673A\u5730\u5740\uFF0C\u4F8B\u5982 http://127.0.0.1:8000\u3002").addText((text) => text.setPlaceholder("http://127.0.0.1:8000").setValue(next.agentUrl).onChange((value) => {
       next.agentUrl = value;
     }));
     new import_obsidian.Setting(this.containerEl).setName("\u6A21\u578B API \u5730\u5740").addText((text) => text.setValue(next.apiBaseUrl).onChange((value) => {

@@ -42,9 +42,12 @@ export class AgentSettingTab extends PluginSettingTab {
     let apiKey = this.agentPlugin.getApiKey();
 
     new Setting(this.containerEl)
-      .setName("CodeX-Agent 地址")
-      .setDesc("仅允许本机回环地址。")
-      .addText((text) => text.setValue(next.agentUrl).onChange((value) => { next.agentUrl = value; }));
+      .setName("Agent 启动地址")
+      .setDesc("同时用于连接和自动启动内置 Agent；仅允许本机地址，例如 http://127.0.0.1:8000。")
+      .addText((text) => text
+        .setPlaceholder("http://127.0.0.1:8000")
+        .setValue(next.agentUrl)
+        .onChange((value) => { next.agentUrl = value; }));
     new Setting(this.containerEl)
       .setName("模型 API 地址")
       .addText((text) => text.setValue(next.apiBaseUrl).onChange((value) => { next.apiBaseUrl = value; }));

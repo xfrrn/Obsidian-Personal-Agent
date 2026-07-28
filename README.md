@@ -22,6 +22,8 @@ Obsidian 侧栏通过 iframe 加载默认地址 `http://127.0.0.1:8000`。插件
 
 模型地址、模型、工作区、权限、Shell 和会话数据库路径在插件设置面板持久化；API Key 单独保存在 Obsidian SecretStorage。侧栏打开或重新加载时，插件通过本机 `/api/config` 把配置同步给空闲的 Agent 运行时。
 
+`设置 → Personal Knowledge Agent → Agent 启动地址` 可修改本机监听地址和端口，例如 `http://127.0.0.1:8765`。保存后，插件会按新地址重启自己创建的 Agent；手动运行的外部 Agent 不会被终止。
+
 ## Windows 一体包
 
 在 64 位 Windows 开发机运行：
