@@ -1,5 +1,5 @@
 import { Notice, Plugin, requestUrl } from "obsidian";
-import { AgentSettingTab, AgentSettings, ApprovalPolicy, DEFAULT_SETTINGS, SandboxMode } from "./settings";
+import { AgentSettingTab, AgentSettings, AgentSkill, ApprovalPolicy, DEFAULT_SETTINGS, SandboxMode } from "./settings";
 import { normalizeAgentUrl, normalizeApiBaseUrl } from "./url";
 import { CODEX_AGENT_VIEW_TYPE, CodeXAgentView } from "./codex-agent-view";
 import { isThemeMode, ThemeMode } from "./theme";
@@ -7,6 +7,8 @@ import { agentLaunchSpec } from "./agent-process";
 
 const API_KEY_SECRET_ID = "personal-knowledge-agent-api-key";
 const AGENT_START_ATTEMPTS = 100;
+const MAX_SKILL_IMPORT_FILES = 500;
+const MAX_SKILL_IMPORT_BYTES = 10 * 1024 * 1024;
 
 interface AgentChildProcess {
   stderr: { on(event: "data", listener: (chunk: { toString(): string }) => void): void } | null;
@@ -29,6 +31,7 @@ export default class CodeXAgentPlugin extends Plugin {
   private apiKey = "";
   private agentProcess: AgentChildProcess | null = null;
   private agentStartPromise: Promise<void> | null = null;
+  private initialSyncPromise: Promise<void> | null = null;
   private agentStartError = "";
   private unloading = false;
 
@@ -51,10 +54,14 @@ export default class CodeXAgentPlugin extends Plugin {
       callback: () => void this.activateView()
     });
     this.addSettingTab(new AgentSettingTab(this.app, this));
-    void this.syncAgentSettings().catch((error) => {
+    const initialSync = this.syncAgentSettings();
+    this.initialSyncPromise = initialSync;
+    void initialSync.catch((error) => {
       if (!this.unloading) {
         new Notice(error instanceof Error ? error.message : "无法自动启动本地 Agent。");
       }
+    }).finally(() => {
+      if (this.initialSyncPromise === initialSync) this.initialSyncPromise = null;
     });
   }
 
@@ -66,6 +73,49 @@ export default class CodeXAgentPlugin extends Plugin {
 
   getApiKey(): string {
     return this.apiKey;
+  }
+
+  async listSkills(): Promise<AgentSkill[]> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/skills`,
+      method: "GET",
+      throw: false
+    });
+    const payload = response.json as { error?: unknown; skills?: AgentSkill[] };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `读取 Skills 失败：HTTP ${response.status}`);
+    }
+    return Array.isArray(payload.skills) ? payload.skills : [];
+  }
+
+  async importSkill(files: readonly File[]): Promise<AgentSkill> {
+    if (!files.length || files.length > MAX_SKILL_IMPORT_FILES) {
+      throw new Error(`Skill 必须包含 1 到 ${MAX_SKILL_IMPORT_FILES} 个文件。`);
+    }
+    if (files.reduce((total, file) => total + file.size, 0) > MAX_SKILL_IMPORT_BYTES) {
+      throw new Error("Skill 文件总大小不能超过 10 MiB。");
+    }
+    await this.ensureAgentReady();
+    const encodedFiles: Array<{ path: string; content: string }> = [];
+    for (const file of files) {
+      encodedFiles.push({
+        path: file.webkitRelativePath || file.name,
+        content: await readFileBase64(file)
+      });
+    }
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/skills/import`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files: encodedFiles }),
+      throw: false
+    });
+    const payload = response.json as { error?: unknown; skill?: AgentSkill };
+    if (response.status < 200 || response.status >= 300 || !payload.skill) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `导入 Skill 失败：HTTP ${response.status}`);
+    }
+    return payload.skill;
   }
 
   async persistPanelSettings(settings: { sandboxMode?: SandboxMode; themeMode?: ThemeMode }): Promise<void> {
@@ -141,6 +191,11 @@ export default class CodeXAgentPlugin extends Plugin {
     if (!leaf) return;
     if (!existing) await leaf.setViewState({ type: CODEX_AGENT_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  private async ensureAgentReady(): Promise<void> {
+    if (this.initialSyncPromise) await this.initialSyncPromise;
+    else await this.ensureAgentStarted();
   }
 
   private async loadSettings(): Promise<void> {
@@ -248,4 +303,13 @@ function isSandboxMode(value: unknown): value is SandboxMode {
 
 function isApprovalPolicy(value: unknown): value is ApprovalPolicy {
   return value === "never" || value === "on-request";
+}
+
+function readFileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+    reader.onerror = () => reject(reader.error ?? new Error(`无法读取文件: ${file.name}`));
+    reader.readAsDataURL(file);
+  });
 }

@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type CodeXAgentPlugin from "./main";
 import type { ThemeMode } from "./theme";
 
@@ -16,6 +16,11 @@ export interface AgentSettings {
   sessionDbPath: string;
   themeMode: ThemeMode;
   configured: boolean;
+}
+
+export interface AgentSkill {
+  name: string;
+  description: string;
 }
 
 export const DEFAULT_SETTINGS: AgentSettings = {
@@ -100,6 +105,55 @@ export class AgentSettingTab extends PluginSettingTab {
       .addButton((button) => button
         .setCta()
         .setButtonText("保存并应用")
-        .onClick(async () => this.agentPlugin.applySettings(next, apiKey)));
+        .onClick(async () => {
+          await this.agentPlugin.applySettings(next, apiKey);
+          await this.renderSkills(skillList);
+        }));
+
+    new Setting(this.containerEl).setName("Skills").setHeading();
+    const skillList = this.containerEl.createDiv();
+    const folderInput = this.containerEl.createEl("input", { type: "file" });
+    folderInput.multiple = true;
+    folderInput.hidden = true;
+    folderInput.setAttribute("webkitdirectory", "");
+    const importSetting = new Setting(this.containerEl)
+      .setName("导入 Skill")
+      .setDesc("选择一个根目录含 SKILL.md 的 Skill 文件夹；最多 500 个文件、10 MiB，不覆盖同名 Skill。")
+      .addButton((button) => button.setButtonText("选择文件夹").onClick(() => folderInput.click()));
+    folderInput.addEventListener("change", async () => {
+      const files = Array.from(folderInput.files ?? []);
+      folderInput.value = "";
+      if (!files.length) return;
+      importSetting.setDisabled(true);
+      try {
+        const skill = await this.agentPlugin.importSkill(files);
+        new Notice(`已导入 Skill：${skill.name}`);
+        await this.renderSkills(skillList);
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : "无法导入 Skill。");
+      } finally {
+        importSetting.setDisabled(false);
+      }
+    });
+    void this.renderSkills(skillList);
+  }
+
+  private async renderSkills(container: HTMLElement): Promise<void> {
+    container.empty();
+    new Setting(container).setName("正在读取 Skills…");
+    try {
+      const skills = await this.agentPlugin.listSkills();
+      container.empty();
+      if (!skills.length) {
+        new Setting(container).setName("尚未导入 Skill").setDesc("导入后会保存在当前工作区的 skills/ 目录。");
+        return;
+      }
+      for (const skill of skills) new Setting(container).setName(skill.name).setDesc(skill.description);
+    } catch (error) {
+      container.empty();
+      new Setting(container)
+        .setName("无法读取 Skills")
+        .setDesc(error instanceof Error ? error.message : "Agent 暂时不可用。");
+    }
   }
 }

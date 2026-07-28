@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
 import ipaddress
 import json
 import logging
@@ -12,7 +14,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from tempfile import TemporaryDirectory
 from threading import Lock, Thread
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +28,7 @@ from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInter
 from agent.core.turn.public_events import PublicEventAdapter
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
+from agent.skills.loader import discover_skills
 from agent.utils.logging import configure_logging
 from agent.web.metrics import AgentMetrics
 from agent.protocol.event import Event, EventKind
@@ -38,6 +42,9 @@ MAX_FILE_REFERENCES = 5
 MAX_WORKSPACE_FILE_RESULTS = 80
 SKIPPED_WORKSPACE_DIRS = {".git", ".obsidian", ".pytest_cache", "__pycache__", "node_modules"}
 OBSIDIAN_APP_ORIGIN = "app://obsidian.md"
+MAX_SKILL_IMPORT_FILES = 500
+MAX_SKILL_IMPORT_BYTES = 10 * 1024 * 1024
+MAX_SKILL_IMPORT_BODY_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -133,6 +140,44 @@ class AgentRuntime:
                 if len(files) >= MAX_WORKSPACE_FILE_RESULTS:
                     return {"files": files}
         return {"files": files}
+
+    def skills(self) -> dict[str, Any]:
+        """返回当前工作区中已通过格式校验的 Skills。"""
+
+        return {
+            "skills": [
+                {"name": skill.name, "description": skill.description}
+                for skill in discover_skills(self._settings.workspace / "skills")
+            ]
+        }
+
+    def import_skill(self, files: dict[PurePosixPath, bytes]) -> dict[str, Any]:
+        """校验并原子导入一个 Skill 目录，不覆盖已有同名 Skill。"""
+
+        with self._request_lock:
+            workspace = self._settings.workspace.resolve()
+            skills_root = workspace / "skills"
+            if skills_root.is_symlink():
+                raise ValueError("skills 目录不能是符号链接")
+            try:
+                with TemporaryDirectory(prefix=".skill-import-", dir=workspace) as directory:
+                    staging_root = Path(directory)
+                    for relative, content in files.items():
+                        target = staging_root.joinpath(*relative.parts)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(content)
+                    skills = discover_skills(staging_root)
+                    if len(skills) != 1:
+                        raise ValueError("选中的目录根部必须包含一个有效的 SKILL.md")
+                    skill = skills[0]
+                    destination = skills_root / skill.name
+                    if destination.exists() or destination.is_symlink():
+                        raise RuntimeError(f"Skill 已存在: {skill.name}")
+                    skills_root.mkdir(parents=True, exist_ok=True)
+                    skill.path.parent.replace(destination)
+            except OSError as exc:
+                raise ValueError(f"无法写入 Skill: {exc}") from exc
+        return {"skill": {"name": skill.name, "description": skill.description}}
 
     def update_configuration(self, settings: Settings) -> dict[str, Any]:
         """在空闲边界替换冻结配置，后续会话使用新的模型、工具和工作区。"""
@@ -573,6 +618,15 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query).get("q", [""])[0]
             self._send_json(HTTPStatus.OK, self.server.runtime.workspace_files(query))
             return
+        if path == "/api/skills":
+            if not _is_loopback_client(self.client_address[0]):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "Skills 只允许本机读取"})
+                return
+            try:
+                self._send_json(HTTPStatus.OK, self.server.runtime.skills())
+            except (OSError, ValueError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
         if path == "/api/sessions":
             self._send_json(
                 HTTPStatus.OK, {"sessions": self.server.runtime.conversations()}
@@ -625,6 +679,17 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     HTTPStatus.OK,
                     self.server.runtime.update_permissions(sandbox_mode),
+                )
+                return
+            if path == "/api/skills/import":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "Skill 只允许从本机导入"})
+                    return
+                files = _skill_import_files(
+                    self._read_json_body(MAX_SKILL_IMPORT_BODY_BYTES)
+                )
+                self._send_json(
+                    HTTPStatus.CREATED, self.server.runtime.import_skill(files)
                 )
                 return
             if path == "/api/sessions":
@@ -688,16 +753,15 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         except RuntimeError as exc:
             self._send_json(HTTPStatus.CONFLICT, {"error": str(exc)})
 
-    def _read_json_body(self) -> dict[str, Any]:
+    def _read_json_body(self, max_bytes: int = 80_100) -> dict[str, Any]:
         """在读取前限制请求体，避免本地服务被意外的大粘贴内容耗尽内存。"""
 
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError as exc:
             raise ValueError("Content-Length 无效") from exc
-        # UTF-8 中 20,000 个字符最多占 80,000 字节，长度上限与 ask() 的字符上限配套。
-        if not 0 <= length <= 80_100:
-            raise ValueError("请求体不能超过 80100 字节")
+        if not 0 <= length <= max_bytes:
+            raise ValueError(f"请求体不能超过 {max_bytes} 字节")
         body = json.loads(self.rfile.read(length).decode("utf-8"))
         if not isinstance(body, dict):
             raise ValueError("请求体必须是 JSON 对象")
@@ -788,6 +852,55 @@ def _undo_paths(body: dict[str, Any]) -> list[str]:
     ):
         raise ValueError("paths 必须包含 1 到 500 个有效文件路径")
     return paths
+
+
+def _skill_import_files(body: dict[str, Any]) -> dict[PurePosixPath, bytes]:
+    """校验浏览器目录选择结果，并解码为安全的相对路径文件集。"""
+
+    if set(body) != {"files"} or not isinstance(body["files"], list):
+        raise ValueError("Skill 导入请求必须且只能包含 files 数组")
+    entries = body["files"]
+    if not 1 <= len(entries) <= MAX_SKILL_IMPORT_FILES:
+        raise ValueError(f"Skill 必须包含 1 到 {MAX_SKILL_IMPORT_FILES} 个文件")
+
+    files: dict[PurePosixPath, bytes] = {}
+    roots: set[str] = set()
+    total_bytes = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"path", "content"}:
+            raise ValueError("每个 Skill 文件必须且只能包含 path 和 content")
+        raw_path, encoded = entry["path"], entry["content"]
+        if not isinstance(raw_path, str) or not isinstance(encoded, str):
+            raise ValueError("Skill 文件的 path 和 content 必须是字符串")
+        relative = PurePosixPath(raw_path)
+        if (
+            not raw_path
+            or len(raw_path) > 2_000
+            or "\\" in raw_path
+            or relative.is_absolute()
+            or bool(PureWindowsPath(raw_path).drive)
+            or ".." in relative.parts
+            or len(relative.parts) < 2
+        ):
+            raise ValueError(f"Skill 文件路径无效: {raw_path}")
+        if relative in files:
+            raise ValueError(f"Skill 包含重复文件: {raw_path}")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Skill 文件不是有效的 Base64: {raw_path}") from exc
+        total_bytes += len(content)
+        if total_bytes > MAX_SKILL_IMPORT_BYTES:
+            raise ValueError("Skill 文件总大小不能超过 10 MiB")
+        files[relative] = content
+        roots.add(relative.parts[0])
+
+    if len(roots) != 1:
+        raise ValueError("一次只能导入一个 Skill 目录")
+    root = next(iter(roots))
+    if PurePosixPath(root, "SKILL.md") not in files:
+        raise ValueError("选中的目录根部缺少 SKILL.md")
+    return files
 
 
 def _permissions_body(body: dict[str, Any]) -> SandboxMode:

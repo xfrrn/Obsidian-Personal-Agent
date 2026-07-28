@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import tempfile
 import unittest
@@ -421,6 +422,77 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(response["events"][0]["data"]["mode"], "plan")
         self.assertEqual(detail["session"]["mode"], "plan")
         self.assertEqual(metrics["turns"]["finished"], 1)
+
+    def test_http_imports_and_lists_a_complete_skill_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            runtime = AgentRuntime(_settings(workspace), RecordingClient)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            encode = lambda text: base64.b64encode(text.encode()).decode()
+            try:
+                with self.assertRaises(HTTPError) as invalid:
+                    _post_json(
+                        f"{address}/api/skills/import",
+                        {
+                            "files": [
+                                {
+                                    "path": "invalid/SKILL.md",
+                                    "content": encode("没有 front matter"),
+                                }
+                            ]
+                        },
+                    )
+                imported = _post_json(
+                    f"{address}/api/skills/import",
+                    {
+                        "files": [
+                            {
+                                "path": "code-review/SKILL.md",
+                                "content": encode(
+                                    "---\nname: code-review\n"
+                                    "description: 审查代码\n---\n先检查正确性。\n"
+                                ),
+                            },
+                            {
+                                "path": "code-review/references/rules.md",
+                                "content": encode("# 规则\n"),
+                            },
+                        ]
+                    },
+                )
+                listed = _get_json(f"{address}/api/skills")
+                with self.assertRaises(HTTPError) as duplicate:
+                    _post_json(
+                        f"{address}/api/skills/import",
+                        {
+                            "files": [
+                                {
+                                    "path": "code-review/SKILL.md",
+                                    "content": encode(
+                                        "---\nname: code-review\n"
+                                        "description: 新内容\n---\n覆盖。\n"
+                                    ),
+                                }
+                            ]
+                        },
+                    )
+                rules_text = (
+                    workspace / "skills" / "code-review" / "references" / "rules.md"
+                ).read_text(encoding="utf-8")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        self.assertEqual(imported["skill"], {"name": "code-review", "description": "审查代码"})
+        self.assertEqual(listed["skills"], [imported["skill"]])
+        self.assertEqual(invalid.exception.code, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(duplicate.exception.code, HTTPStatus.CONFLICT)
+        self.assertEqual(rules_text, "# 规则\n")
 
     def test_http_stream_forwards_assistant_deltas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
