@@ -1,5 +1,5 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
-import type { DropdownComponent, TextComponent } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting, SettingGroup } from "obsidian";
+import type { ButtonComponent, DropdownComponent, TextComponent } from "obsidian";
 import type CodeXAgentPlugin from "./main";
 import type { ThemeMode } from "./theme";
 import { agentPortFromUrl } from "./url";
@@ -47,12 +47,27 @@ export class AgentSettingTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
+    this.containerEl.addClass("pka-settings-page");
     const next = { ...this.agentPlugin.settings };
     let apiKey = this.agentPlugin.getApiKey();
     const agentPort = agentPortFromUrl(next.agentUrl);
     next.agentUrl = `http://127.0.0.1:${agentPort}`;
+    const originalSettings = JSON.stringify(next);
+    const originalApiKey = apiKey;
+    const needsInitialSave = !next.configured;
     let modelDropdown: DropdownComponent | null = null;
+    let workspaceText: TextComponent | null = null;
     let sessionDbText: TextComponent | null = null;
+    let actionLabel: HTMLElement | null = null;
+    let discardButton: ButtonComponent | null = null;
+    let saveButton: ButtonComponent | null = null;
+
+    const updateDirtyState = () => {
+      const changed = JSON.stringify(next) !== originalSettings || apiKey !== originalApiKey;
+      if (actionLabel) actionLabel.textContent = changed ? "配置已修改" : needsInitialSave ? "配置尚未保存" : "配置未修改";
+      discardButton?.setDisabled(!changed);
+      saveButton?.setDisabled(!needsInitialSave && !changed);
+    };
 
     const renderModels = (models: readonly string[]) => {
       const options = Array.from(new Set(models.filter(Boolean)));
@@ -62,22 +77,47 @@ export class AgentSettingTab extends PluginSettingTab {
         modelDropdown?.setValue("");
         modelDropdown?.setDisabled(true);
         next.model = "";
+        updateDirtyState();
         return;
       }
       for (const model of options) modelDropdown?.addOption(model, model);
       if (!options.includes(next.model)) next.model = options[0];
       modelDropdown?.setValue(next.model);
       modelDropdown?.setDisabled(false);
+      updateDirtyState();
     };
 
-    new Setting(this.containerEl)
+    const header = this.containerEl.createDiv({ cls: "pka-settings-header" });
+    header.createEl("h1", { text: "Personal Knowledge Agent" });
+    header.createEl("p", { text: "配置 Agent 服务、模型连接、执行权限和数据存储。" });
+
+    const serviceGroup = new SettingGroup(this.containerEl).setHeading("Agent 服务").addClass("pka-settings-group");
+    serviceGroup.addSetting((setting) => setting
       .setName("Agent 启动端口")
-      .setDesc("同时用于连接和自动启动内置 Agent；固定使用 http://127.0.0.1。")
+      .setDesc("连接和自动启动内置 Agent 使用同一端口。")
       .addText((text) => text
         .setPlaceholder("8000")
         .setValue(agentPort)
-        .onChange((value) => { next.agentUrl = `http://127.0.0.1:${value.trim()}`; }));
-    new Setting(this.containerEl)
+        .onChange((value) => {
+          next.agentUrl = `http://127.0.0.1:${value.trim()}`;
+          updateDirtyState();
+        })));
+    serviceGroup.addSetting((setting) => {
+      setting.setName("服务地址");
+      setting.controlEl.createSpan({ cls: "pka-settings-value", text: "http://127.0.0.1" });
+    });
+    serviceGroup.addSetting((setting) => {
+      setting.setName("服务状态");
+      const status = setting.controlEl.createSpan({ cls: "pka-service-status", text: "检查中…" });
+      status.dataset.state = "checking";
+      void this.agentPlugin.isAgentRunning().then((running) => {
+        status.textContent = running ? "运行中" : "未运行";
+        status.dataset.state = running ? "running" : "stopped";
+      });
+    });
+
+    const modelGroup = new SettingGroup(this.containerEl).setHeading("模型配置").addClass("pka-settings-group");
+    modelGroup.addSetting((setting) => setting
       .setName("模型 API 地址")
       .addText((text) => text.setValue(next.apiBaseUrl).onChange((value) => {
         next.apiBaseUrl = value;
@@ -95,25 +135,94 @@ export class AgentSettingTab extends PluginSettingTab {
           } finally {
             button.setDisabled(false).setButtonText("获取模型");
           }
-        }));
-    new Setting(this.containerEl)
+        })));
+    modelGroup.addSetting((setting) => setting
       .setName("模型")
       .addDropdown((dropdown) => {
-        modelDropdown = dropdown.onChange((value) => { next.model = value; });
+        modelDropdown = dropdown.onChange((value) => {
+          next.model = value;
+          updateDirtyState();
+        });
         renderModels(next.model ? [next.model] : []);
-      });
-    new Setting(this.containerEl)
+      }));
+    modelGroup.addSetting((setting) => setting
       .setName("API Key")
       .setDesc("保存到 Obsidian SecretStorage，不写入 data.json。")
       .addText((text) => {
         text.inputEl.type = "password";
-        text.setValue(apiKey).onChange((value) => { apiKey = value; });
-      });
-    new Setting(this.containerEl)
+        text.setValue(apiKey).onChange((value) => {
+          apiKey = value;
+          updateDirtyState();
+        });
+      }));
+
+    const dataGroup = new SettingGroup(this.containerEl).setHeading("工作区与数据").addClass("pka-settings-group");
+    dataGroup.addSetting((setting) => setting
       .setName("Agent 工作区")
-      .setDesc("通常填写当前 Vault 的绝对路径。")
-      .addText((text) => text.setValue(next.workspace).onChange((value) => { next.workspace = value; }));
-    new Setting(this.containerEl)
+      .setDesc("Agent 可以读取和修改的 Vault 根目录。")
+      .addText((text) => {
+        workspaceText = text;
+        text.setValue(next.workspace).onChange((value) => {
+          next.workspace = value;
+          text.inputEl.title = value;
+          updateDirtyState();
+        });
+        text.inputEl.title = next.workspace;
+      })
+      .addButton((button) => button.setButtonText("浏览").onClick(async () => {
+        try {
+          const folder = await chooseFolder(next.workspace);
+          if (!folder) return;
+          next.workspace = folder;
+          workspaceText?.setValue(folder);
+          if (workspaceText) workspaceText.inputEl.title = folder;
+          updateDirtyState();
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "无法选择 Agent 工作区。");
+        }
+      })));
+    dataGroup.addSetting((setting) => setting
+      .setName("会话数据库")
+      .setDesc("Skills 保存在数据库同目录；留空时使用 Agent 默认路径。")
+      .addText((text) => {
+        sessionDbText = text;
+        text.setPlaceholder("未选择").setValue(next.sessionDbPath);
+        text.inputEl.readOnly = true;
+        text.inputEl.title = next.sessionDbPath;
+      })
+      .addButton((button) => button.setButtonText("浏览").onClick(async () => {
+        try {
+          const path = await chooseSessionDbPath(next.sessionDbPath, next.workspace);
+          if (!path) return;
+          next.sessionDbPath = path;
+          sessionDbText?.setValue(path);
+          if (sessionDbText) sessionDbText.inputEl.title = path;
+          updateDirtyState();
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "无法选择会话数据库文件夹。");
+        }
+      })));
+    dataGroup.addSetting((setting) => setting
+      .setName("长期记忆")
+      .setDesc("查看 Agent 当前已经合并的跨会话长期记忆。")
+      .addButton((button) => button.setButtonText("查看").onClick(async () => {
+        button.setDisabled(true).setButtonText("读取中…");
+        try {
+          const modal = new Modal(this.app).setTitle("当前长期记忆");
+          modal.contentEl.createEl("pre", {
+            cls: "pka-memory-content",
+            text: await this.agentPlugin.getLongTermMemory() || "暂无长期记忆。"
+          });
+          modal.open();
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "无法读取长期记忆。");
+        } finally {
+          button.setDisabled(false).setButtonText("查看");
+        }
+      })));
+
+    const securityGroup = new SettingGroup(this.containerEl).setHeading("执行与安全").addClass("pka-settings-group");
+    securityGroup.addSetting((setting) => setting
       .setName("沙盒模式")
       .addDropdown((dropdown) => dropdown
         .addOptions({
@@ -122,64 +231,49 @@ export class AgentSettingTab extends PluginSettingTab {
           "danger-full-access": "完全访问"
         })
         .setValue(next.sandboxMode)
-        .onChange((value) => { next.sandboxMode = value as SandboxMode; }));
-    new Setting(this.containerEl)
+        .onChange((value) => {
+          next.sandboxMode = value as SandboxMode;
+          updateDirtyState();
+        })));
+    securityGroup.addSetting((setting) => setting
       .setName("审批策略")
       .addDropdown((dropdown) => dropdown
         .addOptions({ "on-request": "按需审批", never: "从不询问" })
         .setValue(next.approvalPolicy)
-        .onChange((value) => { next.approvalPolicy = value as ApprovalPolicy; }));
-    new Setting(this.containerEl)
+        .onChange((value) => {
+          next.approvalPolicy = value as ApprovalPolicy;
+          updateDirtyState();
+        })));
+    securityGroup.addSetting((setting) => setting
       .setName("启用 Shell 工具")
-      .setDesc("启用 exec_command 和 write_stdin。")
-      .addToggle((toggle) => toggle.setValue(next.shellEnabled).onChange((value) => { next.shellEnabled = value; }));
-    new Setting(this.containerEl)
-      .setName("会话数据库")
-      .setDesc("选择文件夹后使用其中的 sessions.db，并把 Skills 保存在同目录；留空时继续使用 Agent 默认路径。")
-      .addText((text) => {
-        sessionDbText = text;
-        text.setPlaceholder("未选择")
-          .setValue(next.sessionDbPath)
-          .setDisabled(true);
-      })
-      .addButton((button) => button
-        .setButtonText("选择文件夹")
-        .onClick(async () => {
-          try {
-            const path = await chooseSessionDbPath(next.sessionDbPath, next.workspace);
-            if (!path) return;
-            next.sessionDbPath = path;
-            sessionDbText?.setValue(path);
-          } catch (error) {
-            new Notice(error instanceof Error ? error.message : "无法选择会话数据库文件夹。");
-          }
-        }));
-    new Setting(this.containerEl)
+      .setDesc("开启后可执行本地命令；高风险操作仍受沙盒和审批策略限制。")
+      .addToggle((toggle) => toggle.setValue(next.shellEnabled).onChange((value) => {
+        next.shellEnabled = value;
+        updateDirtyState();
+      })));
+
+    const appearanceGroup = new SettingGroup(this.containerEl).setHeading("外观").addClass("pka-settings-group");
+    appearanceGroup.addSetting((setting) => setting
       .setName("界面主题")
       .setDesc("默认跟随 Obsidian，也可固定为亮色或暗色。")
       .addDropdown((dropdown) => dropdown
         .addOptions({ system: "跟随 Obsidian", light: "亮色", dark: "暗色" })
         .setValue(next.themeMode)
-        .onChange((value) => { next.themeMode = value as ThemeMode; }));
-    new Setting(this.containerEl)
-      .addButton((button) => button
-        .setCta()
-        .setButtonText("保存并应用")
-        .onClick(async () => {
-          await this.agentPlugin.applySettings(next, apiKey);
-          await this.renderSkills(skillList);
-        }));
+        .onChange((value) => {
+          next.themeMode = value as ThemeMode;
+          updateDirtyState();
+        })));
 
-    new Setting(this.containerEl).setName("Skills").setHeading();
-    const skillList = this.containerEl.createDiv();
+    const skillGroup = new SettingGroup(this.containerEl).setHeading("技能（Skills）").addClass("pka-settings-group");
+    const skillList = skillGroup.listEl.createDiv({ cls: "pka-skill-list" });
     const folderInput = this.containerEl.createEl("input", { type: "file" });
     folderInput.multiple = true;
     folderInput.hidden = true;
     folderInput.setAttribute("webkitdirectory", "");
-    const importSetting = new Setting(this.containerEl)
+    const importSetting = new Setting(skillGroup.listEl)
       .setName("导入 Skill")
-      .setDesc("选择一个根目录含 SKILL.md 的 Skill 文件夹；最多 500 个文件、10 MiB，不覆盖同名 Skill。")
-      .addButton((button) => button.setButtonText("选择文件夹").onClick(() => folderInput.click()));
+      .setDesc("选择根目录含 SKILL.md 的文件夹；不会覆盖同名 Skill。")
+      .addButton((button) => button.setButtonText("导入 Skill").onClick(() => folderInput.click()));
     folderInput.addEventListener("change", async () => {
       const files = Array.from(folderInput.files ?? []);
       folderInput.value = "";
@@ -196,6 +290,20 @@ export class AgentSettingTab extends PluginSettingTab {
       }
     });
     void this.renderSkills(skillList);
+
+    const actionBar = this.containerEl.createDiv({ cls: "pka-settings-actions" });
+    new Setting(actionBar)
+      .setName("配置未修改")
+      .addButton((button) => {
+        discardButton = button.setButtonText("放弃更改").onClick(() => this.display());
+      })
+      .addButton((button) => {
+        saveButton = button.setCta().setButtonText("保存并应用").onClick(async () => {
+          if (await this.agentPlugin.applySettings(next, apiKey)) this.display();
+        });
+      });
+    actionLabel = actionBar.querySelector(".setting-item-name");
+    updateDirtyState();
   }
 
   private async renderSkills(container: HTMLElement): Promise<void> {
@@ -219,15 +327,18 @@ export class AgentSettingTab extends PluginSettingTab {
 }
 
 async function chooseSessionDbPath(sessionDbPath: string, workspace: string): Promise<string | null> {
+  const folder = await chooseFolder(sessionDbPath.trim() ? parentPath(sessionDbPath) : workspace.trim());
+  return folder ? defaultSessionDbPath(folder) : null;
+}
+
+async function chooseFolder(defaultPath: string): Promise<string | null> {
   const dialog = electronDialog();
   if (!dialog) throw new Error("当前环境不支持选择文件夹。");
-  const defaultPath = sessionDbPath.trim() ? parentPath(sessionDbPath) : workspace.trim();
   const result = await dialog.showOpenDialog({
     properties: ["openDirectory", "createDirectory"],
     ...(defaultPath ? { defaultPath } : {})
   });
-  const folder = result.canceled ? "" : result.filePaths[0] ?? "";
-  return folder ? defaultSessionDbPath(folder) : null;
+  return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
 interface ElectronDialog {

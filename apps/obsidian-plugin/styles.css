@@ -37,3 +37,124 @@
 .codex-agent-disconnected button {
   margin-top: var(--size-4-2);
 }
+
+.pka-settings-page {
+  padding-bottom: 0;
+}
+
+.pka-settings-header {
+  margin-bottom: var(--size-4-6);
+}
+
+.pka-settings-header h1 {
+  margin: 0 0 var(--size-4-1);
+}
+
+.pka-settings-header p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.pka-settings-group {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  margin-bottom: var(--size-4-3);
+  overflow: hidden;
+}
+
+.pka-settings-group .setting-group-heading {
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin: 0;
+  padding: var(--size-4-2) var(--size-4-4);
+}
+
+.pka-settings-group .setting-item {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: var(--size-4-3) var(--size-4-4);
+}
+
+.pka-settings-group .setting-group-heading + .setting-group-list > .setting-item:first-child,
+.pka-settings-group .setting-group-heading + .setting-items > .setting-item:first-child {
+  border-top: 0;
+}
+
+.pka-settings-group .setting-item-info {
+  min-width: 0;
+}
+
+.pka-settings-group .setting-item-control {
+  flex: 0 1 340px;
+  min-width: 260px;
+}
+
+.pka-settings-group .setting-item-control > input[type="text"],
+.pka-settings-group .setting-item-control > input[type="password"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.pka-settings-group .setting-item-control select {
+  min-width: 0;
+  width: 100%;
+}
+
+.pka-settings-value,
+.pka-service-status {
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.pka-service-status::before {
+  background: var(--text-muted);
+  border-radius: 50%;
+  content: "";
+  display: inline-block;
+  height: 8px;
+  margin-right: var(--size-4-2);
+  width: 8px;
+}
+
+.pka-service-status[data-state="running"]::before {
+  background: var(--color-green);
+}
+
+.pka-service-status[data-state="stopped"]::before {
+  background: var(--color-red);
+}
+
+.pka-memory-content {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.pka-settings-actions {
+  background: var(--background-primary);
+  border-top: 1px solid var(--background-modifier-border);
+  bottom: 0;
+  margin: var(--size-4-6) calc(var(--size-4-6) * -1) 0;
+  padding: var(--size-4-2) var(--size-4-6);
+  position: sticky;
+  z-index: var(--layer-popover);
+}
+
+.pka-settings-actions .setting-item {
+  border: 0;
+  padding: 0;
+}
+
+@media (max-width: 800px) {
+  .pka-settings-group .setting-item {
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--size-4-2);
+  }
+
+  .pka-settings-group .setting-item-control {
+    flex-basis: auto;
+    min-width: 0;
+    width: 100%;
+  }
+}

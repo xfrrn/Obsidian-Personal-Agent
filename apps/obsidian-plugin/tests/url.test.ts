@@ -50,3 +50,14 @@ test("mounts the React UI directly in the Obsidian ItemView", () => {
   assert.match(app, /<form className="shrink-0 /);
   assert.doesNotMatch(view, /iframe|postMessage/);
 });
+
+test("groups plugin settings and keeps one sticky save bar", () => {
+  const settings = readFileSync("apps/obsidian-plugin/src/settings.ts", "utf8");
+  const styles = readFileSync("apps/obsidian-plugin/styles.css", "utf8");
+  for (const heading of ["Agent 服务", "模型配置", "工作区与数据", "执行与安全", "外观", "技能（Skills）"]) {
+    assert.ok(settings.includes(`setHeading("${heading}")`));
+  }
+  assert.match(settings, /配置已修改/);
+  assert.match(styles, /\.pka-settings-actions\s*{[^}]*position: sticky;/s);
+  assert.match(styles, /\.pka-settings-group\s*{[^}]*border:/s);
+});

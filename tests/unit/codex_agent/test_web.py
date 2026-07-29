@@ -506,6 +506,33 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(rules_text, "# 规则\n")
         self.assertFalse(workspace_skills_created)
 
+    def test_http_reads_current_long_term_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            memory_dir = root / "memories"
+            runtime = AgentRuntime(
+                replace(_settings(root), memory_dir=memory_dir), RecordingClient
+            )
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            try:
+                empty = _get_json(f"{address}/api/memory")
+                memory_dir.mkdir()
+                (memory_dir / "MEMORY.md").write_text(
+                    "# 用户偏好\n\n- 简洁回答\n", encoding="utf-8"
+                )
+                current = _get_json(f"{address}/api/memory")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        self.assertEqual(empty, {"memory": ""})
+        self.assertEqual(current["memory"], "# 用户偏好\n\n- 简洁回答\n")
+
     def test_http_stream_forwards_assistant_deltas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             settings = Settings(

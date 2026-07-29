@@ -151,6 +151,17 @@ class AgentRuntime:
             ]
         }
 
+    def memory(self) -> dict[str, str]:
+        """返回当前已合并的长期记忆；尚未生成时为空。"""
+
+        try:
+            content = (self._settings.memory_dir / "MEMORY.md").read_text(
+                encoding="utf-8"
+            )
+        except FileNotFoundError:
+            content = ""
+        return {"memory": content}
+
     def import_skill(self, files: dict[PurePosixPath, bytes]) -> dict[str, Any]:
         """校验并原子导入一个 Skill 目录，不覆盖已有同名 Skill。"""
 
@@ -619,6 +630,15 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/workspace/files":
             query = parse_qs(parsed.query).get("q", [""])[0]
             self._send_json(HTTPStatus.OK, self.server.runtime.workspace_files(query))
+            return
+        if path == "/api/memory":
+            if not _is_loopback_client(self.client_address[0]):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "长期记忆只允许本机读取"})
+                return
+            try:
+                self._send_json(HTTPStatus.OK, self.server.runtime.memory())
+            except OSError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
         if path == "/api/skills":
             if not _is_loopback_client(self.client_address[0]):

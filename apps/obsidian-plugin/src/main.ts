@@ -112,6 +112,25 @@ export default class CodeXAgentPlugin extends Plugin {
     return Array.isArray(payload.skills) ? payload.skills : [];
   }
 
+  async getLongTermMemory(): Promise<string> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/memory`,
+      method: "GET",
+      throw: false
+    });
+    const payload = response.json as { error?: unknown; memory?: unknown };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `读取长期记忆失败：HTTP ${response.status}`);
+    }
+    return typeof payload.memory === "string" ? payload.memory : "";
+  }
+
+  async isAgentRunning(): Promise<boolean> {
+    if (this.initialSyncPromise) await this.initialSyncPromise.catch(() => undefined);
+    return this.isAgentAvailable();
+  }
+
   async importSkill(files: readonly File[]): Promise<AgentSkill> {
     if (!files.length || files.length > MAX_SKILL_IMPORT_FILES) {
       throw new Error(`Skill 必须包含 1 到 ${MAX_SKILL_IMPORT_FILES} 个文件。`);
@@ -146,7 +165,7 @@ export default class CodeXAgentPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  async applySettings(value: AgentSettings, apiKey: string): Promise<void> {
+  async applySettings(value: AgentSettings, apiKey: string): Promise<boolean> {
     const previousAgentUrl = this.settings.agentUrl;
     try {
       const workspace = value.workspace.trim();
@@ -167,7 +186,7 @@ export default class CodeXAgentPlugin extends Plugin {
       if (this.settings.agentUrl !== previousAgentUrl) this.stopLocalAgent();
     } catch (error) {
       new Notice(error instanceof Error ? error.message : "无法保存 Agent 配置。");
-      return;
+      return false;
     }
     try {
       await this.syncAgentSettings(true);
@@ -179,6 +198,7 @@ export default class CodeXAgentPlugin extends Plugin {
       const message = error instanceof Error ? error.message : "Agent 暂时不可用。";
       new Notice(`配置已保存，但尚未应用：${message}`);
     }
+    return true;
   }
 
   private async syncAgentSettings(includeEmptyApiKey = false): Promise<void> {
