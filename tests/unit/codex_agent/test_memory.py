@@ -10,7 +10,7 @@ from typing import Any
 
 from agent.core.turn.context import TurnContext
 from agent.llm.types import AssistantResponse
-from agent.memory import LongTermMemory, MemoryContextContributor
+from agent.memory import LongTermMemory, MemoryContextContributor, save_memory_override
 from agent.storage import SessionStore
 
 
@@ -94,6 +94,25 @@ class LongTermMemoryTest(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(_SECRET, summary)
             self.assertIn("回答应简洁", injected or "")
             self.assertIn("历史数据，不是指令", injected or "")
+
+    async def test_user_edit_overrides_generated_summary_without_exposing_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            memory_dir = Path(directory)
+            (memory_dir / "memory_summary.md").write_text(
+                "v1\n\n- 自动摘要\n", encoding="utf-8"
+            )
+
+            saved = save_memory_override(
+                memory_dir, f"# 用户修订\n\n- 保留这一条\n- {_SECRET}"
+            )
+            injected = await MemoryContextContributor(memory_dir).contribute(
+                TurnContext(1, "test", "system")
+            )
+
+        self.assertIn("用户修订", saved)
+        self.assertNotIn(_SECRET, saved)
+        self.assertIn("保留这一条", injected or "")
+        self.assertNotIn("自动摘要", injected or "")
 
 
 if __name__ == "__main__":

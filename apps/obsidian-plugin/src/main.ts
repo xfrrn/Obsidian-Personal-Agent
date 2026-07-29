@@ -128,6 +128,21 @@ export default class CodeXAgentPlugin extends Plugin {
     return typeof payload.memory === "string" ? payload.memory : "";
   }
 
+  async updateLongTermMemory(memory: string): Promise<void> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/memory`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memory }),
+      throw: false
+    });
+    if (response.status < 200 || response.status >= 300) {
+      const payload = response.json as { error?: unknown };
+      throw new Error(typeof payload?.error === "string" ? payload.error : `保存长期记忆失败：HTTP ${response.status}`);
+    }
+  }
+
   async isAgentRunning(): Promise<boolean> {
     if (this.initialSyncPromise) await this.initialSyncPromise.catch(() => undefined);
     return this.isAgentAvailable();

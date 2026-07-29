@@ -207,20 +207,42 @@ export class AgentSettingTab extends PluginSettingTab {
       })));
     dataGroup.addSetting((setting) => setting
       .setName("长期记忆")
-      .setDesc("查看 Agent 当前已经合并的跨会话长期记忆。")
-      .addButton((button) => button.setButtonText("查看").onClick(async () => {
+      .setDesc("查看和修改 Agent 跨会话使用的长期记忆。")
+      .addButton((button) => button.setButtonText("编辑").onClick(async () => {
         button.setDisabled(true).setButtonText("读取中…");
         try {
-          const modal = new Modal(this.app).setTitle("当前长期记忆");
-          modal.contentEl.createEl("pre", {
-            cls: "pka-memory-content",
-            text: await this.agentPlugin.getLongTermMemory() || "暂无长期记忆。"
+          const modal = new Modal(this.app).setTitle("编辑长期记忆");
+          const editor = modal.contentEl.createEl("textarea", {
+            cls: "pka-memory-editor",
+            attr: { "aria-label": "长期记忆内容", placeholder: "暂无长期记忆。" }
+          });
+          editor.value = await this.agentPlugin.getLongTermMemory();
+          modal.contentEl.createEl("p", {
+            cls: "pka-memory-help",
+            text: "保存后由你维护这份内容，后续自动整理不会覆盖。"
+          });
+          const actions = modal.contentEl.createDiv({ cls: "pka-memory-actions" });
+          actions.createEl("button", { text: "取消" }).addEventListener("click", () => modal.close());
+          const saveButton = actions.createEl("button", { cls: "mod-cta", text: "保存" });
+          saveButton.addEventListener("click", async () => {
+            saveButton.disabled = true;
+            saveButton.textContent = "保存中…";
+            try {
+              await this.agentPlugin.updateLongTermMemory(editor.value);
+              new Notice("长期记忆已保存。");
+              modal.close();
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : "无法保存长期记忆。");
+              saveButton.disabled = false;
+              saveButton.textContent = "保存";
+            }
           });
           modal.open();
+          editor.focus();
         } catch (error) {
           new Notice(error instanceof Error ? error.message : "无法读取长期记忆。");
         } finally {
-          button.setDisabled(false).setButtonText("查看");
+          button.setDisabled(false).setButtonText("编辑");
         }
       })));
 
@@ -267,16 +289,19 @@ export class AgentSettingTab extends PluginSettingTab {
           updateDirtyState();
         })));
 
-    const skillGroup = new SettingGroup(this.containerEl).setHeading("技能（Skills）").addClass("pka-settings-group");
-    const skillList = skillGroup.listEl.createDiv({ cls: "pka-skill-list" });
+    const skillGroup = new SettingGroup(this.containerEl)
+      .setHeading("技能（Skills）")
+      .addClass("pka-settings-group", "pka-skills-group");
     const folderInput = this.containerEl.createEl("input", { type: "file" });
     folderInput.multiple = true;
     folderInput.hidden = true;
     folderInput.setAttribute("webkitdirectory", "");
     const importSetting = new Setting(skillGroup.listEl)
-      .setName("导入 Skill")
-      .setDesc("选择根目录含 SKILL.md 的文件夹；不会覆盖同名 Skill。")
+      .setName("管理 Skills")
+      .setDesc("关闭后文件仍会保留；保存并应用后生效。")
       .addButton((button) => button.setButtonText("导入 Skill").onClick(() => folderInput.click()));
+    importSetting.settingEl.addClass("pka-skill-toolbar");
+    const skillList = skillGroup.listEl.createDiv({ cls: "pka-skill-list" });
     folderInput.addEventListener("change", async () => {
       const files = Array.from(folderInput.files ?? []);
       folderInput.value = "";
@@ -296,6 +321,7 @@ export class AgentSettingTab extends PluginSettingTab {
     const renderSkills = async () => {
       await this.renderSkills(
         skillList,
+        importSetting,
         skillsLoaded ? next.disabledSkills : null,
         (names) => {
           next.disabledSkills = names;
@@ -323,24 +349,30 @@ export class AgentSettingTab extends PluginSettingTab {
 
   private async renderSkills(
     container: HTMLElement,
+    toolbar: Setting,
     currentDisabled: readonly string[] | null,
     onDisabledChange: (names: string[]) => void
   ): Promise<void> {
     container.empty();
-    new Setting(container).setName("正在读取 Skills…");
+    renderSkillState(container, "正在读取 Skills…", "正在检查已导入的工作流。");
     try {
       const skills = await this.agentPlugin.listSkills();
       container.empty();
       if (!skills.length) {
-        new Setting(container).setName("尚未导入 Skill").setDesc("导入后会保存在 sessions.db 同目录的 skills/ 文件夹。");
+        toolbar.setName("Skills").setDesc("导入包含 SKILL.md 的文件夹以添加工作流。");
+        renderSkillState(container, "还没有 Skill", "点击上方“导入 Skill”添加可复用工作流。");
         return;
       }
       const disabled = new Set(
         currentDisabled ?? skills.filter((skill) => !skill.enabled).map((skill) => skill.name)
       );
+      const updateSummary = () => toolbar
+        .setName(`${skills.length} 个 Skill`)
+        .setDesc(`${skills.length - disabled.size} 个已启用；关闭后文件仍会保留。`);
+      updateSummary();
       onDisabledChange(Array.from(disabled).sort());
       for (const skill of skills) {
-        new Setting(container)
+        const item = new Setting(container)
           .setName(skill.name)
           .setDesc(skill.description)
           .addToggle((toggle) => toggle
@@ -348,16 +380,29 @@ export class AgentSettingTab extends PluginSettingTab {
             .onChange((enabled) => {
               if (enabled) disabled.delete(skill.name);
               else disabled.add(skill.name);
+              item.settingEl.classList.toggle("is-disabled", !enabled);
+              updateSummary();
               onDisabledChange(Array.from(disabled).sort());
             }));
+        item.settingEl.addClass("pka-skill-item");
+        item.settingEl.classList.toggle("is-disabled", disabled.has(skill.name));
       }
     } catch (error) {
       container.empty();
-      new Setting(container)
-        .setName("无法读取 Skills")
-        .setDesc(error instanceof Error ? error.message : "Agent 暂时不可用。");
+      toolbar.setName("Skills").setDesc("暂时无法读取已导入的工作流。");
+      renderSkillState(
+        container,
+        "无法读取 Skills",
+        error instanceof Error ? error.message : "Agent 暂时不可用。"
+      );
     }
   }
+}
+
+function renderSkillState(container: HTMLElement, title: string, detail: string): void {
+  const state = container.createDiv({ cls: "pka-skill-state" });
+  state.createEl("strong", { text: title });
+  state.createEl("span", { text: detail });
 }
 
 async function chooseSessionDbPath(sessionDbPath: string, workspace: string): Promise<string | null> {

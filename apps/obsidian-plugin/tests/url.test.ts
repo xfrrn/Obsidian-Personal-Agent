@@ -60,7 +60,12 @@ test("groups plugin settings and keeps one sticky save bar", () => {
   }
   assert.match(settings, /配置已修改/);
   assert.match(settings, /\.setValue\(!disabled\.has\(skill\.name\)\)/);
+  assert.match(settings, /renderSkillState\(container/);
+  assert.match(settings, /pka-memory-editor/);
   assert.match(main, /disabled_skills: this\.settings\.disabledSkills/);
+  assert.match(main, /method: "POST"[\s\S]*JSON\.stringify\(\{ memory \}\)/);
   assert.match(styles, /\.pka-settings-actions\s*{[^}]*position: sticky;/s);
   assert.match(styles, /\.pka-settings-group\s*{[^}]*border:/s);
+  assert.match(styles, /\.pka-settings-group\s*{[^}]*padding-top:/s);
+  assert.match(styles, /\.pka-skill-toolbar\s*{/);
 });

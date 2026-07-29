@@ -26,6 +26,7 @@ from agent.core.handle import AgentHandle
 from agent.core.loop import start_agent
 from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInterrupted
 from agent.core.turn.public_events import PublicEventAdapter
+from agent.memory import read_editable_memory, save_memory_override
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
 from agent.skills.loader import discover_skills, is_valid_skill_name
@@ -158,15 +159,18 @@ class AgentRuntime:
         }
 
     def memory(self) -> dict[str, str]:
-        """返回当前已合并的长期记忆；尚未生成时为空。"""
+        """返回用户可编辑且 Agent 实际优先使用的长期记忆。"""
+
+        return {"memory": read_editable_memory(self._settings.memory_dir)}
+
+    def update_memory(self, content: str) -> dict[str, str]:
+        """保存用户维护的长期记忆；自动合并文件继续独立更新。"""
 
         try:
-            content = (self._settings.memory_dir / "MEMORY.md").read_text(
-                encoding="utf-8"
-            )
-        except FileNotFoundError:
-            content = ""
-        return {"memory": content}
+            saved = save_memory_override(self._settings.memory_dir, content)
+        except OSError as exc:
+            raise ValueError(f"无法保存长期记忆: {exc}") from exc
+        return {"memory": saved}
 
     def import_skill(self, files: dict[PurePosixPath, bytes]) -> dict[str, Any]:
         """校验并原子导入一个 Skill 目录，不覆盖已有同名 Skill。"""
@@ -649,7 +653,7 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 self._send_json(HTTPStatus.OK, self.server.runtime.memory())
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
         if path == "/api/skills":
@@ -700,6 +704,18 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     HTTPStatus.OK,
                     self.server.runtime.update_configuration(settings),
+                )
+                return
+            if path == "/api/memory":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "长期记忆只允许从本机修改"})
+                    return
+                body = self._read_json_body(50_100)
+                if set(body) != {"memory"} or not isinstance(body["memory"], str):
+                    raise ValueError("长期记忆请求必须且只能包含 memory 字符串")
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.update_memory(body["memory"]),
                 )
                 return
             if path == "/api/permissions":

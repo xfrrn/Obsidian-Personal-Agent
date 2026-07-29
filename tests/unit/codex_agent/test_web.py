@@ -528,6 +528,13 @@ class WebRuntimeTest(unittest.TestCase):
                     "# 用户偏好\n\n- 简洁回答\n", encoding="utf-8"
                 )
                 current = _get_json(f"{address}/api/memory")
+                saved = _post_json(
+                    f"{address}/api/memory",
+                    {"memory": "# 用户修订\n\n- 使用中文回答"},
+                )
+                edited = _get_json(f"{address}/api/memory")
+                generated = (memory_dir / "MEMORY.md").read_text(encoding="utf-8")
+                override = (memory_dir / "MEMORY.user.md").read_text(encoding="utf-8")
             finally:
                 server.shutdown()
                 server.server_close()
@@ -535,7 +542,11 @@ class WebRuntimeTest(unittest.TestCase):
                 runtime.close()
 
         self.assertEqual(empty, {"memory": ""})
-        self.assertEqual(current["memory"], "# 用户偏好\n\n- 简洁回答\n")
+        self.assertEqual(current["memory"], "# 用户偏好\n\n- 简洁回答")
+        self.assertEqual(saved["memory"], "# 用户修订\n\n- 使用中文回答")
+        self.assertEqual(edited, saved)
+        self.assertEqual(generated, "# 用户偏好\n\n- 简洁回答\n")
+        self.assertEqual(override, "# 用户修订\n\n- 使用中文回答\n")
 
     def test_http_stream_forwards_assistant_deltas(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
