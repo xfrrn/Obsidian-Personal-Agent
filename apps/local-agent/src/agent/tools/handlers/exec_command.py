@@ -60,7 +60,8 @@ class ExecCommandTool:
         description=(
             "在 Agent 工作目录运行 shell 命令。命令在 yield_time_ms 后仍未结束时返回 "
             "process_id，可用 write_stdin 继续交互。读取文本请使用当前 shell 的只读命令"
-            "（Windows 推荐 Get-Content/rg，Unix 推荐 cat/rg）；修改文本请使用 apply_patch。"
+            "（Windows 推荐 Get-Content/rg，Unix 推荐 cat/rg）；精确修改文本请使用 apply_patch，"
+            "整目录移动、重命名和已核实的批量机械替换可使用当前平台的原生命令。"
         ),
         parameters={
             "type": "object",
