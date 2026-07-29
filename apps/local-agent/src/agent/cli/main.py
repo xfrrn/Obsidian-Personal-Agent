@@ -13,6 +13,7 @@ from agent.protocol.event import EventKind
 from agent.protocol.mode import ModeKind
 from agent.protocol.op import ResolveApproval, UserInput
 from agent.storage import SessionStore
+from agent.web_access.config import configured_web_providers
 
 
 async def console(session_id: str | None = None) -> None:
@@ -20,6 +21,7 @@ async def console(session_id: str | None = None) -> None:
 
     settings = Settings.from_env()
     configure_logging(settings.log_level, settings.log_format)
+    search_provider, fetch_provider = configured_web_providers(settings)
     store = SessionStore(settings.session_db_path)
     if session_id is None:
         stored = await asyncio.to_thread(store.create, settings.model, settings.workspace)
@@ -30,7 +32,11 @@ async def console(session_id: str | None = None) -> None:
             raise ValueError(f"会话不存在或已归档: {session_id}")
     mode = stored.mode
     handle, runner = await start_agent(
-        settings, session_id=session_id, store=store
+        settings,
+        session_id=session_id,
+        store=store,
+        search_provider=search_provider,
+        fetch_provider=fetch_provider,
     )
     events = PublicEventAdapter()
     handle.turn_events.subscribe(events)

@@ -36,6 +36,8 @@ from agent.protocol.event import Event, EventKind
 from agent.protocol.mode import ModeKind
 from agent.protocol.op import FileReference, Interrupt, ResolveApproval, UserInput
 from agent.storage import SessionStore, StoredSession
+from agent.web_access.config import configured_web_providers
+from agent.web_access.types import FetchProvider, SearchProvider
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,10 +66,17 @@ class AgentRuntime:
     """
 
     def __init__(
-        self, settings: Settings, client_factory: Callable[[], object] | None = None
+        self,
+        settings: Settings,
+        client_factory: Callable[[], object] | None = None,
+        *,
+        search_provider: SearchProvider | None = None,
+        fetch_provider: FetchProvider | None = None,
     ) -> None:
         self._settings = settings
         self._client_factory = client_factory
+        self._search_provider = search_provider
+        self._fetch_provider = fetch_provider
         self._store = SessionStore(settings.session_db_path)
         self._changes = ChangeJournal(settings.workspace, settings.session_db_path)
         self._sessions: dict[str, LiveSession] = {}
@@ -447,6 +456,8 @@ class AgentRuntime:
             session_id=session_id,
             store=self._store,
             change_journal=self._changes,
+            search_provider=self._search_provider,
+            fetch_provider=self._fetch_provider,
         )
         live = LiveSession(handle, runner, generation)
         self._sessions[session_id] = live
@@ -1135,7 +1146,12 @@ def main() -> None:
 
     settings = Settings.from_env()
     configure_logging(settings.log_level, settings.log_format)
-    runtime = AgentRuntime(settings)
+    search_provider, fetch_provider = configured_web_providers(settings)
+    runtime = AgentRuntime(
+        settings,
+        search_provider=search_provider,
+        fetch_provider=fetch_provider,
+    )
     server = AgentHTTPServer((args.host, args.port), runtime)
     print(f"Agent 页面已启动：http://{args.host}:{args.port}")
     try:

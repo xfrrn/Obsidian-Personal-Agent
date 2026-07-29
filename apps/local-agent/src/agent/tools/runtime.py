@@ -122,7 +122,9 @@ class ToolCallRuntime:
                     f"工具 {invocation.name} 权限参数无效: {exc}", is_error=True
                 )
             if requirement is None:
-                return await self._router.dispatch(invocation, mode=mode)
+                return await self._router.dispatch(
+                    invocation, mode=mode, submission_id=submission_id
+                )
             request = PermissionRequest(
                 submission_id=submission_id,
                 call_id=invocation.call_id,
@@ -144,7 +146,10 @@ class ToolCallRuntime:
             ):
                 await self._change_journal.begin_turn(self._session_id, submission_id)
             return await self._router.dispatch(
-                invocation, granted_access=grant.access, mode=mode
+                invocation,
+                granted_access=grant.access,
+                mode=mode,
+                submission_id=submission_id,
             )
 
     def resolve_approval(

@@ -32,6 +32,18 @@ _RECORD_FIELDS = (
     "skill_name",
     "http_method",
     "http_path",
+    "provider",
+    "operation",
+    "query_hash",
+    "query_chars",
+    "result_count",
+    "source_count",
+    "source_ids",
+    "http_status",
+    "retry_count",
+    "key_index",
+    "key_count",
+    "cache_hit",
 )
 _LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 _FORMATS = {"text", "json"}

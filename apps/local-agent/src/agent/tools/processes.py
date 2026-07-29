@@ -66,7 +66,17 @@ def subprocess_environment() -> dict[str, str]:
     """复制宿主环境，但不把模型凭据传给本地子进程。"""
 
     environment = os.environ.copy()
-    for secret_name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+    for secret_name in (
+        "OPENAI_API_KEY",
+        "TAVILY_API_KEY",
+        "TAVILY_API_KEYS",
+        "EXA_API_KEY",
+        "EXA_API_KEYS",
+        "TALORDATA_API_KEY",
+        "TALORDATA_API_KEYS",
+        "CODEX_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+    ):
         environment.pop(secret_name, None)
     return environment
 

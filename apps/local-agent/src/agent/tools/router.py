@@ -47,9 +47,13 @@ class ToolRouter:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
+        submission_id: int | None = None,
     ) -> ToolExecution:
         """提供运行时所需的单一分发入口。"""
 
         return await self._registry.dispatch(
-            invocation, granted_access=granted_access, mode=mode
+            invocation,
+            granted_access=granted_access,
+            mode=mode,
+            submission_id=submission_id,
         )

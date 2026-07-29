@@ -48,6 +48,11 @@ class Settings:
     memory_dir: Path = field(default_factory=lambda: _default_memory_dir(Path.cwd()))
     memory_idle_hours: float = 12.0
     memory_max_sessions: int = 20
+    web_connect_timeout_seconds: float = 5.0
+    web_read_timeout_seconds: float = 20.0
+    web_retry_count: int = 2
+    web_search_ttl_seconds: float = 1_800.0
+    web_search_cache_records: int = 20
 
     @property
     def input_token_budget(self) -> int:
@@ -137,6 +142,28 @@ class Settings:
         if memory_max_sessions <= 0:
             raise ValueError("AGENT_MEMORY_MAX_SESSIONS 必须大于 0")
 
+        web_connect_timeout_seconds = float(
+            env_value("AGENT_WEB_CONNECT_TIMEOUT_SECONDS", "5")
+        )
+        web_read_timeout_seconds = float(
+            env_value("AGENT_WEB_READ_TIMEOUT_SECONDS", "20")
+        )
+        web_retry_count = int(env_value("AGENT_WEB_RETRY_COUNT", "2"))
+        web_search_ttl_seconds = float(
+            env_value("AGENT_WEB_SEARCH_TTL_SECONDS", "1800")
+        )
+        web_search_cache_records = int(
+            env_value("AGENT_WEB_SEARCH_CACHE_RECORDS", "20")
+        )
+        if web_connect_timeout_seconds <= 0 or web_read_timeout_seconds <= 0:
+            raise ValueError("Web 连接和读取超时必须大于 0")
+        if not 0 <= web_retry_count <= 5:
+            raise ValueError("AGENT_WEB_RETRY_COUNT 必须在 0 到 5 之间")
+        if web_search_ttl_seconds <= 0:
+            raise ValueError("AGENT_WEB_SEARCH_TTL_SECONDS 必须大于 0")
+        if not 1 <= web_search_cache_records <= 100:
+            raise ValueError("AGENT_WEB_SEARCH_CACHE_RECORDS 必须在 1 到 100 之间")
+
         return cls(
             api_key=env_value("OPENAI_API_KEY") or None,
             # AGENT_MODEL 保持旧配置兼容；OPENAI_MODEL 让密钥、地址、模型使用同一命名约定。
@@ -176,6 +203,11 @@ class Settings:
             ).expanduser().resolve(),
             memory_idle_hours=memory_idle_hours,
             memory_max_sessions=memory_max_sessions,
+            web_connect_timeout_seconds=web_connect_timeout_seconds,
+            web_read_timeout_seconds=web_read_timeout_seconds,
+            web_retry_count=web_retry_count,
+            web_search_ttl_seconds=web_search_ttl_seconds,
+            web_search_cache_records=web_search_cache_records,
         )
 
 

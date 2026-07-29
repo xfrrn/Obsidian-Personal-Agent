@@ -13,3 +13,11 @@ class ToolInvocation:
     call_id: str
     name: str
     arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallContext:
+    """Only handlers that must correlate with their owning turn receive this."""
+
+    call_id: str
+    submission_id: int | None

@@ -370,7 +370,18 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
 
             sandbox_process = AsyncMock(return_value=CompletedProcess())
             host_process = AsyncMock(return_value=CompletedProcess())
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "do-not-leak"}), patch(
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENAI_API_KEY": "do-not-leak",
+                    "TAVILY_API_KEY": "do-not-leak",
+                    "TAVILY_API_KEYS": '["do-not-leak"]',
+                    "EXA_API_KEY": "do-not-leak",
+                    "EXA_API_KEYS": '["do-not-leak"]',
+                    "TALORDATA_API_KEY": "do-not-leak",
+                    "TALORDATA_API_KEYS": '["do-not-leak"]',
+                },
+            ), patch(
                 "agent.tools.handlers.exec_command.windows_sandbox.spawn",
                 new=sandbox_process,
             ), patch(
@@ -391,6 +402,12 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(call["network"], SandboxNetwork.BLOCKED)
         environment = call["environment"]
         self.assertNotIn("OPENAI_API_KEY", environment)
+        self.assertNotIn("TAVILY_API_KEY", environment)
+        self.assertNotIn("TAVILY_API_KEYS", environment)
+        self.assertNotIn("EXA_API_KEY", environment)
+        self.assertNotIn("EXA_API_KEYS", environment)
+        self.assertNotIn("TALORDATA_API_KEY", environment)
+        self.assertNotIn("TALORDATA_API_KEYS", environment)
 
     async def test_read_only_mode_is_forwarded_to_native_backend(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch(
@@ -444,7 +461,18 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
             )
             session = create_session(settings, AgentHandle(), client=object())
             subprocess = AsyncMock(return_value=CompletedProcess())
-            with patch.dict(os.environ, {"OPENAI_API_KEY": "do-not-leak"}), patch(
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENAI_API_KEY": "do-not-leak",
+                    "TAVILY_API_KEY": "do-not-leak",
+                    "TAVILY_API_KEYS": '["do-not-leak"]',
+                    "EXA_API_KEY": "do-not-leak",
+                    "EXA_API_KEYS": '["do-not-leak"]',
+                    "TALORDATA_API_KEY": "do-not-leak",
+                    "TALORDATA_API_KEYS": '["do-not-leak"]',
+                },
+            ), patch(
                 "agent.tools.handlers.exec_command.asyncio.create_subprocess_shell",
                 new=subprocess,
             ):
@@ -454,6 +482,12 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.is_error)
         self.assertNotIn("OPENAI_API_KEY", subprocess.await_args.kwargs["env"])
+        self.assertNotIn("TAVILY_API_KEY", subprocess.await_args.kwargs["env"])
+        self.assertNotIn("TAVILY_API_KEYS", subprocess.await_args.kwargs["env"])
+        self.assertNotIn("EXA_API_KEY", subprocess.await_args.kwargs["env"])
+        self.assertNotIn("EXA_API_KEYS", subprocess.await_args.kwargs["env"])
+        self.assertNotIn("TALORDATA_API_KEY", subprocess.await_args.kwargs["env"])
+        self.assertNotIn("TALORDATA_API_KEYS", subprocess.await_args.kwargs["env"])
 
 
 def _settings(

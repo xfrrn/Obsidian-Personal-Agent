@@ -5,7 +5,7 @@ from __future__ import annotations
 from agent.permissions import PermissionRequirement, ToolAccess
 from agent.protocol.mode import ModeKind
 from agent.tools.handlers.base import ToolHandler
-from agent.tools.invocation import ToolInvocation
+from agent.tools.invocation import ToolCallContext, ToolInvocation
 from agent.tools.types import ToolExecution
 
 
@@ -62,6 +62,7 @@ class ToolRegistry:
         *,
         granted_access: ToolAccess | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
+        submission_id: int | None = None,
     ) -> ToolExecution:
         """执行已注册工具；处理器错误变成结果，Agent 可继续让模型调整。"""
 
@@ -69,10 +70,17 @@ class ToolRegistry:
         if handler is None:
             return ToolExecution(f"未知工具: {invocation.name}", is_error=True)
         try:
+            kwargs: dict[str, object] = {
+                "granted_access": granted_access,
+                "mode": mode,
+            }
+            if getattr(handler, "uses_call_context", False):
+                kwargs["call_context"] = ToolCallContext(
+                    invocation.call_id, submission_id
+                )
             result = await handler.run(
                 invocation.arguments,
-                granted_access=granted_access,
-                mode=mode,
+                **kwargs,
             )
             return result if isinstance(result, ToolExecution) else ToolExecution(result)
         except Exception as exc:  # 处理器失败不能让整个会话崩溃。

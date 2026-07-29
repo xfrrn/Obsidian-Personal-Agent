@@ -52,7 +52,16 @@ class LoggingTest(unittest.TestCase):
         with log_context(submission_id=7, tool_name="exec_command", tool_call_id="call-1"):
             logging.getLogger("agent.core.agent_loop").info(
                 "tool.completed",
-                extra={"duration_ms": 12, "is_error": False, "tool_arguments": "must-not-appear"},
+                extra={
+                    "duration_ms": 12,
+                    "is_error": False,
+                    "provider": "tavily",
+                    "key_index": 2,
+                    "key_count": 3,
+                    "query_hash": "abc123",
+                    "tool_arguments": "must-not-appear",
+                    "api_key": "must-not-appear",
+                },
             )
 
         entries = [json.loads(line) for line in output.getvalue().splitlines()]
@@ -60,7 +69,12 @@ class LoggingTest(unittest.TestCase):
         self.assertEqual(entries[0]["event"], "tool.completed")
         self.assertEqual(entries[0]["submission_id"], 7)
         self.assertEqual(entries[0]["tool_name"], "exec_command")
+        self.assertEqual(entries[0]["provider"], "tavily")
+        self.assertEqual(entries[0]["key_index"], 2)
+        self.assertEqual(entries[0]["key_count"], 3)
+        self.assertEqual(entries[0]["query_hash"], "abc123")
         self.assertNotIn("tool_arguments", entries[0])
+        self.assertNotIn("api_key", entries[0])
 
     def test_text_output_uses_readable_terminal_colors(self) -> None:
         output = _TtyBuffer()

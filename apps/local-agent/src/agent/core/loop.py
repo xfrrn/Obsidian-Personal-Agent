@@ -35,12 +35,20 @@ from agent.tools.handlers.new_context_window import NewContextWindowTool
 from agent.tools.handlers.obsidian_command import ObsidianCommandTool
 from agent.tools.handlers.update_plan import UpdatePlanTool
 from agent.tools.handlers.update_properties import UpdatePropertiesTool
+from agent.tools.handlers.web_fetch import WebFetchTool
+from agent.tools.handlers.web_search import WebSearchTool
 from agent.tools.handlers.write_stdin import WriteStdinTool
 from agent.tools.invocation import ToolInvocation
 from agent.tools.processes import ProcessManager
 from agent.tools.registry import ToolRegistry
 from agent.tools.router import ToolRouter
 from agent.tools.runtime import ToolCallRuntime
+from agent.web_access.services import (
+    SessionSearchCache,
+    WebFetchService,
+    WebSearchService,
+)
+from agent.web_access.types import FetchProvider, SearchProvider
 
 if TYPE_CHECKING:
     from agent.changes import ChangeJournal
@@ -58,6 +66,8 @@ def create_session(
     store: SessionStore | None = None,
     stored_session: StoredSession | None = None,
     change_journal: ChangeJournal | None = None,
+    search_provider: SearchProvider | None = None,
+    fetch_provider: FetchProvider | None = None,
 ) -> Session:
     """在唯一组合根创建服务；核心模块只接收已组合好的依赖。"""
 
@@ -80,6 +90,19 @@ def create_session(
         UpdatePlanTool(),
         UpdatePropertiesTool(settings),
     ]
+    if (search_provider is None) != (fetch_provider is None):
+        raise ValueError("web_search 和 web_fetch Provider 必须同时提供")
+    if search_provider is not None and fetch_provider is not None:
+        search_cache = SessionSearchCache(
+            settings.web_search_ttl_seconds,
+            settings.web_search_cache_records,
+        )
+        handlers.extend(
+            (
+                WebSearchTool(WebSearchService(search_provider, search_cache)),
+                WebFetchTool(WebFetchService(fetch_provider, search_cache)),
+            )
+        )
     process_manager = None
     if settings.shell_enabled:
         process_manager = ProcessManager(settings.request_timeout_seconds)
@@ -157,6 +180,8 @@ async def start_agent(
     session_id: str | None = None,
     store: SessionStore | None = None,
     change_journal: ChangeJournal | None = None,
+    search_provider: SearchProvider | None = None,
+    fetch_provider: FetchProvider | None = None,
 ) -> tuple[AgentHandle, asyncio.Task[None]]:
     """嵌入式入口：调用方取得 handle 后即可提交操作并消费事件。"""
 
@@ -182,6 +207,8 @@ async def start_agent(
         store=store,
         stored_session=stored_session,
         change_journal=change_journal,
+        search_provider=search_provider,
+        fetch_provider=fetch_provider,
     )
     memory = (
         LongTermMemory(

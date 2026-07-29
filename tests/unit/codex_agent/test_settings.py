@@ -23,14 +23,18 @@ class SettingsEnvFileTest(unittest.TestCase):
             env_file.write_text(
                 "# 本地模型配置\n"
                 "OPENAI_API_KEY=from-dotenv\n"
+                "TAVILY_API_KEY=tavily-from-dotenv\n"
                 "OPENAI_BASE_URL='https://model.example/v1'\n"
                 "OPENAI_MODEL=dotenv-model # 支持行尾注释\n",
                 encoding="utf-8",
             )
             with patch("agent.config.loader._PROJECT_ENV_FILE", env_file), patch.dict(
-                os.environ, {"OPENAI_API_KEY": "from-process"}, clear=True
+                os.environ,
+                {"OPENAI_API_KEY": "from-process"},
+                clear=True,
             ):
                 settings = Settings.from_env()
+                self.assertEqual(os.environ["TAVILY_API_KEY"], "tavily-from-dotenv")
 
         self.assertEqual(settings.api_key, "from-process")
         self.assertEqual(settings.base_url, "https://model.example/v1")
@@ -56,6 +60,12 @@ class SettingsEnvFileTest(unittest.TestCase):
         self.assertTrue(settings.use_memories)
         self.assertEqual(settings.memory_idle_hours, 12)
         self.assertEqual(settings.memory_max_sessions, 20)
+        self.assertEqual(settings.web_connect_timeout_seconds, 5)
+        self.assertEqual(settings.web_read_timeout_seconds, 20)
+        self.assertEqual(settings.web_retry_count, 2)
+        self.assertEqual(settings.web_search_ttl_seconds, 1800)
+        self.assertEqual(settings.web_search_cache_records, 20)
+        self.assertFalse(hasattr(settings, "tavily_api_key"))
 
     def test_rejects_unknown_sandbox_mode(self) -> None:
         with patch("agent.config.settings.load_env_file"), patch.dict(
@@ -174,6 +184,18 @@ class SettingsEnvFileTest(unittest.TestCase):
             os.environ, {"OPENAI_TEMPERATURE": "2.1"}, clear=True
         ):
             with self.assertRaisesRegex(ValueError, "OPENAI_TEMPERATURE"):
+                Settings.from_env()
+
+    def test_rejects_unsafe_web_runtime_limits(self) -> None:
+        with patch("agent.config.settings.load_env_file"), patch.dict(
+            os.environ,
+            {
+                "AGENT_WEB_RETRY_COUNT": "6",
+                "AGENT_WEB_SEARCH_CACHE_RECORDS": "1000",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "AGENT_WEB_RETRY_COUNT"):
                 Settings.from_env()
 
     def test_workspace_agents_instructions_are_added_before_safety(self) -> None:
