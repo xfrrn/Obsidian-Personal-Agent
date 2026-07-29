@@ -19,6 +19,7 @@ class ProviderSearchResult:
 class ProviderFetchResult:
     url: str
     content: str
+    provider: str | None = None
 
 
 class SearchProvider(Protocol):
@@ -65,6 +66,8 @@ class FetchedSource:
     published_at: str | None
     content: str
     truncated: bool
+    fetch_method: str
+    fallback_used: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,4 +170,3 @@ class WebLimitExceeded(WebAccessError):
 
 class WebRequestInvalid(WebAccessError):
     code = "web_request_invalid"
-

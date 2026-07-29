@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
+import asyncio
 import logging
 import math
 import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
-from urllib.parse import urlsplit, urlunsplit
+
+from agent.web_access.local_fetch import (
+    LocalFetchError,
+    LocalFetchResult,
+    LocalStaticFetcher,
+    safe_web_url as _safe_local_url,
+)
 
 from agent.web_access.types import (
     FetchFailure,
@@ -40,7 +46,6 @@ MAX_FETCH_SOURCES = 4
 MIN_CHARS_PER_SOURCE = 1_000
 MAX_CHARS_PER_SOURCE = 12_000
 MAX_QUERY_CHARS = 500
-_MAX_URL_CHARS = 2_048
 _MAX_TITLE_CHARS = 500
 _MAX_SNIPPET_CHARS = 2_000
 _LOGGER = logging.getLogger(__name__)
@@ -233,9 +238,15 @@ class WebSearchService:
 
 
 class WebFetchService:
-    def __init__(self, provider: FetchProvider, cache: SessionSearchCache) -> None:
+    def __init__(
+        self,
+        provider: FetchProvider,
+        cache: SessionSearchCache,
+        local_fetcher: LocalStaticFetcher | None = None,
+    ) -> None:
         self._provider = provider
         self._cache = cache
+        self._local_fetcher = local_fetcher or LocalStaticFetcher()
 
     async def fetch(
         self,
@@ -266,31 +277,58 @@ class WebFetchService:
         selected = tuple(by_id[source_id] for source_id in source_ids)
 
         started_at = time.monotonic()
+        local_results = await asyncio.gather(
+            *(
+                self._local_fetcher.fetch(source.url, max_chars_per_source)
+                for source in selected
+            ),
+            return_exceptions=True,
+        )
+        content_by_url: dict[str, str] = {}
+        method_by_url: dict[str, str] = {}
+        fallback_urls: list[str] = []
+        for source, result in zip(selected, local_results, strict=True):
+            if isinstance(result, LocalFetchResult):
+                content_by_url[source.url] = result.content
+                method_by_url[source.url] = "local"
+            else:
+                fallback_urls.append(source.url)
+
+        provider_error: WebAccessError | None = None
         try:
-            provider_results = await self._provider.fetch(
-                tuple(source.url for source in selected), query=clean_query
+            provider_results = (
+                await self._provider.fetch(tuple(fallback_urls), query=clean_query)
+                if fallback_urls
+                else ()
             )
             if not isinstance(provider_results, tuple) or any(
                 not isinstance(result, ProviderFetchResult)
                 or not isinstance(result.url, str)
                 or not isinstance(result.content, str)
+                or (
+                    result.provider is not None
+                    and not isinstance(result.provider, str)
+                )
                 for result in provider_results
             ):
                 raise ProviderResponseInvalid("网页提取 Provider 返回格式异常。")
 
-            content_by_url: dict[str, str] = {}
             for result in provider_results:
                 try:
                     url, _ = safe_web_url(result.url)
                 except WebRequestInvalid:
                     continue
-                content_by_url.setdefault(url, result.content)
+                if url in fallback_urls:
+                    content_by_url.setdefault(url, result.content)
+                    method_by_url.setdefault(
+                        url, result.provider or self._provider.name
+                    )
         except WebAccessError as exc:
-            _log_failure("web.fetch.failed", self._provider.name, started_at, exc)
-            raise
+            _log_fetch_failure(selected, self._provider.name, started_at, exc)
+            provider_error = exc
         except Exception as exc:
-            _log_failure("web.fetch.failed", self._provider.name, started_at, exc)
-            raise WebFetchFailed("网页提取服务暂时不可用。") from exc
+            _log_fetch_failure(selected, self._provider.name, started_at, exc)
+            provider_error = WebFetchFailed("网页提取服务暂时不可用。")
 
         fetched: list[FetchedSource] = []
         failures: list[FetchFailure] = []
@@ -301,8 +339,10 @@ class WebFetchService:
                 failures.append(
                     FetchFailure(
                         source.source_id,
-                        WebFetchFailed.code,
-                        "Provider 未返回该来源的正文。",
+                        provider_error.code if provider_error else WebFetchFailed.code,
+                        "正文回退提取失败。"
+                        if provider_error
+                        else "Provider 未返回该来源的正文。",
                     )
                 )
                 continue
@@ -326,6 +366,8 @@ class WebFetchService:
                     published_at=source.published_at,
                     content=content[:max_chars_per_source],
                     truncated=len(content) > max_chars_per_source,
+                    fetch_method=method_by_url[source.url],
+                    fallback_used=source.url in fallback_urls,
                 )
             )
 
@@ -335,16 +377,24 @@ class WebFetchService:
                 if empty_count == len(selected)
                 else WebFetchFailed("所有来源均提取失败。")
             )
-            _log_failure("web.fetch.failed", self._provider.name, started_at, error)
-            raise error
+            _log_fetch_failure(selected, self._provider.name, started_at, error)
+            raise provider_error or error
         _LOGGER.info(
             "web.fetch.completed",
             extra={
-                "provider": self._provider.name,
-                "source_ids": list(source_ids),
+                "domains": [source.domain for source in fetched],
                 "source_count": len(fetched),
-                "result_count": len(fetched),
                 "duration_ms": _elapsed_ms(started_at),
+                "content_chars": sum(len(source.content) for source in fetched),
+                "fetch_method": (
+                    fetched[0].fetch_method
+                    if all(
+                        source.fetch_method == fetched[0].fetch_method
+                        for source in fetched
+                    )
+                    else "mixed"
+                ),
+                "fallback_used": bool(fallback_urls),
             },
         )
         return WebFetchResult(search_id, clean_query, tuple(fetched), tuple(failures))
@@ -352,42 +402,10 @@ class WebFetchService:
 
 def safe_web_url(value: str) -> tuple[str, str]:
     """Validate cached provider URLs before any fetch implementation receives them."""
-
-    if not isinstance(value, str) or not value or len(value) > _MAX_URL_CHARS:
-        raise WebRequestInvalid("Provider 返回了无效 URL。")
     try:
-        parts = urlsplit(value)
-        port = parts.port
-        host = parts.hostname
-    except ValueError as exc:
-        raise WebRequestInvalid("Provider 返回了无效 URL。") from exc
-    scheme = parts.scheme.lower()
-    if scheme not in {"http", "https"} or not host:
-        raise WebRequestInvalid("Provider 返回了不受支持的 URL。")
-    if parts.username is not None or parts.password is not None:
-        raise WebRequestInvalid("网页 URL 不能包含用户凭据。")
-    expected_port = 80 if scheme == "http" else 443
-    if port is not None and port != expected_port:
-        raise WebRequestInvalid("网页 URL 不能使用非标准端口。")
-
-    try:
-        domain = host.encode("idna").decode("ascii").casefold()
-    except UnicodeError as exc:
-        raise WebRequestInvalid("Provider 返回了无效域名。") from exc
-    if domain == "localhost" or domain.endswith(
-        (".localhost", ".local", ".internal", ".home", ".lan")
-    ):
-        raise WebRequestInvalid("网页 URL 指向本地网络。")
-    try:
-        address = ipaddress.ip_address(domain)
-    except ValueError:
-        address = None
-    if address is not None and not address.is_global:
-        raise WebRequestInvalid("网页 URL 指向非公网地址。")
-
-    netloc = f"[{domain}]" if ":" in domain else domain
-    path = parts.path or "/"
-    return urlunsplit((scheme, netloc, path, parts.query, "")), domain
+        return _safe_local_url(value)
+    except LocalFetchError as exc:
+        raise WebRequestInvalid("Provider 返回了不安全或无效的 URL。") from exc
 
 
 def _queries(query: str) -> tuple[str, str]:
@@ -417,5 +435,25 @@ def _log_failure(
             "duration_ms": _elapsed_ms(started_at),
             "error_type": type(error).__name__,
             "http_status": getattr(error, "status_code", None),
+        },
+    )
+
+
+def _log_fetch_failure(
+    sources: tuple[SearchSource, ...],
+    method: str,
+    started_at: float,
+    error: BaseException,
+) -> None:
+    _LOGGER.warning(
+        "web.fetch.failed",
+        extra={
+            "domains": [source.domain for source in sources],
+            "http_status": getattr(error, "status_code", None),
+            "duration_ms": _elapsed_ms(started_at),
+            "content_chars": 0,
+            "fetch_method": method,
+            "fallback_used": True,
+            "failure_reason": type(error).__name__,
         },
     )

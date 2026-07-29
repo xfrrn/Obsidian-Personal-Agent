@@ -63,7 +63,18 @@ test("groups plugin settings and keeps one sticky save bar", () => {
   assert.match(settings, /renderSkillState\(container/);
   assert.match(settings, /pka-memory-editor/);
   assert.match(settings, /Tavily API Keys/);
+  assert.match(settings, /addWebKeyInputs/);
+  assert.match(settings, /keys\[activeIndex\]/);
+  assert.match(settings, /"chevron-left"/);
+  assert.match(settings, /revealed \? "eye-off" : "eye"/);
+  assert.match(settings, /pka-web-key-counter/);
+  assert.match(settings, /type: "password"/);
+  assert.doesNotMatch(settings, /setName\("搜索供应商"\)|setName\("正文读取供应商"\)/);
   assert.match(main, /WEB_API_KEY_SECRET_IDS/);
+  assert.match(main, /secretStorage\.setSecret\(WEB_API_KEY_SECRET_IDS\[provider\]/);
+  assert.doesNotMatch(main, /saveData\(this\.webApiKeys\)/);
+  assert.match(main, /web_search_provider: "auto"/);
+  assert.match(main, /web_fetch_provider: "auto"/);
   assert.match(main, /web_api_keys: \{/);
   assert.match(main, /disabled_skills: this\.settings\.disabledSkills/);
   assert.match(main, /method: "POST"[\s\S]*JSON\.stringify\(\{ memory \}\)/);

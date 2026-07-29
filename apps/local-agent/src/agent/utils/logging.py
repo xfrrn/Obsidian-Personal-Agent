@@ -39,11 +39,17 @@ _RECORD_FIELDS = (
     "result_count",
     "source_count",
     "source_ids",
+    "domain",
+    "domains",
     "http_status",
     "retry_count",
     "key_index",
     "key_count",
     "cache_hit",
+    "content_chars",
+    "fetch_method",
+    "fallback_used",
+    "failure_reason",
 )
 _LEVELS = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
 _FORMATS = {"text", "json"}

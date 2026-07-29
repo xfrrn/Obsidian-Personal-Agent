@@ -77,7 +77,15 @@ class RotatingFetchProvider:
         last_error: WebAccessError | None = None
         for key_index, provider in await self._pool.candidates():
             try:
-                return await provider.fetch(urls, query=query)
+                results = await provider.fetch(urls, query=query)
+                if any(
+                    not isinstance(result, ProviderFetchResult) for result in results
+                ):
+                    return results
+                return tuple(
+                    ProviderFetchResult(result.url, result.content, provider.name)
+                    for result in results
+                )
             except _KEY_FAILURES as exc:
                 last_error = exc
                 _log_failover(self.name, key_index, len(self._pool.providers), exc)
@@ -86,11 +94,10 @@ class RotatingFetchProvider:
 
 
 def _provider_name(providers: tuple[SearchProvider, ...] | tuple[FetchProvider, ...]) -> str:
-    if len(providers) < 2 or any(
-        provider.name != providers[0].name for provider in providers
-    ):
-        raise ValueError("轮换池必须包含至少两个同供应商 Provider")
-    return providers[0].name
+    if len(providers) < 2:
+        raise ValueError("轮换池至少需要两个 Provider")
+    names = {provider.name for provider in providers}
+    return names.pop() if len(names) == 1 else "auto"
 
 
 def _log_failover(

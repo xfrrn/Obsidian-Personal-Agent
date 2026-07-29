@@ -21,9 +21,15 @@ from agent.core.turn.public_events import PublicEventAdapter
 from agent.llm.types import AssistantResponse, ToolCall
 from agent.protocol.event import EventKind
 from agent.protocol.op import UserInput
-from agent.web_access.config import _api_keys, configured_web_providers
+from agent.web_access.config import WebProviderConfig, _api_keys, configured_web_providers
 from agent.web_access.exa import ExaProvider
 from agent.web_access.key_pool import RotatingFetchProvider, RotatingSearchProvider
+from agent.web_access.local_fetch import (
+    LocalFetchError,
+    LocalFetchResult,
+    LocalStaticFetcher,
+    _PublicNetworkBackend,
+)
 from agent.web_access.services import (
     SessionSearchCache,
     WebFetchService,
@@ -73,6 +79,25 @@ class FakeWebProvider:
     ) -> tuple[ProviderFetchResult, ...]:
         self.fetch_calls.append((urls, query))
         return (ProviderFetchResult(urls[0], "useful content" * 200),)
+
+
+class FailingLocalFetcher:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def fetch(self, url: str, max_chars: int) -> LocalFetchResult:
+        self.calls.append(url)
+        raise LocalFetchError("request_failed")
+
+
+class SuccessfulLocalFetcher:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.calls: list[str] = []
+
+    async def fetch(self, url: str, max_chars: int) -> LocalFetchResult:
+        self.calls.append(url)
+        return LocalFetchResult(self.content[: max_chars + 1], 200)
 
 
 class KeyedFakeProvider:
@@ -158,7 +183,21 @@ class RotatingProviderTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(results[0].content, "healthy:intent")
+        self.assertEqual(results[0].provider, "fake")
         self.assertEqual((limited.fetch_calls, healthy.fetch_calls), (1, 1))
+
+    async def test_mixed_fetch_pool_reports_the_provider_that_won(self) -> None:
+        tavily = KeyedFakeProvider("tavily")
+        tavily.name = "tavily"
+        exa = KeyedFakeProvider("exa")
+        exa.name = "exa"
+        provider = RotatingFetchProvider((tavily, exa))
+
+        first = await provider.fetch(("https://example.com",), query="one")
+        second = await provider.fetch(("https://example.com",), query="two")
+
+        self.assertEqual(provider.name, "auto")
+        self.assertEqual((first[0].provider, second[0].provider), ("tavily", "exa"))
 
 
 class WebServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -208,12 +247,13 @@ class WebServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_fetch_resolves_cached_urls_and_returns_partial_failures(self) -> None:
         provider = FakeWebProvider()
+        local_fetcher = FailingLocalFetcher()
         cache = SessionSearchCache(1_800, 20)
         search = WebSearchService(
             provider, cache, new_search_id=lambda: "search-id"
         )
         record = await search.search("query", 1)
-        result = await WebFetchService(provider, cache).fetch(
+        result = await WebFetchService(provider, cache, local_fetcher).fetch(
             record.search_id, ("source_1",), "reading intent", 1_000
         )
 
@@ -224,10 +264,29 @@ class WebServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.sources[0].source_id, "source_1")
         self.assertTrue(result.sources[0].truncated)
         self.assertEqual(len(result.sources[0].content), 1_000)
+        self.assertEqual(result.sources[0].fetch_method, "fake")
+        self.assertTrue(result.sources[0].fallback_used)
         with self.assertRaises(SourceIdInvalid):
-            await WebFetchService(provider, cache).fetch(
+            await WebFetchService(provider, cache, local_fetcher).fetch(
                 record.search_id, ("source_99",), "query", 1_000
             )
+
+    async def test_fetch_uses_local_content_without_calling_provider(self) -> None:
+        provider = FakeWebProvider()
+        local_fetcher = SuccessfulLocalFetcher("local body " * 200)
+        cache = SessionSearchCache(1_800, 20)
+        record = await WebSearchService(
+            provider, cache, new_search_id=lambda: "search-id"
+        ).search("query", 1)
+
+        result = await WebFetchService(provider, cache, local_fetcher).fetch(
+            record.search_id, ("source_1",), "intent", 1_000
+        )
+
+        self.assertEqual(provider.fetch_calls, [])
+        self.assertEqual(local_fetcher.calls, ["https://example.com/1"])
+        self.assertEqual(result.sources[0].fetch_method, "local")
+        self.assertFalse(result.sources[0].fallback_used)
 
     async def test_only_public_http_urls_are_accepted(self) -> None:
         self.assertEqual(
@@ -237,7 +296,10 @@ class WebServiceTest(unittest.IsolatedAsyncioTestCase):
         for url in (
             "file:///etc/passwd",
             "http://localhost/",
+            "http://0.0.0.0/",
             "http://127.0.0.1/",
+            "http://[::1]/",
+            "http://192.168.1.1/",
             "http://169.254.169.254/latest/meta-data",
             "https://user:password@example.com/",
             "https://example.com:8443/",
@@ -259,9 +321,121 @@ class WebServiceTest(unittest.IsolatedAsyncioTestCase):
 
         provider.fetch = malformed_fetch  # type: ignore[method-assign]
         with self.assertRaises(ProviderResponseInvalid):
-            await WebFetchService(provider, cache).fetch(
+            await WebFetchService(provider, cache, FailingLocalFetcher()).fetch(
                 record.search_id, ("source_1",), "query", 1_000
             )
+
+
+class LocalStaticFetcherTest(unittest.IsolatedAsyncioTestCase):
+    async def test_follows_checked_redirect_and_extracts_markdown(self) -> None:
+        requests: list[str] = []
+        html = (
+            "<html><body><article><h1>Static page</h1><p>"
+            + "Useful article text. " * 40
+            + "</p></article></body></html>"
+        )
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(str(request.url))
+            if request.url.host == "example.com":
+                return httpx.Response(
+                    302, headers={"Location": "https://example.org/article"}
+                )
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                content=html,
+            )
+
+        result = await LocalStaticFetcher(
+            transport=httpx.MockTransport(respond)
+        ).fetch("https://example.com/start", 1_000)
+
+        self.assertEqual(
+            requests,
+            ["https://example.com/start", "https://example.org/article"],
+        )
+        self.assertEqual(result.status_code, 200)
+        self.assertIn("Static page", result.content)
+        self.assertIn("Useful article text", result.content)
+
+    async def test_rejects_unsafe_redirect_before_second_request(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                302,
+                headers={
+                    "Location": "http://169.254.169.254/latest/meta-data"
+                },
+            )
+
+        with self.assertRaises(LocalFetchError) as raised:
+            await LocalStaticFetcher(
+                transport=httpx.MockTransport(respond)
+            ).fetch("https://example.com/start", 1_000)
+
+        self.assertEqual(raised.exception.reason, "private_network")
+        self.assertEqual(len(requests), 1)
+
+    async def test_rejects_non_html_and_oversized_responses(self) -> None:
+        for response, reason in (
+            (
+                httpx.Response(
+                    200,
+                    headers={"Content-Type": "application/json"},
+                    json={"value": "not html"},
+                ),
+                "unsupported_content_type",
+            ),
+            (
+                httpx.Response(
+                    200,
+                    headers={
+                        "Content-Type": "text/html",
+                        "Content-Length": "101",
+                    },
+                    content=b"x",
+                ),
+                "response_too_large",
+            ),
+        ):
+            with self.subTest(reason=reason), self.assertRaises(
+                LocalFetchError
+            ) as raised:
+                await LocalStaticFetcher(
+                    max_response_bytes=100,
+                    transport=httpx.MockTransport(lambda request, r=response: r),
+                ).fetch("https://example.com/page", 1_000)
+            self.assertEqual(raised.exception.reason, reason)
+
+    async def test_dns_backend_rejects_private_answers_and_pins_public_ip(self) -> None:
+        async def private_resolver(host: str, port: int) -> tuple[str, ...]:
+            return ("93.184.216.34", "127.0.0.1")
+
+        with self.assertRaises(LocalFetchError):
+            await _PublicNetworkBackend(resolver=private_resolver).connect_tcp(
+                "example.com", 443
+            )
+
+        calls: list[str] = []
+
+        class RecordingBackend:
+            async def connect_tcp(self, host: str, port: int, **kwargs: object) -> object:
+                calls.append(host)
+                return object()
+
+        async def public_resolver(host: str, port: int) -> tuple[str, ...]:
+            return ("93.184.216.34",)
+
+        stream = await _PublicNetworkBackend(
+            resolver=public_resolver,
+            backend=RecordingBackend(),  # type: ignore[arg-type]
+        ).connect_tcp("example.com", 443)
+
+        self.assertIsNotNone(stream)
+        self.assertEqual(calls, ["93.184.216.34"])
 
     async def test_session_registers_only_stable_web_tool_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -324,12 +498,18 @@ class SearchThenFetchClient:
             )
         fetch_result = json.loads(messages[-1]["content"])
         assert fetch_result["trust"] == "untrusted_web_content"
+        assert fetch_result["sources"][0]["fetch_method"] == "fake"
+        assert fetch_result["sources"][0]["fallback_used"] is True
         return AssistantResponse("Answer with source")
 
 
 class WebAgentLoopTest(unittest.IsolatedAsyncioTestCase):
     async def test_agent_loop_searches_fetches_and_finishes(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            LocalStaticFetcher,
+            "fetch",
+            side_effect=LocalFetchError("request_failed"),
+        ):
             provider = FakeWebProvider()
             client = SearchThenFetchClient()
             handle, runner = await start_agent(
@@ -568,6 +748,22 @@ class TalorDataProviderTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderConfigurationTest(unittest.TestCase):
+    def test_auto_uses_every_configured_provider_key(self) -> None:
+        settings = _settings(Path.cwd())
+        search_provider, fetch_provider = configured_web_providers(
+            settings,
+            WebProviderConfig(
+                tavily_api_keys=("tavily-one", "tavily-two"),
+                exa_api_keys=("exa-one",),
+                talordata_api_keys=("talor-one",),
+            ),
+        )
+
+        self.assertIsInstance(search_provider, RotatingSearchProvider)
+        self.assertIsInstance(fetch_provider, RotatingFetchProvider)
+        self.assertEqual(search_provider.name, "auto")
+        self.assertEqual(fetch_provider.name, "auto")
+
     def test_selects_exa_without_putting_its_key_in_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             os.environ,

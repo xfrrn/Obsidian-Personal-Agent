@@ -16,8 +16,8 @@ from agent.web_access.types import FetchProvider, SearchProvider
 
 @dataclass(frozen=True, slots=True)
 class WebProviderConfig:
-    search_provider: str = "tavily"
-    fetch_provider: str = "tavily"
+    search_provider: str = "auto"
+    fetch_provider: str = "auto"
     tavily_api_keys: tuple[str, ...] = ()
     exa_api_keys: tuple[str, ...] = ()
     talordata_api_keys: tuple[str, ...] = ()
@@ -40,7 +40,7 @@ class WebProviderConfig:
 
 
 def web_provider_config_from_env() -> WebProviderConfig:
-    default_name = env_value("AGENT_WEB_PROVIDER", "tavily").strip().casefold()
+    default_name = env_value("AGENT_WEB_PROVIDER", "auto").strip().casefold()
     return WebProviderConfig(
         search_provider=env_value("AGENT_WEB_SEARCH_PROVIDER", default_name)
         .strip()
@@ -61,20 +61,26 @@ def configured_web_providers(
     config = config or web_provider_config_from_env()
     search_name = config.search_provider
     fetch_name = config.fetch_provider
-    if search_name not in {"tavily", "exa", "talordata"}:
+    if search_name not in {"auto", "tavily", "exa", "talordata"}:
         raise ValueError(
-            "AGENT_WEB_SEARCH_PROVIDER 只能是 tavily、exa 或 talordata"
+            "AGENT_WEB_SEARCH_PROVIDER 只能是 auto、tavily、exa 或 talordata"
         )
-    if fetch_name not in {"tavily", "exa"}:
+    if fetch_name not in {"auto", "tavily", "exa"}:
         raise ValueError(
-            "AGENT_WEB_FETCH_PROVIDER 只能是 tavily 或 exa；TalorData 只支持搜索"
+            "AGENT_WEB_FETCH_PROVIDER 只能是 auto、tavily 或 exa；TalorData 只支持搜索"
         )
 
-    search_candidates = _search_providers(
-        search_name, settings, config.keys_for(search_name)
+    search_candidates = tuple(
+        candidate
+        for name in (
+            ("tavily", "exa", "talordata") if search_name == "auto" else (search_name,)
+        )
+        for candidate in _search_providers(name, settings, config.keys_for(name))
     )
-    fetch_candidates = _fetch_providers(
-        fetch_name, settings, config.keys_for(fetch_name)
+    fetch_candidates = tuple(
+        candidate
+        for name in (("tavily", "exa") if fetch_name == "auto" else (fetch_name,))
+        for candidate in _fetch_providers(name, settings, config.keys_for(name))
     )
     # Runtime 要求搜索和读取成对注册；缺少任一密钥时沿用原有的禁用行为。
     if not search_candidates or not fetch_candidates:

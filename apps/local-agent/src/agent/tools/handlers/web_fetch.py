@@ -118,6 +118,8 @@ class WebFetchTool:
                         "published_at": source.published_at,
                         "content": source.content,
                         "truncated": source.truncated,
+                        "fetch_method": source.fetch_method,
+                        "fallback_used": source.fallback_used,
                     }
                     for source in result.sources
                 ],
@@ -132,4 +134,3 @@ class WebFetchTool:
             },
             ensure_ascii=False,
         )
-

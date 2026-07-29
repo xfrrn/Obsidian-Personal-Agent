@@ -1,5 +1,5 @@
-import { App, Modal, Notice, PluginSettingTab, Setting, SettingGroup } from "obsidian";
-import type { ButtonComponent, DropdownComponent, TextAreaComponent, TextComponent } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, setIcon, Setting, SettingGroup } from "obsidian";
+import type { ButtonComponent, DropdownComponent, TextComponent } from "obsidian";
 import type CodeXAgentPlugin from "./main";
 import type { ThemeMode } from "./theme";
 import { agentPortFromUrl } from "./url";
@@ -8,9 +8,7 @@ declare const require: ((id: string) => unknown) | undefined;
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "never" | "on-request";
-export type WebSearchProvider = "tavily" | "exa" | "talordata";
-export type WebFetchProvider = "tavily" | "exa";
-export type WebProviderName = WebSearchProvider;
+export type WebProviderName = "tavily" | "exa" | "talordata";
 
 export interface WebApiKeys {
   tavily: string;
@@ -28,8 +26,6 @@ export interface AgentSettings {
   shellEnabled: boolean;
   disabledSkills: string[];
   sessionDbPath: string;
-  webSearchProvider: WebSearchProvider;
-  webFetchProvider: WebFetchProvider;
   themeMode: ThemeMode;
   configured: boolean;
 }
@@ -50,8 +46,6 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   shellEnabled: false,
   disabledSkills: [],
   sessionDbPath: "",
-  webSearchProvider: "tavily",
-  webFetchProvider: "tavily",
   themeMode: "system",
   configured: false
 };
@@ -177,48 +171,30 @@ export class AgentSettingTab extends PluginSettingTab {
       }));
 
     const webGroup = new SettingGroup(this.containerEl).setHeading("互联网搜索").addClass("pka-settings-group");
-    webGroup.addSetting((setting) => setting
-      .setName("搜索供应商")
-      .addDropdown((dropdown) => dropdown
-        .addOptions({ tavily: "Tavily", exa: "Exa", talordata: "TalorData" })
-        .setValue(next.webSearchProvider)
-        .onChange((value) => {
-          next.webSearchProvider = value as WebSearchProvider;
-          updateDirtyState();
-        })));
-    webGroup.addSetting((setting) => setting
-      .setName("正文读取供应商")
-      .addDropdown((dropdown) => dropdown
-        .addOptions({ tavily: "Tavily", exa: "Exa" })
-        .setValue(next.webFetchProvider)
-        .onChange((value) => {
-          next.webFetchProvider = value as WebFetchProvider;
-          updateDirtyState();
-        })));
-    addWebKeyTextArea(
+    addWebKeyInputs(
       webGroup,
       "Tavily API Keys",
-      "每行一个 Key；多个 Key 会自动轮转。",
+      "保存到 SecretStorage，不写入 data.json；用于搜索和正文回退，多 Key 自动轮转。",
       webApiKeys.tavily,
       (value) => {
         webApiKeys = { ...webApiKeys, tavily: value };
         updateDirtyState();
       }
     );
-    addWebKeyTextArea(
+    addWebKeyInputs(
       webGroup,
       "Exa API Keys",
-      "每行一个 Key；多个 Key 会自动轮转。",
+      "保存到 SecretStorage，不写入 data.json；用于搜索和正文回退，多 Key 自动轮转。",
       webApiKeys.exa,
       (value) => {
         webApiKeys = { ...webApiKeys, exa: value };
         updateDirtyState();
       }
     );
-    addWebKeyTextArea(
+    addWebKeyInputs(
       webGroup,
       "TalorData API Keys",
-      "只用于搜索；正文读取请选择 Tavily 或 Exa。",
+      "保存到 SecretStorage，不写入 data.json；仅参与搜索，多 Key 自动轮转。",
       webApiKeys.talordata,
       (value) => {
         webApiKeys = { ...webApiKeys, talordata: value };
@@ -466,24 +442,84 @@ export class AgentSettingTab extends PluginSettingTab {
   }
 }
 
-function addWebKeyTextArea(
+function addWebKeyInputs(
   group: SettingGroup,
   name: string,
   description: string,
   value: string,
   onChange: (value: string) => void
 ): void {
-  group.addSetting((setting) => setting
-    .setName(name)
-    .setDesc(description)
-    .addTextArea((text: TextAreaComponent) => {
-      text.inputEl.rows = 3;
-      text.inputEl.spellcheck = false;
-      text
-        .setPlaceholder("key-1\nkey-2")
-        .setValue(value)
-        .onChange(onChange);
-    }));
+  const keys = value.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean);
+  if (!keys.length) keys.push("");
+  let activeIndex = 0;
+  group.addSetting((setting) => {
+    setting.setName(name).setDesc(description);
+    const container = setting.controlEl.createDiv({ cls: "pka-web-key-control" });
+    const render = (focus = false) => {
+      container.empty();
+      const input = container.createEl("input", {
+        type: "password",
+        cls: "pka-web-key-input",
+        attr: { "aria-label": `${name} ${activeIndex + 1}`, autocomplete: "off", placeholder: "API Key" }
+      });
+      input.value = keys[activeIndex];
+      const addIconButton = (
+        icon: string,
+        label: string,
+        disabled: boolean,
+        onClick: () => void
+      ) => {
+        const button = container.createEl("button", {
+          cls: "clickable-icon",
+          attr: { type: "button", "aria-label": label, title: label }
+        });
+        setIcon(button, icon);
+        button.disabled = disabled;
+        button.addEventListener("click", onClick);
+        return button;
+      };
+      let revealed = false;
+      const reveal = addIconButton("eye", `显示当前 ${name}`, false, () => {
+        revealed = !revealed;
+        input.type = revealed ? "text" : "password";
+        const label = `${revealed ? "隐藏" : "显示"}当前 ${name}`;
+        reveal.setAttribute("aria-label", label);
+        reveal.title = label;
+        setIcon(reveal, revealed ? "eye-off" : "eye");
+      });
+      addIconButton("chevron-left", `上一个 ${name}`, activeIndex === 0, () => {
+        activeIndex -= 1;
+        render(true);
+      });
+      container.createSpan({
+        cls: "pka-web-key-counter",
+        text: `${activeIndex + 1} / ${keys.length}`
+      });
+      addIconButton("chevron-right", `下一个 ${name}`, activeIndex === keys.length - 1, () => {
+        activeIndex += 1;
+        render(true);
+      });
+      addIconButton("trash-2", `删除当前 ${name}`, keys.length === 1, () => {
+        keys.splice(activeIndex, 1);
+        activeIndex = Math.min(activeIndex, keys.length - 1);
+        onChange(keys.join("\n"));
+        render(true);
+      });
+      const add = addIconButton("plus", `添加 ${name}`, !input.value.trim(), () => {
+        keys.push("");
+        activeIndex = keys.length - 1;
+        onChange(keys.join("\n"));
+        render(true);
+      });
+      input.addEventListener("input", () => {
+        keys[activeIndex] = input.value;
+        add.disabled = !input.value.trim();
+        onChange(keys.join("\n"));
+      });
+      if (focus) input.focus();
+    };
+    render();
+  });
 }
 
 function renderSkillState(container: HTMLElement, title: string, detail: string): void {

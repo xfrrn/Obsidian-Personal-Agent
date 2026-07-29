@@ -29,6 +29,7 @@ import {
 } from "./host"
 import { codeDownloadName, writeCodeToClipboard } from "./code-actions"
 import { fileSuggestionIndex, type FileSuggestionKey } from "./file-suggestions"
+import { webFetchMethodSummary } from "./web-trace"
 
 type ModeKind = "default" | "plan"
 type MessageRole = "user" | "assistant" | "error" | "notice"
@@ -363,8 +364,9 @@ function webToolResultView(tool: ToolTraceStep, text: string) {
       detail: webSourceSummary(sources) || "没有可用来源",
     }
   }
+  const method = webFetchMethodSummary(sources)
   return {
-    label: `读取网页：${sources.length} 个来源${failures.length ? `，${failures.length} 个失败` : ""}`,
+    label: `读取网页：${sources.length} 个来源${failures.length ? `，${failures.length} 个失败` : ""}${method ? ` · ${method}` : ""}`,
     detail: webSourceSummary(sources) || (failures.length ? "来源读取失败" : tool.detail),
   }
 }

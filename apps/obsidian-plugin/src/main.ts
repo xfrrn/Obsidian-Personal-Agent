@@ -7,9 +7,7 @@ import {
   DEFAULT_SETTINGS,
   SandboxMode,
   WebApiKeys,
-  WebFetchProvider,
-  WebProviderName,
-  WebSearchProvider
+  WebProviderName
 } from "./settings";
 import { normalizeAgentUrl, normalizeApiBaseUrl } from "./url";
 import { CODEX_AGENT_VIEW_TYPE, CodeXAgentView } from "./codex-agent-view";
@@ -217,8 +215,6 @@ export default class CodeXAgentPlugin extends Plugin {
         workspace,
         disabledSkills: normalizeSkillNames(value.disabledSkills),
         sessionDbPath: value.sessionDbPath.trim(),
-        webSearchProvider: value.webSearchProvider,
-        webFetchProvider: value.webFetchProvider,
         configured: true
       };
       this.apiKey = apiKey.trim();
@@ -257,8 +253,8 @@ export default class CodeXAgentPlugin extends Plugin {
         shell_enabled: this.settings.shellEnabled,
         disabled_skills: this.settings.disabledSkills,
         session_db_path: this.settings.sessionDbPath,
-        web_search_provider: this.settings.webSearchProvider,
-        web_fetch_provider: this.settings.webFetchProvider,
+        web_search_provider: "auto",
+        web_fetch_provider: "auto",
         web_api_keys: {
           tavily: webKeyLines(this.webApiKeys.tavily),
           exa: webKeyLines(this.webApiKeys.exa),
@@ -318,8 +314,6 @@ export default class CodeXAgentPlugin extends Plugin {
       shellEnabled: typeof saved?.shellEnabled === "boolean" ? saved.shellEnabled : DEFAULT_SETTINGS.shellEnabled,
       disabledSkills: normalizeSkillNames(saved?.disabledSkills),
       sessionDbPath: typeof saved?.sessionDbPath === "string" ? saved.sessionDbPath : DEFAULT_SETTINGS.sessionDbPath,
-      webSearchProvider: isWebSearchProvider(saved?.webSearchProvider) ? saved.webSearchProvider : DEFAULT_SETTINGS.webSearchProvider,
-      webFetchProvider: isWebFetchProvider(saved?.webFetchProvider) ? saved.webFetchProvider : DEFAULT_SETTINGS.webFetchProvider,
       themeMode: isThemeMode(saved?.themeMode) ? saved.themeMode : DEFAULT_SETTINGS.themeMode,
       configured
     };
@@ -407,14 +401,6 @@ function isSandboxMode(value: unknown): value is SandboxMode {
 
 function isApprovalPolicy(value: unknown): value is ApprovalPolicy {
   return value === "never" || value === "on-request";
-}
-
-function isWebSearchProvider(value: unknown): value is WebSearchProvider {
-  return value === "tavily" || value === "exa" || value === "talordata";
-}
-
-function isWebFetchProvider(value: unknown): value is WebFetchProvider {
-  return value === "tavily" || value === "exa";
 }
 
 function normalizeSkillNames(value: unknown): string[] {

@@ -1152,9 +1152,17 @@ def _web_provider_config_body(
 def _web_provider_name(
     value: object, *, allow_talordata: bool, field: str
 ) -> str:
-    allowed = {"tavily", "exa", "talordata"} if allow_talordata else {"tavily", "exa"}
+    allowed = (
+        {"auto", "tavily", "exa", "talordata"}
+        if allow_talordata
+        else {"auto", "tavily", "exa"}
+    )
     if not isinstance(value, str) or value.strip().casefold() not in allowed:
-        suffix = "tavily、exa 或 talordata" if allow_talordata else "tavily 或 exa"
+        suffix = (
+            "auto、tavily、exa 或 talordata"
+            if allow_talordata
+            else "auto、tavily 或 exa"
+        )
         raise ValueError(f"{field} 必须是 {suffix}")
     return value.strip().casefold()
 
