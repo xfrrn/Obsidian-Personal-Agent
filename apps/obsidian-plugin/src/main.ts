@@ -1,11 +1,27 @@
 import { Notice, Plugin, requestUrl } from "obsidian";
-import { AgentSettingTab, AgentSettings, AgentSkill, ApprovalPolicy, DEFAULT_SETTINGS, SandboxMode } from "./settings";
+import {
+  AgentSettingTab,
+  AgentSettings,
+  AgentSkill,
+  ApprovalPolicy,
+  DEFAULT_SETTINGS,
+  SandboxMode,
+  WebApiKeys,
+  WebFetchProvider,
+  WebProviderName,
+  WebSearchProvider
+} from "./settings";
 import { normalizeAgentUrl, normalizeApiBaseUrl } from "./url";
 import { CODEX_AGENT_VIEW_TYPE, CodeXAgentView } from "./codex-agent-view";
 import { isThemeMode, ThemeMode } from "./theme";
 import { agentLaunchSpec } from "./agent-process";
 
 const API_KEY_SECRET_ID = "personal-knowledge-agent-api-key";
+const WEB_API_KEY_SECRET_IDS: Record<WebProviderName, string> = {
+  tavily: "personal-knowledge-agent-tavily-api-keys",
+  exa: "personal-knowledge-agent-exa-api-keys",
+  talordata: "personal-knowledge-agent-talordata-api-keys"
+};
 const AGENT_START_ATTEMPTS = 100;
 const MAX_SKILL_IMPORT_FILES = 500;
 const MAX_SKILL_IMPORT_BYTES = 10 * 1024 * 1024;
@@ -29,6 +45,7 @@ const { spawn } = require("node:child_process") as {
 export default class CodeXAgentPlugin extends Plugin {
   declare settings: AgentSettings;
   private apiKey = "";
+  private webApiKeys: WebApiKeys = { tavily: "", exa: "", talordata: "" };
   private agentProcess: AgentChildProcess | null = null;
   private agentStartPromise: Promise<void> | null = null;
   private initialSyncPromise: Promise<void> | null = null;
@@ -73,6 +90,10 @@ export default class CodeXAgentPlugin extends Plugin {
 
   getApiKey(): string {
     return this.apiKey;
+  }
+
+  getWebApiKeys(): WebApiKeys {
+    return { ...this.webApiKeys };
   }
 
   async fetchModels(apiBaseUrl: string, apiKey: string): Promise<string[]> {
@@ -182,7 +203,7 @@ export default class CodeXAgentPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  async applySettings(value: AgentSettings, apiKey: string): Promise<boolean> {
+  async applySettings(value: AgentSettings, apiKey: string, webApiKeys: WebApiKeys): Promise<boolean> {
     const previousAgentUrl = this.settings.agentUrl;
     try {
       const workspace = value.workspace.trim();
@@ -196,10 +217,16 @@ export default class CodeXAgentPlugin extends Plugin {
         workspace,
         disabledSkills: normalizeSkillNames(value.disabledSkills),
         sessionDbPath: value.sessionDbPath.trim(),
+        webSearchProvider: value.webSearchProvider,
+        webFetchProvider: value.webFetchProvider,
         configured: true
       };
       this.apiKey = apiKey.trim();
+      this.webApiKeys = normalizeWebApiKeys(webApiKeys);
       this.app.secretStorage.setSecret(API_KEY_SECRET_ID, this.apiKey);
+      for (const provider of webProviderNames()) {
+        this.app.secretStorage.setSecret(WEB_API_KEY_SECRET_IDS[provider], this.webApiKeys[provider]);
+      }
       await this.saveData(this.settings);
       if (this.settings.agentUrl !== previousAgentUrl) this.stopLocalAgent();
     } catch (error) {
@@ -230,6 +257,13 @@ export default class CodeXAgentPlugin extends Plugin {
         shell_enabled: this.settings.shellEnabled,
         disabled_skills: this.settings.disabledSkills,
         session_db_path: this.settings.sessionDbPath,
+        web_search_provider: this.settings.webSearchProvider,
+        web_fetch_provider: this.settings.webFetchProvider,
+        web_api_keys: {
+          tavily: webKeyLines(this.webApiKeys.tavily),
+          exa: webKeyLines(this.webApiKeys.exa),
+          talordata: webKeyLines(this.webApiKeys.talordata)
+        },
         confirmed: this.settings.sandboxMode === "danger-full-access"
       } : { workspace: this.settings.workspace };
     if (this.settings.configured && (this.apiKey || includeEmptyApiKey)) body.api_key = this.apiKey;
@@ -284,10 +318,17 @@ export default class CodeXAgentPlugin extends Plugin {
       shellEnabled: typeof saved?.shellEnabled === "boolean" ? saved.shellEnabled : DEFAULT_SETTINGS.shellEnabled,
       disabledSkills: normalizeSkillNames(saved?.disabledSkills),
       sessionDbPath: typeof saved?.sessionDbPath === "string" ? saved.sessionDbPath : DEFAULT_SETTINGS.sessionDbPath,
+      webSearchProvider: isWebSearchProvider(saved?.webSearchProvider) ? saved.webSearchProvider : DEFAULT_SETTINGS.webSearchProvider,
+      webFetchProvider: isWebFetchProvider(saved?.webFetchProvider) ? saved.webFetchProvider : DEFAULT_SETTINGS.webFetchProvider,
       themeMode: isThemeMode(saved?.themeMode) ? saved.themeMode : DEFAULT_SETTINGS.themeMode,
       configured
     };
     this.apiKey = this.app.secretStorage.getSecret(API_KEY_SECRET_ID) ?? "";
+    this.webApiKeys = {
+      tavily: this.app.secretStorage.getSecret(WEB_API_KEY_SECRET_IDS.tavily) ?? "",
+      exa: this.app.secretStorage.getSecret(WEB_API_KEY_SECRET_IDS.exa) ?? "",
+      talordata: this.app.secretStorage.getSecret(WEB_API_KEY_SECRET_IDS.talordata) ?? ""
+    };
   }
 
   /** 已有服务直接复用；连接失败时只启动一个由插件托管的 Python 子进程。 */
@@ -368,11 +409,35 @@ function isApprovalPolicy(value: unknown): value is ApprovalPolicy {
   return value === "never" || value === "on-request";
 }
 
+function isWebSearchProvider(value: unknown): value is WebSearchProvider {
+  return value === "tavily" || value === "exa" || value === "talordata";
+}
+
+function isWebFetchProvider(value: unknown): value is WebFetchProvider {
+  return value === "tavily" || value === "exa";
+}
+
 function normalizeSkillNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.filter(
     (name): name is string => typeof name === "string" && /^[a-z0-9][a-z0-9-]*$/.test(name)
   ))).sort();
+}
+
+function normalizeWebApiKeys(value: WebApiKeys): WebApiKeys {
+  return {
+    tavily: webKeyLines(value.tavily).join("\n"),
+    exa: webKeyLines(value.exa).join("\n"),
+    talordata: webKeyLines(value.talordata).join("\n")
+  };
+}
+
+function webKeyLines(value: string): string[] {
+  return Array.from(new Set(value.split(/[\s,;]+/).map((key) => key.trim()).filter(Boolean)));
+}
+
+function webProviderNames(): WebProviderName[] {
+  return ["tavily", "exa", "talordata"];
 }
 
 function modelListError(error: unknown, fallback: string): string {

@@ -808,6 +808,13 @@ class WebRuntimeTest(unittest.TestCase):
                         "shell_enabled": False,
                         "disabled_skills": ["code-review"],
                         "session_db_path": str(session_db),
+                        "web_search_provider": "talordata",
+                        "web_fetch_provider": "exa",
+                        "web_api_keys": {
+                            "tavily": ["tavily-secret"],
+                            "exa": ["exa-secret"],
+                            "talordata": ["talor-secret", "talor-secret"],
+                        },
                         "confirmed": False,
                     },
                 )
@@ -836,6 +843,13 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(updated["base_url"], "https://example.com/v1")
         self.assertEqual(updated["sandbox_mode"], "read-only")
         self.assertEqual(updated["disabled_skills"], ["code-review"])
+        self.assertEqual(updated["web_search_provider"], "talordata")
+        self.assertEqual(updated["web_fetch_provider"], "exa")
+        self.assertEqual(
+            updated["web_keys_configured"],
+            {"tavily": True, "exa": True, "talordata": True},
+        )
+        self.assertNotIn("talor-secret", str(updated))
         self.assertEqual(rejected.exception.code, 400)
         self.assertEqual(invalid_skills.exception.code, 400)
         self.assertEqual(created["workspace"], str(workspace))

@@ -1,5 +1,5 @@
 import { App, Modal, Notice, PluginSettingTab, Setting, SettingGroup } from "obsidian";
-import type { ButtonComponent, DropdownComponent, TextComponent } from "obsidian";
+import type { ButtonComponent, DropdownComponent, TextAreaComponent, TextComponent } from "obsidian";
 import type CodeXAgentPlugin from "./main";
 import type { ThemeMode } from "./theme";
 import { agentPortFromUrl } from "./url";
@@ -8,6 +8,15 @@ declare const require: ((id: string) => unknown) | undefined;
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "never" | "on-request";
+export type WebSearchProvider = "tavily" | "exa" | "talordata";
+export type WebFetchProvider = "tavily" | "exa";
+export type WebProviderName = WebSearchProvider;
+
+export interface WebApiKeys {
+  tavily: string;
+  exa: string;
+  talordata: string;
+}
 
 export interface AgentSettings {
   agentUrl: string;
@@ -19,6 +28,8 @@ export interface AgentSettings {
   shellEnabled: boolean;
   disabledSkills: string[];
   sessionDbPath: string;
+  webSearchProvider: WebSearchProvider;
+  webFetchProvider: WebFetchProvider;
   themeMode: ThemeMode;
   configured: boolean;
 }
@@ -39,6 +50,8 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   shellEnabled: false,
   disabledSkills: [],
   sessionDbPath: "",
+  webSearchProvider: "tavily",
+  webFetchProvider: "tavily",
   themeMode: "system",
   configured: false
 };
@@ -53,10 +66,12 @@ export class AgentSettingTab extends PluginSettingTab {
     this.containerEl.addClass("pka-settings-page");
     const next = { ...this.agentPlugin.settings };
     let apiKey = this.agentPlugin.getApiKey();
+    let webApiKeys = { ...this.agentPlugin.getWebApiKeys() };
     const agentPort = agentPortFromUrl(next.agentUrl);
     next.agentUrl = `http://127.0.0.1:${agentPort}`;
     const originalSettings = JSON.stringify(next);
     const originalApiKey = apiKey;
+    const originalWebApiKeys = JSON.stringify(webApiKeys);
     const needsInitialSave = !next.configured;
     let modelDropdown: DropdownComponent | null = null;
     let workspaceText: TextComponent | null = null;
@@ -66,7 +81,9 @@ export class AgentSettingTab extends PluginSettingTab {
     let saveButton: ButtonComponent | null = null;
 
     const updateDirtyState = () => {
-      const changed = JSON.stringify(next) !== originalSettings || apiKey !== originalApiKey;
+      const changed = JSON.stringify(next) !== originalSettings
+        || apiKey !== originalApiKey
+        || JSON.stringify(webApiKeys) !== originalWebApiKeys;
       if (actionLabel) actionLabel.textContent = changed ? "配置已修改" : needsInitialSave ? "配置尚未保存" : "配置未修改";
       discardButton?.setDisabled(!changed);
       saveButton?.setDisabled(!needsInitialSave && !changed);
@@ -158,6 +175,56 @@ export class AgentSettingTab extends PluginSettingTab {
           updateDirtyState();
         });
       }));
+
+    const webGroup = new SettingGroup(this.containerEl).setHeading("互联网搜索").addClass("pka-settings-group");
+    webGroup.addSetting((setting) => setting
+      .setName("搜索供应商")
+      .addDropdown((dropdown) => dropdown
+        .addOptions({ tavily: "Tavily", exa: "Exa", talordata: "TalorData" })
+        .setValue(next.webSearchProvider)
+        .onChange((value) => {
+          next.webSearchProvider = value as WebSearchProvider;
+          updateDirtyState();
+        })));
+    webGroup.addSetting((setting) => setting
+      .setName("正文读取供应商")
+      .addDropdown((dropdown) => dropdown
+        .addOptions({ tavily: "Tavily", exa: "Exa" })
+        .setValue(next.webFetchProvider)
+        .onChange((value) => {
+          next.webFetchProvider = value as WebFetchProvider;
+          updateDirtyState();
+        })));
+    addWebKeyTextArea(
+      webGroup,
+      "Tavily API Keys",
+      "每行一个 Key；多个 Key 会自动轮转。",
+      webApiKeys.tavily,
+      (value) => {
+        webApiKeys = { ...webApiKeys, tavily: value };
+        updateDirtyState();
+      }
+    );
+    addWebKeyTextArea(
+      webGroup,
+      "Exa API Keys",
+      "每行一个 Key；多个 Key 会自动轮转。",
+      webApiKeys.exa,
+      (value) => {
+        webApiKeys = { ...webApiKeys, exa: value };
+        updateDirtyState();
+      }
+    );
+    addWebKeyTextArea(
+      webGroup,
+      "TalorData API Keys",
+      "只用于搜索；正文读取请选择 Tavily 或 Exa。",
+      webApiKeys.talordata,
+      (value) => {
+        webApiKeys = { ...webApiKeys, talordata: value };
+        updateDirtyState();
+      }
+    );
 
     const dataGroup = new SettingGroup(this.containerEl).setHeading("工作区与数据").addClass("pka-settings-group");
     dataGroup.addSetting((setting) => setting
@@ -340,7 +407,7 @@ export class AgentSettingTab extends PluginSettingTab {
       })
       .addButton((button) => {
         saveButton = button.setCta().setButtonText("保存并应用").onClick(async () => {
-          if (await this.agentPlugin.applySettings(next, apiKey)) this.display();
+          if (await this.agentPlugin.applySettings(next, apiKey, webApiKeys)) this.display();
         });
       });
     actionLabel = actionBar.querySelector(".setting-item-name");
@@ -397,6 +464,26 @@ export class AgentSettingTab extends PluginSettingTab {
       );
     }
   }
+}
+
+function addWebKeyTextArea(
+  group: SettingGroup,
+  name: string,
+  description: string,
+  value: string,
+  onChange: (value: string) => void
+): void {
+  group.addSetting((setting) => setting
+    .setName(name)
+    .setDesc(description)
+    .addTextArea((text: TextAreaComponent) => {
+      text.inputEl.rows = 3;
+      text.inputEl.spellcheck = false;
+      text
+        .setPlaceholder("key-1\nkey-2")
+        .setValue(value)
+        .onChange(onChange);
+    }));
 }
 
 function renderSkillState(container: HTMLElement, title: string, detail: string): void {

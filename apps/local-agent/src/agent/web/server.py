@@ -36,7 +36,11 @@ from agent.protocol.event import Event, EventKind
 from agent.protocol.mode import ModeKind
 from agent.protocol.op import FileReference, Interrupt, ResolveApproval, UserInput
 from agent.storage import SessionStore, StoredSession
-from agent.web_access.config import configured_web_providers
+from agent.web_access.config import (
+    WebProviderConfig,
+    configured_web_providers,
+    web_provider_config_from_env,
+)
 from agent.web_access.types import FetchProvider, SearchProvider
 
 
@@ -72,9 +76,17 @@ class AgentRuntime:
         *,
         search_provider: SearchProvider | None = None,
         fetch_provider: FetchProvider | None = None,
+        web_provider_config: WebProviderConfig | None = None,
     ) -> None:
         self._settings = settings
         self._client_factory = client_factory
+        self._web_provider_config = web_provider_config or web_provider_config_from_env()
+        if (search_provider is None) != (fetch_provider is None):
+            raise ValueError("web_search 和 web_fetch Provider 必须同时提供")
+        if search_provider is None and fetch_provider is None:
+            search_provider, fetch_provider = configured_web_providers(
+                settings, self._web_provider_config
+            )
         self._search_provider = search_provider
         self._fetch_provider = fetch_provider
         self._store = SessionStore(settings.session_db_path)
@@ -127,6 +139,9 @@ class AgentRuntime:
             "shell_enabled": self._settings.shell_enabled,
             "disabled_skills": sorted(self._settings.disabled_skills),
             "session_db_path": str(self._settings.session_db_path),
+            "web_search_provider": self._web_provider_config.search_provider,
+            "web_fetch_provider": self._web_provider_config.fetch_provider,
+            "web_keys_configured": self._web_provider_config.key_status(),
         }
 
     def workspace_files(self, query: str = "") -> dict[str, Any]:
@@ -217,14 +232,25 @@ class AgentRuntime:
             }
         }
 
-    def update_configuration(self, settings: Settings) -> dict[str, Any]:
+    def update_configuration(
+        self,
+        settings: Settings,
+        web_provider_config: WebProviderConfig | None = None,
+    ) -> dict[str, Any]:
         """在空闲边界替换冻结配置，后续会话使用新的模型、工具和工作区。"""
 
         with self._request_lock:
             if self._turn_events or self._metrics.snapshot()["active_turns"]:
                 raise RuntimeError("运行中的回合结束后才能应用配置")
+            next_web_config = web_provider_config or self._web_provider_config
+            search_provider, fetch_provider = configured_web_providers(
+                settings, next_web_config
+            )
             self._call(self._shutdown())
             self._settings = settings
+            self._web_provider_config = next_web_config
+            self._search_provider = search_provider
+            self._fetch_provider = fetch_provider
             self._store = SessionStore(settings.session_db_path)
             self._changes = ChangeJournal(settings.workspace, settings.session_db_path)
             self._default_session_id = None
@@ -709,12 +735,16 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 if not _is_loopback_client(self.client_address[0]):
                     self._send_json(HTTPStatus.FORBIDDEN, {"error": "配置只允许从本机修改"})
                     return
-                settings = _configuration_body(
-                    self._read_json_body(), self.server.runtime._settings
+                settings, web_provider_config = _configuration_body(
+                    self._read_json_body(),
+                    self.server.runtime._settings,
+                    self.server.runtime._web_provider_config,
                 )
                 self._send_json(
                     HTTPStatus.OK,
-                    self.server.runtime.update_configuration(settings),
+                    self.server.runtime.update_configuration(
+                        settings, web_provider_config
+                    ),
                 )
                 return
             if path == "/api/memory":
@@ -979,7 +1009,11 @@ def _permissions_body(body: dict[str, Any]) -> SandboxMode:
     return sandbox_mode
 
 
-def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
+def _configuration_body(
+    body: dict[str, Any],
+    current: Settings,
+    current_web: WebProviderConfig,
+) -> tuple[Settings, WebProviderConfig]:
     allowed = {
         "api_key",
         "base_url",
@@ -990,6 +1024,9 @@ def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
         "shell_enabled",
         "disabled_skills",
         "session_db_path",
+        "web_search_provider",
+        "web_fetch_provider",
+        "web_api_keys",
         "confirmed",
     }
     if unknown := set(body) - allowed:
@@ -1055,18 +1092,82 @@ def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
     ):
         raise ValueError("沙盒状态目录必须位于工作区之外")
 
-    return replace(
-        current,
-        api_key=api_key.strip() or None if isinstance(api_key, str) else None,
-        base_url=base_url.rstrip("/"),
-        model=model,
-        workspace=workspace,
-        sandbox_mode=sandbox_mode,
-        approval_policy=approval_policy,
-        shell_enabled=shell_enabled,
-        disabled_skills=disabled_skills,
-        session_db_path=session_db_path,
+    return (
+        replace(
+            current,
+            api_key=api_key.strip() or None if isinstance(api_key, str) else None,
+            base_url=base_url.rstrip("/"),
+            model=model,
+            workspace=workspace,
+            sandbox_mode=sandbox_mode,
+            approval_policy=approval_policy,
+            shell_enabled=shell_enabled,
+            disabled_skills=disabled_skills,
+            session_db_path=session_db_path,
+        ),
+        _web_provider_config_body(body, current_web),
     )
+
+
+def _web_provider_config_body(
+    body: dict[str, Any], current: WebProviderConfig
+) -> WebProviderConfig:
+    search_provider = _web_provider_name(
+        body.get("web_search_provider", current.search_provider),
+        allow_talordata=True,
+        field="web_search_provider",
+    )
+    fetch_provider = _web_provider_name(
+        body.get("web_fetch_provider", current.fetch_provider),
+        allow_talordata=False,
+        field="web_fetch_provider",
+    )
+    raw_keys = body.get("web_api_keys")
+    if raw_keys is None:
+        return WebProviderConfig(
+            search_provider=search_provider,
+            fetch_provider=fetch_provider,
+            tavily_api_keys=current.tavily_api_keys,
+            exa_api_keys=current.exa_api_keys,
+            talordata_api_keys=current.talordata_api_keys,
+        )
+    if not isinstance(raw_keys, dict):
+        raise ValueError("web_api_keys 必须是对象")
+    allowed = {"tavily", "exa", "talordata"}
+    if unknown := set(raw_keys) - allowed:
+        raise ValueError(f"未知 Web Key 字段: {', '.join(sorted(unknown))}")
+    return WebProviderConfig(
+        search_provider=search_provider,
+        fetch_provider=fetch_provider,
+        tavily_api_keys=_web_key_list(
+            raw_keys.get("tavily", current.tavily_api_keys), "tavily"
+        ),
+        exa_api_keys=_web_key_list(raw_keys.get("exa", current.exa_api_keys), "exa"),
+        talordata_api_keys=_web_key_list(
+            raw_keys.get("talordata", current.talordata_api_keys), "talordata"
+        ),
+    )
+
+
+def _web_provider_name(
+    value: object, *, allow_talordata: bool, field: str
+) -> str:
+    allowed = {"tavily", "exa", "talordata"} if allow_talordata else {"tavily", "exa"}
+    if not isinstance(value, str) or value.strip().casefold() not in allowed:
+        suffix = "tavily、exa 或 talordata" if allow_talordata else "tavily 或 exa"
+        raise ValueError(f"{field} 必须是 {suffix}")
+    return value.strip().casefold()
+
+
+def _web_key_list(value: object, provider: str) -> tuple[str, ...]:
+    if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
+        return value
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) for item in value
+    ):
+        raise ValueError(f"{provider} API Keys 必须是字符串数组")
+    keys = (item.strip() for item in value)
+    return tuple(dict.fromkeys(key for key in keys if key))
 
 
 def _required_config_text(body: dict[str, Any], key: str, fallback: str) -> str:
@@ -1146,12 +1247,7 @@ def main() -> None:
 
     settings = Settings.from_env()
     configure_logging(settings.log_level, settings.log_format)
-    search_provider, fetch_provider = configured_web_providers(settings)
-    runtime = AgentRuntime(
-        settings,
-        search_provider=search_provider,
-        fetch_provider=fetch_provider,
-    )
+    runtime = AgentRuntime(settings)
     server = AgentHTTPServer((args.host, args.port), runtime)
     print(f"Agent 页面已启动：http://{args.host}:{args.port}")
     try:

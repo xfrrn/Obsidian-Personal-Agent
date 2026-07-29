@@ -113,7 +113,7 @@ type ApprovalRequest = {
   error?: string
 }
 
-type ToolTraceStep = { id: string; kind: "tool"; name: string; label: string; state: ToolState }
+type ToolTraceStep = { id: string; kind: "tool"; name: string; label: string; state: ToolState; detail?: string }
 type TextTraceStep = { id: string; kind: "thought" | "note"; text: string }
 type TraceStep = TextTraceStep | ToolTraceStep
 type TraceGroup = TextTraceStep | { id: string; kind: "tools"; tools: ToolTraceStep[] }
@@ -285,6 +285,99 @@ function groupTraceSteps(steps: TraceStep[]) {
   return groups
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function compact(value: string, max = 120) {
+  const text = value.replace(/\s+/g, " ").trim()
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text
+}
+
+function parseJsonObject(text: string) {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function sourceIds(value: unknown) {
+  return Array.isArray(value) ? value.map(stringValue).filter(Boolean) : []
+}
+
+function webSourceSummary(value: unknown) {
+  if (!Array.isArray(value)) return ""
+  const sources = value
+    .filter(isRecord)
+    .map((source) => {
+      const id = stringValue(source.source_id)
+      const domain = stringValue(source.domain)
+      const title = stringValue(source.title)
+      return compact([id, domain || title].filter(Boolean).join(" "), 60)
+    })
+    .filter(Boolean)
+  if (!sources.length) return ""
+  const shown = sources.slice(0, 3).join(" · ")
+  return sources.length > 3 ? `${shown} · +${sources.length - 3}` : shown
+}
+
+function toolCallView(name: string, args: unknown) {
+  if (isRecord(args)) {
+    if (name === "web_search") {
+      const query = stringValue(args.query)
+      if (query) return { label: `搜索互联网：${compact(query)}` }
+    }
+    if (name === "web_fetch") {
+      const ids = sourceIds(args.source_ids)
+      const query = stringValue(args.query)
+      return {
+        label: `读取网页：${ids.length ? ids.join(", ") : "来源正文"}`,
+        detail: query ? `阅读意图：${compact(query)}` : undefined,
+      }
+    }
+    const command = stringValue(args.command)
+    if (command) return { label: command }
+  }
+  return { label: name }
+}
+
+function webToolResultView(tool: ToolTraceStep, text: string) {
+  if (tool.name !== "web_search" && tool.name !== "web_fetch") return {}
+  const result = parseJsonObject(text)
+  if (!result) return {}
+  if (result.ok === false && isRecord(result.error)) {
+    return { detail: compact(stringValue(result.error.message) || "工具返回错误") }
+  }
+  const sources = Array.isArray(result.sources) ? result.sources : []
+  const failures = Array.isArray(result.failures) ? result.failures : []
+  const query = stringValue(result.query)
+  if (tool.name === "web_search") {
+    return {
+      label: `搜索互联网：${compact(query || tool.label.replace(/^搜索互联网：/, ""))} · ${sources.length} 条结果`,
+      detail: webSourceSummary(sources) || "没有可用来源",
+    }
+  }
+  return {
+    label: `读取网页：${sources.length} 个来源${failures.length ? `，${failures.length} 个失败` : ""}`,
+    detail: webSourceSummary(sources) || (failures.length ? "来源读取失败" : tool.detail),
+  }
+}
+
+function toolGroupSummary(tools: ToolTraceStep[], finished: boolean) {
+  if (tools.every((tool) => tool.name === "web_search")) return finished ? "搜索了互联网" : "正在搜索互联网"
+  if (tools.every((tool) => tool.name === "web_fetch")) return finished ? "读取了网页" : "正在读取网页"
+  if (tools.every((tool) => tool.name === "apply_patch")) return tools.length > 1 ? "编辑了多个文件" : "编辑了文件"
+  if (tools.every((tool) => ["exec_command", "write_stdin"].includes(tool.name))) return tools.length > 1 ? "运行了多个命令" : "运行了命令"
+  if (tools.some((tool) => tool.name === "web_search" || tool.name === "web_fetch")) return finished ? "检索了网页资料" : "正在检索网页资料"
+  return tools.length > 1 ? "运行了多个工具" : `运行了 ${tools[0].name}`
+}
+
 function trailingFileMention(text: string) {
   return /(?:^|\s)@([^\s@]*)$/.exec(text)?.[1] ?? null
 }
@@ -326,11 +419,7 @@ function ToolGroup({ tools }: { tools: ToolTraceStep[] }) {
   const failed = tools.some((tool) => tool.state === "error")
   const interrupted = tools.some((tool) => tool.state === "interrupted")
   const [expanded, setExpanded] = useState(!finished)
-  const summary = tools.every((tool) => tool.name === "apply_patch")
-    ? tools.length > 1 ? "编辑了多个文件" : "编辑了文件"
-    : tools.every((tool) => ["exec_command", "write_stdin"].includes(tool.name))
-      ? tools.length > 1 ? "运行了多个命令" : "运行了命令"
-      : tools.length > 1 ? "运行了多个工具" : `运行了 ${tools[0].name}`
+  const summary = toolGroupSummary(tools, finished)
 
   return (
     <details className="group/tool" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
@@ -353,7 +442,12 @@ function ToolGroup({ tools }: { tools: ToolTraceStep[] }) {
                 ? <CheckCircle2 className="size-4 shrink-0 text-success" />
                 : <CircleAlert className={`size-4 shrink-0 ${tool.state === "error" ? "text-red-600" : "text-muted-foreground"}`} />}
             <span>{tool.state === "running" ? "正在运行" : tool.state === "success" ? "已完成" : tool.state === "interrupted" ? "已中断" : "运行失败"}</span>
-            <code className="truncate font-mono text-[13px] leading-[1.3] text-muted-foreground">{tool.label}</code>
+            <span className="min-w-0 flex-1">
+              {tool.name === "web_search" || tool.name === "web_fetch"
+                ? <span className="block truncate text-foreground">{tool.label}</span>
+                : <code className="block truncate font-mono text-[13px] leading-[1.3] text-muted-foreground">{tool.label}</code>}
+              {tool.detail && <span className="block truncate text-[12px] leading-5 text-muted-foreground">{tool.detail}</span>}
+            </span>
           </div>
         ))}
       </div>
@@ -1161,10 +1255,10 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
         if (event.kind === "tool_call") {
           roundNoteId = null
           roundReasoningId = null
-          const command = (event.data.arguments as { command?: unknown } | undefined)?.command
+          const view = toolCallView(event.text, event.data.arguments)
           updateTrace((trace) => ({
             ...trace,
-            steps: [...trace.steps, { id: event.data.call_id || id("trace-tool"), kind: "tool", name: event.text, label: typeof command === "string" ? command : event.text, state: "running" }],
+            steps: [...trace.steps, { id: event.data.call_id || id("trace-tool"), kind: "tool", name: event.text, state: "running", ...view }],
           }))
         }
         if (event.kind === "approval_requested" && event.data.call_id && event.data.submission_id) {
@@ -1189,7 +1283,11 @@ export default function App({ agentUrl, hostState, onSettingsChange }: AgentAppP
               : [...trace.steps].reverse().find((step) => step.kind === "tool" && step.state === "running" && (!event.data.name || step.name === event.data.name))
             return pending ? {
               ...trace,
-              steps: trace.steps.map((step) => step.id === pending.id && step.kind === "tool" ? { ...step, state: event.data.status === "interrupted" ? "interrupted" : event.data.is_error ? "error" : "success" } : step),
+              steps: trace.steps.map((step) => step.id === pending.id && step.kind === "tool" ? {
+                ...step,
+                ...webToolResultView(step, event.text),
+                state: event.data.status === "interrupted" ? "interrupted" : event.data.is_error ? "error" : "success",
+              } : step),
             } : trace
           })
         }

@@ -55,13 +55,16 @@ test("groups plugin settings and keeps one sticky save bar", () => {
   const settings = readFileSync("apps/obsidian-plugin/src/settings.ts", "utf8");
   const main = readFileSync("apps/obsidian-plugin/src/main.ts", "utf8");
   const styles = readFileSync("apps/obsidian-plugin/styles.css", "utf8");
-  for (const heading of ["Agent 服务", "模型配置", "工作区与数据", "执行与安全", "外观", "技能（Skills）"]) {
+  for (const heading of ["Agent 服务", "模型配置", "互联网搜索", "工作区与数据", "执行与安全", "外观", "技能（Skills）"]) {
     assert.ok(settings.includes(`setHeading("${heading}")`));
   }
   assert.match(settings, /配置已修改/);
   assert.match(settings, /\.setValue\(!disabled\.has\(skill\.name\)\)/);
   assert.match(settings, /renderSkillState\(container/);
   assert.match(settings, /pka-memory-editor/);
+  assert.match(settings, /Tavily API Keys/);
+  assert.match(main, /WEB_API_KEY_SECRET_IDS/);
+  assert.match(main, /web_api_keys: \{/);
   assert.match(main, /disabled_skills: this\.settings\.disabledSkills/);
   assert.match(main, /method: "POST"[\s\S]*JSON\.stringify\(\{ memory \}\)/);
   assert.match(styles, /\.pka-settings-actions\s*{[^}]*position: sticky;/s);
