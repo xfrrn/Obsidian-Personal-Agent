@@ -29,6 +29,7 @@ _RECORD_FIELDS = (
     "history_message_count",
     "delta_chars",
     "tool_status",
+    "skill_name",
     "http_method",
     "http_path",
 )

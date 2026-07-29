@@ -14,6 +14,7 @@ from agent.config.loader import (
 )
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend, SandboxNetwork
+from agent.skills.loader import is_valid_skill_name
 from agent.utils.logging import normalize_log_format, normalize_log_level
 
 
@@ -28,6 +29,7 @@ class Settings:
     workspace: Path
     shell_enabled: bool
     request_timeout_seconds: float
+    disabled_skills: frozenset[str] = field(default_factory=frozenset)
     sandbox_mode: SandboxMode = SandboxMode.WORKSPACE_WRITE
     approval_policy: ApprovalPolicy = ApprovalPolicy.ON_REQUEST
     sandbox_backend: SandboxBackend = SandboxBackend.AUTO
@@ -82,6 +84,7 @@ class Settings:
             raise ValueError(f"AGENT_WORKSPACE 不是目录: {workspace}")
 
         shell_enabled = env_flag("AGENT_ENABLE_SHELL")
+        disabled_skills = _parse_disabled_skills(env_value("AGENT_DISABLED_SKILLS"))
         sandbox_mode = SandboxMode.parse(
             env_value("AGENT_SANDBOX_MODE", SandboxMode.WORKSPACE_WRITE.value)
         )
@@ -148,6 +151,7 @@ class Settings:
             # Shell 能执行任意命令，默认关闭。只有本地使用者显式同意才会注册该工具。
             shell_enabled=shell_enabled,
             request_timeout_seconds=timeout,
+            disabled_skills=disabled_skills,
             sandbox_mode=sandbox_mode,
             approval_policy=approval_policy,
             sandbox_backend=sandbox_backend,
@@ -182,6 +186,16 @@ def _default_session_db(workspace: Path) -> Path:
         return Path.home() / ".codex-agent" / "sessions.db"
     except RuntimeError:
         return workspace / ".agent" / "sessions.db"
+
+
+def _parse_disabled_skills(value: str) -> frozenset[str]:
+    names = frozenset(name.strip() for name in value.split(",") if name.strip())
+    invalid = sorted(name for name in names if not is_valid_skill_name(name))
+    if invalid:
+        raise ValueError(
+            "AGENT_DISABLED_SKILLS 包含无效名称: " + ", ".join(invalid)
+        )
+    return names
 
 
 def _default_memory_dir(workspace: Path) -> Path:

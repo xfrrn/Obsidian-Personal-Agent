@@ -66,6 +66,13 @@ class ToolResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ImplicitSkillInvocation:
+    submission_id: int
+    call_id: str
+    skill_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class PlanUpdated:
     submission_id: int
     update: PlanUpdate
@@ -99,6 +106,7 @@ TurnEvent: TypeAlias = (
     | ToolRequested
     | ToolApprovalRequested
     | ToolResult
+    | ImplicitSkillInvocation
     | PlanUpdated
     | TurnFinished
     | TurnInterrupted
@@ -113,6 +121,7 @@ RELIABLE_EVENT_TYPES = (
     ToolRequested,
     ToolApprovalRequested,
     ToolResult,
+    ImplicitSkillInvocation,
     PlanUpdated,
     TurnFinished,
     TurnInterrupted,

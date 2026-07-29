@@ -51,6 +51,7 @@ class SettingsEnvFileTest(unittest.TestCase):
         self.assertIs(settings.approval_policy, ApprovalPolicy.ON_REQUEST)
         self.assertIs(settings.sandbox_backend, SandboxBackend.AUTO)
         self.assertIs(settings.sandbox_network, SandboxNetwork.HOST)
+        self.assertEqual(settings.disabled_skills, frozenset())
         self.assertTrue(settings.generate_memories)
         self.assertTrue(settings.use_memories)
         self.assertEqual(settings.memory_idle_hours, 12)
@@ -61,6 +62,25 @@ class SettingsEnvFileTest(unittest.TestCase):
             os.environ, {"AGENT_SANDBOX_MODE": "best-effort"}, clear=True
         ):
             with self.assertRaisesRegex(ValueError, "AGENT_SANDBOX_MODE"):
+                Settings.from_env()
+
+    def test_individual_skills_can_be_disabled_from_environment(self) -> None:
+        with patch("agent.config.settings.load_env_file"), patch.dict(
+            os.environ,
+            {"AGENT_DISABLED_SKILLS": "code-review, skill-installer,code-review"},
+            clear=True,
+        ):
+            settings = Settings.from_env()
+
+        self.assertEqual(
+            settings.disabled_skills, frozenset({"code-review", "skill-installer"})
+        )
+
+    def test_disabled_skill_names_are_validated(self) -> None:
+        with patch("agent.config.settings.load_env_file"), patch.dict(
+            os.environ, {"AGENT_DISABLED_SKILLS": "../outside"}, clear=True
+        ):
+            with self.assertRaisesRegex(ValueError, "AGENT_DISABLED_SKILLS"):
                 Settings.from_env()
 
     def test_rejects_unknown_sandbox_backend(self) -> None:

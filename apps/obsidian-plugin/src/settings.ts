@@ -17,6 +17,7 @@ export interface AgentSettings {
   sandboxMode: SandboxMode;
   approvalPolicy: ApprovalPolicy;
   shellEnabled: boolean;
+  disabledSkills: string[];
   sessionDbPath: string;
   themeMode: ThemeMode;
   configured: boolean;
@@ -25,6 +26,7 @@ export interface AgentSettings {
 export interface AgentSkill {
   name: string;
   description: string;
+  enabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AgentSettings = {
@@ -35,6 +37,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   sandboxMode: "workspace-write",
   approvalPolicy: "on-request",
   shellEnabled: false,
+  disabledSkills: [],
   sessionDbPath: "",
   themeMode: "system",
   configured: false
@@ -282,14 +285,26 @@ export class AgentSettingTab extends PluginSettingTab {
       try {
         const skill = await this.agentPlugin.importSkill(files);
         new Notice(`已导入 Skill：${skill.name}`);
-        await this.renderSkills(skillList);
+        await renderSkills();
       } catch (error) {
         new Notice(error instanceof Error ? error.message : "无法导入 Skill。");
       } finally {
         importSetting.setDisabled(false);
       }
     });
-    void this.renderSkills(skillList);
+    let skillsLoaded = false;
+    const renderSkills = async () => {
+      await this.renderSkills(
+        skillList,
+        skillsLoaded ? next.disabledSkills : null,
+        (names) => {
+          next.disabledSkills = names;
+          updateDirtyState();
+        }
+      );
+      skillsLoaded = true;
+    };
+    void renderSkills();
 
     const actionBar = this.containerEl.createDiv({ cls: "pka-settings-actions" });
     new Setting(actionBar)
@@ -306,7 +321,11 @@ export class AgentSettingTab extends PluginSettingTab {
     updateDirtyState();
   }
 
-  private async renderSkills(container: HTMLElement): Promise<void> {
+  private async renderSkills(
+    container: HTMLElement,
+    currentDisabled: readonly string[] | null,
+    onDisabledChange: (names: string[]) => void
+  ): Promise<void> {
     container.empty();
     new Setting(container).setName("正在读取 Skills…");
     try {
@@ -316,7 +335,22 @@ export class AgentSettingTab extends PluginSettingTab {
         new Setting(container).setName("尚未导入 Skill").setDesc("导入后会保存在 sessions.db 同目录的 skills/ 文件夹。");
         return;
       }
-      for (const skill of skills) new Setting(container).setName(skill.name).setDesc(skill.description);
+      const disabled = new Set(
+        currentDisabled ?? skills.filter((skill) => !skill.enabled).map((skill) => skill.name)
+      );
+      onDisabledChange(Array.from(disabled).sort());
+      for (const skill of skills) {
+        new Setting(container)
+          .setName(skill.name)
+          .setDesc(skill.description)
+          .addToggle((toggle) => toggle
+            .setValue(!disabled.has(skill.name))
+            .onChange((enabled) => {
+              if (enabled) disabled.delete(skill.name);
+              else disabled.add(skill.name);
+              onDisabledChange(Array.from(disabled).sort());
+            }));
+      }
     } catch (error) {
       container.empty();
       new Setting(container)

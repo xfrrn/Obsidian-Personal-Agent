@@ -28,7 +28,7 @@ from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInter
 from agent.core.turn.public_events import PublicEventAdapter
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
-from agent.skills.loader import discover_skills
+from agent.skills.loader import discover_skills, is_valid_skill_name
 from agent.utils.logging import configure_logging
 from agent.web.metrics import AgentMetrics
 from agent.protocol.event import Event, EventKind
@@ -99,6 +99,7 @@ class AgentRuntime:
             "sandbox_mode": self._settings.sandbox_mode.value,
             "approval_policy": self._settings.approval_policy.value,
             "shell_enabled": self._settings.shell_enabled,
+            "disabled_skills": sorted(self._settings.disabled_skills),
             "sandbox_backend": self._settings.sandbox_backend.value,
             "sandbox_network": self._settings.sandbox_network.value,
         }
@@ -114,6 +115,7 @@ class AgentRuntime:
             "sandbox_mode": self._settings.sandbox_mode.value,
             "approval_policy": self._settings.approval_policy.value,
             "shell_enabled": self._settings.shell_enabled,
+            "disabled_skills": sorted(self._settings.disabled_skills),
             "session_db_path": str(self._settings.session_db_path),
         }
 
@@ -146,7 +148,11 @@ class AgentRuntime:
 
         return {
             "skills": [
-                {"name": skill.name, "description": skill.description}
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "enabled": skill.name not in self._settings.disabled_skills,
+                }
                 for skill in discover_skills(self._settings.skills_dir)
             ]
         }
@@ -190,7 +196,13 @@ class AgentRuntime:
                     skill.path.parent.replace(destination)
             except OSError as exc:
                 raise ValueError(f"无法写入 Skill: {exc}") from exc
-        return {"skill": {"name": skill.name, "description": skill.description}}
+        return {
+            "skill": {
+                "name": skill.name,
+                "description": skill.description,
+                "enabled": skill.name not in self._settings.disabled_skills,
+            }
+        }
 
     def update_configuration(self, settings: Settings) -> dict[str, Any]:
         """在空闲边界替换冻结配置，后续会话使用新的模型、工具和工作区。"""
@@ -949,6 +961,7 @@ def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
         "sandbox_mode",
         "approval_policy",
         "shell_enabled",
+        "disabled_skills",
         "session_db_path",
         "confirmed",
     }
@@ -987,6 +1000,15 @@ def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
     shell_enabled = body.get("shell_enabled", current.shell_enabled)
     if not isinstance(shell_enabled, bool):
         raise ValueError("shell_enabled 必须是布尔值")
+    raw_disabled_skills = body.get(
+        "disabled_skills", sorted(current.disabled_skills)
+    )
+    if not isinstance(raw_disabled_skills, list) or any(
+        not isinstance(name, str) or not is_valid_skill_name(name)
+        for name in raw_disabled_skills
+    ):
+        raise ValueError("disabled_skills 必须是有效 Skill 名称数组")
+    disabled_skills = frozenset(raw_disabled_skills)
 
     raw_session_db = body.get("session_db_path")
     if raw_session_db is None or raw_session_db == "":
@@ -1015,6 +1037,7 @@ def _configuration_body(body: dict[str, Any], current: Settings) -> Settings:
         sandbox_mode=sandbox_mode,
         approval_policy=approval_policy,
         shell_enabled=shell_enabled,
+        disabled_skills=disabled_skills,
         session_db_path=session_db_path,
     )
 

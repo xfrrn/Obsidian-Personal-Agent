@@ -109,7 +109,9 @@ export default class CodeXAgentPlugin extends Plugin {
     if (response.status < 200 || response.status >= 300) {
       throw new Error(typeof payload?.error === "string" ? payload.error : `读取 Skills 失败：HTTP ${response.status}`);
     }
-    return Array.isArray(payload.skills) ? payload.skills : [];
+    return Array.isArray(payload.skills)
+      ? payload.skills.map((skill) => ({ ...skill, enabled: skill.enabled !== false }))
+      : [];
   }
 
   async getLongTermMemory(): Promise<string> {
@@ -177,6 +179,7 @@ export default class CodeXAgentPlugin extends Plugin {
         apiBaseUrl: normalizeApiBaseUrl(value.apiBaseUrl),
         model,
         workspace,
+        disabledSkills: normalizeSkillNames(value.disabledSkills),
         sessionDbPath: value.sessionDbPath.trim(),
         configured: true
       };
@@ -210,6 +213,7 @@ export default class CodeXAgentPlugin extends Plugin {
         sandbox_mode: this.settings.sandboxMode,
         approval_policy: this.settings.approvalPolicy,
         shell_enabled: this.settings.shellEnabled,
+        disabled_skills: this.settings.disabledSkills,
         session_db_path: this.settings.sessionDbPath,
         confirmed: this.settings.sandboxMode === "danger-full-access"
       } : { workspace: this.settings.workspace };
@@ -263,6 +267,7 @@ export default class CodeXAgentPlugin extends Plugin {
       sandboxMode: isSandboxMode(saved?.sandboxMode) ? saved.sandboxMode : DEFAULT_SETTINGS.sandboxMode,
       approvalPolicy: isApprovalPolicy(saved?.approvalPolicy) ? saved.approvalPolicy : DEFAULT_SETTINGS.approvalPolicy,
       shellEnabled: typeof saved?.shellEnabled === "boolean" ? saved.shellEnabled : DEFAULT_SETTINGS.shellEnabled,
+      disabledSkills: normalizeSkillNames(saved?.disabledSkills),
       sessionDbPath: typeof saved?.sessionDbPath === "string" ? saved.sessionDbPath : DEFAULT_SETTINGS.sessionDbPath,
       themeMode: isThemeMode(saved?.themeMode) ? saved.themeMode : DEFAULT_SETTINGS.themeMode,
       configured
@@ -346,6 +351,13 @@ function isSandboxMode(value: unknown): value is SandboxMode {
 
 function isApprovalPolicy(value: unknown): value is ApprovalPolicy {
   return value === "never" || value === "on-request";
+}
+
+function normalizeSkillNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.filter(
+    (name): name is string => typeof name === "string" && /^[a-z0-9][a-z0-9-]*$/.test(name)
+  ))).sort();
 }
 
 function modelListError(error: unknown, fallback: string): string {

@@ -432,6 +432,7 @@ class WebRuntimeTest(unittest.TestCase):
             settings = replace(
                 _settings(workspace),
                 session_db_path=root / "plugin-data" / "sessions.db",
+                disabled_skills=frozenset({"code-review"}),
             )
             runtime = AgentRuntime(settings, RecordingClient)
             server = AgentHTTPServer(("127.0.0.1", 0), runtime)
@@ -499,7 +500,10 @@ class WebRuntimeTest(unittest.TestCase):
                 thread.join()
                 runtime.close()
 
-        self.assertEqual(imported["skill"], {"name": "code-review", "description": "审查代码"})
+        self.assertEqual(
+            imported["skill"],
+            {"name": "code-review", "description": "审查代码", "enabled": False},
+        )
         self.assertEqual(listed["skills"], [imported["skill"]])
         self.assertEqual(invalid.exception.code, HTTPStatus.BAD_REQUEST)
         self.assertEqual(duplicate.exception.code, HTTPStatus.CONFLICT)
@@ -761,6 +765,7 @@ class WebRuntimeTest(unittest.TestCase):
                 runtime.close()
 
         self.assertEqual(initial["sandbox_mode"], "workspace-write")
+        self.assertEqual(initial["disabled_skills"], [])
         self.assertEqual(updated["sandbox_mode"], "read-only")
         self.assertEqual(rejected.exception.code, 400)
         self.assertTrue(_is_loopback_client("127.0.0.1"))
@@ -790,6 +795,7 @@ class WebRuntimeTest(unittest.TestCase):
                         "sandbox_mode": "read-only",
                         "approval_policy": "never",
                         "shell_enabled": False,
+                        "disabled_skills": ["code-review"],
                         "session_db_path": str(session_db),
                         "confirmed": False,
                     },
@@ -798,6 +804,11 @@ class WebRuntimeTest(unittest.TestCase):
                     _post_json(
                         f"{address}/api/config",
                         {"sandbox_mode": "danger-full-access", "confirmed": False},
+                    )
+                with self.assertRaises(HTTPError) as invalid_skills:
+                    _post_json(
+                        f"{address}/api/config",
+                        {"disabled_skills": ["../outside"]},
                     )
                 created = _post_json(f"{address}/api/sessions", {})
                 db_created = session_db.is_file()
@@ -813,7 +824,9 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(updated["model"], "configured-model")
         self.assertEqual(updated["base_url"], "https://example.com/v1")
         self.assertEqual(updated["sandbox_mode"], "read-only")
+        self.assertEqual(updated["disabled_skills"], ["code-review"])
         self.assertEqual(rejected.exception.code, 400)
+        self.assertEqual(invalid_skills.exception.code, 400)
         self.assertEqual(created["workspace"], str(workspace))
         self.assertTrue(db_created)
 

@@ -12,7 +12,14 @@ from unittest.mock import patch
 
 from agent.core.turn.audit import audit_events
 from agent.core.turn.bus import TurnEventBus
-from agent.core.turn.events import AssistantDelta, ToolRequested, ToolResult, ToolResultStatus, TurnStarted
+from agent.core.turn.events import (
+    AssistantDelta,
+    ImplicitSkillInvocation,
+    ToolRequested,
+    ToolResult,
+    ToolResultStatus,
+    TurnStarted,
+)
 from agent.tools.invocation import ToolInvocation
 from agent.utils.logging import configure_logging, log_context
 
@@ -102,6 +109,7 @@ class AuditLoggingTest(unittest.IsolatedAsyncioTestCase):
                 7, "call-1", "exec_command", "secret-output", ToolResultStatus.SUCCESS
             )
         )
+        bus.emit(ImplicitSkillInvocation(7, "call-1", "safe-skill-name"))
         bus.close()
         await asyncio.wait_for(task, timeout=1)
 
@@ -114,10 +122,12 @@ class AuditLoggingTest(unittest.IsolatedAsyncioTestCase):
                 "audit.assistant_delta",
                 "audit.tool_requested",
                 "audit.tool_result",
+                "audit.skill_invocation",
             ],
         )
         self.assertEqual(entries[1]["delta_chars"], len("secret-model-text"))
-        self.assertEqual(entries[-1]["tool_status"], "success")
+        self.assertEqual(entries[-2]["tool_status"], "success")
+        self.assertEqual(entries[-1]["skill_name"], "safe-skill-name")
         self.assertNotIn("secret", lines)
 
 

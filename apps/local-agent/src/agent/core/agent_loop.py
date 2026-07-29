@@ -21,6 +21,7 @@ from agent.core.turn.context import TurnContext
 from agent.core.turn.events import (
     AssistantDelta,
     AssistantResponseReceived,
+    ImplicitSkillInvocation,
     PlanUpdated,
     ToolRequested,
     ToolResult,
@@ -35,6 +36,8 @@ from agent.utils.logging import log_context
 from agent.llm.types import AssistantResponse, ClientError, ContextLimitError, ToolCall
 from agent.protocol.mode import ModeKind
 from agent.skills.injection import build_skill_injections
+from agent.skills.invocation import detect_implicit_skill_invocations
+from agent.skills.loader import Skill
 from agent.tools.invocation import ToolInvocation
 from agent.tools.types import ToolExecution
 
@@ -162,7 +165,11 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
 
             if response.tool_calls:
                 await _run_tool_calls(
-                    session, context.submission_id, response.tool_calls, context.mode
+                    session,
+                    context.submission_id,
+                    response.tool_calls,
+                    context.mode,
+                    context.skill_snapshot,
                 )
     except asyncio.CancelledError:
         _LOGGER.info("turn.cancelled", extra={"duration_ms": _elapsed_ms(started_at)})
@@ -244,6 +251,7 @@ async def _run_tool_calls(
     submission_id: int,
     calls: tuple[ToolCall, ...],
     mode: ModeKind = ModeKind.DEFAULT,
+    skills: tuple[Skill, ...] = (),
 ) -> None:
     """并发提交同一响应的调用；运行时按 Handler 的声明隔离有副作用的工具。"""
 
@@ -291,6 +299,17 @@ async def _run_tool_calls(
                 status,
             )
         )
+        if status is ToolResultStatus.SUCCESS and invocation.name == "exec_command":
+            command = invocation.arguments.get("command")
+            if isinstance(command, str):
+                for skill in detect_implicit_skill_invocations(
+                    command, skills, session.config.workspace
+                ):
+                    session.emit(
+                        ImplicitSkillInvocation(
+                            submission_id, invocation.call_id, skill.name
+                        )
+                    )
         if status is ToolResultStatus.SUCCESS and execution.plan_update is not None:
             session.emit(PlanUpdated(submission_id, execution.plan_update))
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from agent.core.turn.events import (
     AssistantResponseReceived,
+    ImplicitSkillInvocation,
     RuntimeShutdown,
     ToolRequested,
     ToolResult,
@@ -30,6 +31,8 @@ class AgentMetrics:
         self._turn_started_at: dict[tuple[str | None, int], float] = {}
         self._recent: deque[dict[str, Any]] = deque(maxlen=20)
         self._skill_names: Counter[str] = Counter()
+        self._explicit_skill_names: Counter[str] = Counter()
+        self._implicit_skill_names: Counter[str] = Counter()
         self._turns = Counter[str]()
         self._tools = Counter[str]()
         self._tool_names: dict[str, Counter[str]] = defaultdict(Counter)
@@ -52,6 +55,7 @@ class AgentMetrics:
                     self._turn_started_at[(session_id, submission_id)] = monotonic()
                     for skill in skills:
                         self._skill_names[skill] += 1
+                        self._explicit_skill_names[skill] += 1
                     self._add_recent("turn_started", f"回合 #{submission_id} 已开始")
                 case AssistantResponseReceived(response=response, streamed=streamed):
                     self._llm_requests += 1
@@ -74,6 +78,10 @@ class AgentMetrics:
                         ToolResultStatus.INTERRUPTED: "工具已中断",
                     }[status]
                     self._add_recent(status.value, f"{label}：{name}")
+                case ImplicitSkillInvocation(skill_name=skill_name):
+                    self._skill_names[skill_name] += 1
+                    self._implicit_skill_names[skill_name] += 1
+                    self._add_recent("skill_invocation", f"运行 Skill 脚本：{skill_name}")
                 case TurnFinished(submission_id=submission_id):
                     self._turns["finished"] += 1
                     self._finish_turn(session_id, submission_id, "turn_finished", f"回合 #{submission_id} 已完成")
@@ -128,6 +136,8 @@ class AgentMetrics:
                 },
                 "skills": {
                     "invocations": sum(self._skill_names.values()),
+                    "explicit_invocations": sum(self._explicit_skill_names.values()),
+                    "implicit_invocations": sum(self._implicit_skill_names.values()),
                     "by_name": dict(self._skill_names.most_common()),
                 },
                 "recent": list(self._recent),

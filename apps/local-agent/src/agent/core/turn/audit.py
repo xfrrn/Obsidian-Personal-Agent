@@ -9,6 +9,7 @@ from agent.core.turn.bus import Mailbox, MailboxClosed
 from agent.core.turn.events import (
     AssistantDelta,
     AssistantResponseReceived,
+    ImplicitSkillInvocation,
     PlanUpdated,
     RuntimeShutdown,
     ToolApprovalRequested,
@@ -82,6 +83,16 @@ def _record_for(event: TurnEvent) -> tuple[str, dict[str, str | int | bool]]:
                 "tool_call_id": call_id,
                 "tool_status": status.value,
                 "is_error": status.value != "success",
+            }
+        case ImplicitSkillInvocation(
+            submission_id=submission_id,
+            call_id=call_id,
+            skill_name=skill_name,
+        ):
+            return "audit.skill_invocation", {
+                "submission_id": submission_id,
+                "tool_call_id": call_id,
+                "skill_name": skill_name,
             }
         case PlanUpdated(submission_id=submission_id, update=update):
             return "audit.plan_updated", {

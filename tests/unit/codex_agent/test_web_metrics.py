@@ -6,6 +6,7 @@ import unittest
 
 from agent.core.turn.events import (
     AssistantResponseReceived,
+    ImplicitSkillInvocation,
     ToolRequested,
     ToolResult,
     ToolResultStatus,
@@ -32,6 +33,7 @@ class AgentMetricsTest(unittest.TestCase):
         metrics.record(ToolResult(1, "call-1", "exec_command", "ok", ToolResultStatus.SUCCESS))
         metrics.record(ToolRequested(1, ToolInvocation("call-2", "apply_patch", {})))
         metrics.record(ToolResult(1, "call-2", "apply_patch", "failed", ToolResultStatus.ERROR))
+        metrics.record(ImplicitSkillInvocation(1, "call-1", "code-review"))
         metrics.record(TurnFinished(1))
 
         snapshot = metrics.snapshot()
@@ -43,6 +45,8 @@ class AgentMetricsTest(unittest.TestCase):
             snapshot["tools"]["by_name"]["exec_command"]["success_rate"], 100.0
         )
         self.assertEqual(snapshot["tools"]["by_name"]["apply_patch"]["success_rate"], 0.0)
-        self.assertEqual(snapshot["skills"]["by_name"], {"code-review": 1})
+        self.assertEqual(snapshot["skills"]["explicit_invocations"], 1)
+        self.assertEqual(snapshot["skills"]["implicit_invocations"], 1)
+        self.assertEqual(snapshot["skills"]["by_name"], {"code-review": 2})
         self.assertEqual(snapshot["active_turns"], 0)
         self.assertNotIn("不要记录我", str(snapshot))

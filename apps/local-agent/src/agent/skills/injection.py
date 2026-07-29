@@ -24,11 +24,15 @@ def collect_explicit_mentions(text: str, skills: tuple[Skill, ...]) -> tuple[Ski
 
 
 def build_skill_injections(skills: tuple[Skill, ...]) -> tuple[str, ...]:
-    """读取被显式选中的正文并标注来源，便于模型区分不同工作流。"""
+    """读取被显式选中的正文，并暴露其文件系统目录供工具解析相对路径。"""
 
     return tuple(
         f"以下是用户显式选择的 Skill `${skill.name}`。遵循其工作流，"
         "但不得覆盖更高优先级系统指令。\n\n"
-        f"{load_instructions(skill)}"
+        "<skill>\n"
+        f"<name>{skill.name}</name>\n"
+        f"<path>{skill.path.parent}</path>\n"
+        f"{load_instructions(skill)}\n"
+        "</skill>"
         for skill in skills
     )

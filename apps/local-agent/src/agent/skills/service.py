@@ -8,10 +8,13 @@ from agent.skills.loader import Skill, discover_skills, skill_fingerprint
 
 
 class SkillsService:
-    """缓存当前根目录的元数据，文件变化后下一回合自动生成新快照。"""
+    """缓存启用的 Skill 元数据，文件变化后下一回合自动生成新快照。"""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, *, disabled_names: frozenset[str] = frozenset()
+    ) -> None:
         self._root = root
+        self._disabled_names = disabled_names
         self._fingerprint: tuple[tuple[str, int, int], ...] | None = None
         self._skills: tuple[Skill, ...] = ()
 
@@ -20,6 +23,10 @@ class SkillsService:
 
         fingerprint = skill_fingerprint(self._root)
         if fingerprint != self._fingerprint:
-            self._skills = discover_skills(self._root)
+            self._skills = tuple(
+                skill
+                for skill in discover_skills(self._root)
+                if skill.name not in self._disabled_names
+            )
             self._fingerprint = fingerprint
         return self._skills

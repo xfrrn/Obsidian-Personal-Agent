@@ -11,6 +11,10 @@ _NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 _MAX_SKILL_BYTES = 64 * 1024
 
 
+def is_valid_skill_name(name: str) -> bool:
+    return bool(_NAME.fullmatch(name))
+
+
 @dataclass(frozen=True, slots=True)
 class Skill:
     """目录页需要的轻量元数据；正文只在用户显式选择后才读取。"""
@@ -46,7 +50,7 @@ def discover_skills(root: Path) -> tuple[Skill, ...]:
         metadata, _ = _read_document(path)
         name = metadata.get("name", "")
         description = metadata.get("description", "")
-        if not _NAME.fullmatch(name):
+        if not is_valid_skill_name(name):
             raise ValueError(f"{path} 的 name 必须是小写字母、数字或连字符")
         if not description:
             raise ValueError(f"{path} 缺少 description")
