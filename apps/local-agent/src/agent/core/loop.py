@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,7 @@ from agent.core.token_counter import TokenCounter
 from agent.core.turn.audit import audit_events
 from agent.core.turn.events import RuntimeShutdown, ToolApprovalRequested, TurnError
 from agent.llm.client import ModelClient
+from agent.memory import LongTermMemory, MemoryContextContributor
 from agent.permissions import PermissionManager, PermissionPolicy, PermissionRequest
 from agent.protocol.op import CancelTool, Interrupt, ResolveApproval, Shutdown, UserInput
 from agent.skills.service import SkillsService
@@ -124,6 +126,10 @@ def create_session(
             AvailableSkillsContributor(),
             CurrentTimeContributor(),
             WorldStateContributor(settings.workspace),
+        ) + (
+            (MemoryContextContributor(settings.memory_dir),)
+            if settings.use_memories
+            else ()
         ),
         input_queue=InputQueue(),
         token_counter=token_counter,
@@ -175,6 +181,19 @@ async def start_agent(
         stored_session=stored_session,
         change_journal=change_journal,
     )
+    memory = (
+        LongTermMemory(
+            store,
+            session.client,
+            resolved_settings.memory_dir,
+            idle_hours=resolved_settings.memory_idle_hours,
+            max_sessions=resolved_settings.memory_max_sessions,
+        )
+        if store is not None
+        and session_id is not None
+        and resolved_settings.generate_memories
+        else None
+    )
     if stored_session is not None:
         if stored_session.last_turn_state == "running":
             # 进程句柄不能跨 Agent 进程恢复；告警比假装仍可 write_stdin 更安全。
@@ -188,18 +207,44 @@ async def start_agent(
                 tuple((message, False) for message in repaired),
                 "interrupted",
             )
-    return handle, asyncio.create_task(_run_session(session, handle), name="agent-submission-loop")
+    return handle, asyncio.create_task(
+        _run_session(session, handle, memory), name="agent-submission-loop"
+    )
 
 
-async def _run_session(session: Session, handle: AgentHandle) -> None:
+async def _run_session(
+    session: Session, handle: AgentHandle, memory: LongTermMemory | None = None
+) -> None:
     """在组合根注册审计 watcher，并让其随 Session 关闭有序收尾。"""
 
     audit_task = asyncio.create_task(audit_events(handle.watch()), name="agent-event-audit")
+    memory_task = (
+        asyncio.create_task(
+            _refresh_memory(memory, session.session_id), name="agent-memory-refresh"
+        )
+        if memory is not None and session.session_id is not None
+        else None
+    )
     try:
         await submission_loop(session, handle)
     finally:
+        if memory_task is not None:
+            memory_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await memory_task
         await session.aclose()
         await audit_task
+
+
+async def _refresh_memory(memory: LongTermMemory, session_id: str) -> None:
+    """记忆是旁路能力；失败只记安全元数据，不能终止交互 Session。"""
+
+    try:
+        await memory.refresh(session_id)
+    except Exception as exc:
+        _LOGGER.warning(
+            "memory.refresh_failed", extra={"error_type": type(exc).__name__}
+        )
 
 
 async def submission_loop(session: Session, handle: AgentHandle) -> None:

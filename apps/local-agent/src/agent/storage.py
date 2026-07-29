@@ -53,6 +53,18 @@ class StoredSession:
         return [dict(message.payload) for message in self.messages if message.seq >= self.active_from_seq]
 
 
+@dataclass(frozen=True, slots=True)
+class StoredMemory:
+    """一次会话级记忆提取；source_updated_at 让同一会话后续追加内容时可重新提取。"""
+
+    session_id: str
+    workspace: str
+    source_updated_at: int
+    raw_memory: str
+    rollout_summary: str
+    created_at: int
+
+
 class SessionStore:
     """Store session metadata and append-only model messages in one SQLite database."""
 
@@ -229,11 +241,128 @@ class SessionStore:
             if not changed:
                 raise KeyError(f"会话不存在或已归档: {session_id}")
 
+    def memory_candidates(
+        self,
+        exclude_session_id: str,
+        updated_before: int,
+        limit: int,
+    ) -> tuple[StoredSession, ...]:
+        """返回尚未按当前版本提取、且已经完整结束的会话。"""
+
+        if limit <= 0:
+            raise ValueError("limit 必须大于 0")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.id FROM sessions AS s
+                WHERE s.id != ?
+                  AND s.last_turn_state = 'idle' AND s.updated_at <= ?
+                  AND EXISTS (
+                      SELECT 1 FROM messages AS msg
+                      WHERE msg.session_id = s.id
+                        AND msg.role = 'assistant' AND msg.visible = 1
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_stage1 AS memory
+                      WHERE memory.session_id = s.id
+                        AND memory.source_updated_at = s.updated_at
+                  )
+                ORDER BY s.updated_at, s.id
+                LIMIT ?
+                """,
+                (exclude_session_id, updated_before, limit),
+            ).fetchall()
+        return tuple(
+            stored
+            for row in rows
+            if (stored := self.load(row["id"], include_archived=True)) is not None
+        )
+
+    def save_memory_extraction(
+        self,
+        session_id: str,
+        source_updated_at: int,
+        raw_memory: str,
+        rollout_summary: str,
+    ) -> bool:
+        """仅在源会话未变化时保存，避免并发恢复会话产生过期记忆。"""
+
+        now = _now_ms()
+        with self._connect() as connection:
+            inserted = connection.execute(
+                """
+                INSERT OR IGNORE INTO memory_stage1 (
+                    session_id, source_updated_at, raw_memory,
+                    rollout_summary, created_at, consolidated
+                )
+                SELECT id, ?, ?, ?, ?, ? FROM sessions
+                WHERE id = ? AND updated_at = ?
+                """,
+                (
+                    source_updated_at,
+                    raw_memory,
+                    rollout_summary,
+                    now,
+                    int(not raw_memory.strip()),
+                    session_id,
+                    source_updated_at,
+                ),
+            ).rowcount
+        return bool(inserted)
+
+    def memory_consolidation_needed(self) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM memory_stage1 AS memory
+                WHERE memory.consolidated = 0
+                LIMIT 1
+                """
+            ).fetchone()
+        return row is not None
+
+    def memory_outputs(self, limit: int) -> tuple[StoredMemory, ...]:
+        """每个会话只选最新版本，并优先提供最近的跨会话记忆。"""
+
+        if limit <= 0:
+            raise ValueError("limit 必须大于 0")
+        # ponytail: 当前按新近程度取样；有 citation 使用数据后再升级为使用频率排名。
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT memory.*, s.workspace FROM memory_stage1 AS memory
+                JOIN sessions AS s ON s.id = memory.session_id
+                WHERE memory.source_updated_at = (
+                    SELECT MAX(latest.source_updated_at)
+                    FROM memory_stage1 AS latest
+                    WHERE latest.session_id = memory.session_id
+                ) AND TRIM(memory.raw_memory) != ''
+                ORDER BY memory.source_updated_at DESC, memory.session_id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple(
+            StoredMemory(
+                session_id=row["session_id"],
+                workspace=row["workspace"],
+                source_updated_at=row["source_updated_at"],
+                raw_memory=row["raw_memory"],
+                rollout_summary=row["rollout_summary"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        )
+
+    def mark_memories_consolidated(self) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE memory_stage1 SET consolidated = 1")
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version not in {0, 1, 2, 3}:
+            if version not in {0, 1, 2, 3, 4}:
                 raise RuntimeError(f"不支持的会话数据库版本: {version}")
             if version == 1:
                 connection.execute(
@@ -276,7 +405,19 @@ class SessionStore:
                 );
                 CREATE INDEX IF NOT EXISTS sessions_by_recency
                     ON sessions(archived_at, updated_at DESC);
-                PRAGMA user_version = 3;
+                CREATE TABLE IF NOT EXISTS memory_stage1 (
+                    session_id TEXT NOT NULL,
+                    source_updated_at INTEGER NOT NULL,
+                    raw_memory TEXT NOT NULL,
+                    rollout_summary TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    consolidated INTEGER NOT NULL DEFAULT 0 CHECK (consolidated IN (0, 1)),
+                    PRIMARY KEY (session_id, source_updated_at),
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS memory_stage1_pending
+                    ON memory_stage1(consolidated, created_at);
+                PRAGMA user_version = 4;
                 """
             )
 

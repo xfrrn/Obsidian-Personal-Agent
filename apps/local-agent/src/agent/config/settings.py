@@ -40,6 +40,12 @@ class Settings:
     log_format: str = "text"
     temperature: float = 0.0
     session_db_path: Path = field(default_factory=lambda: _default_session_db(Path.cwd()))
+    # 直接构造 Settings 的测试/嵌入方保持无外部副作用；from_env 为正常入口启用记忆。
+    generate_memories: bool = False
+    use_memories: bool = False
+    memory_dir: Path = field(default_factory=lambda: _default_memory_dir(Path.cwd()))
+    memory_idle_hours: float = 12.0
+    memory_max_sessions: int = 20
 
     @property
     def input_token_budget(self) -> int:
@@ -121,6 +127,13 @@ class Settings:
         if not 0 <= temperature <= 2:
             raise ValueError("OPENAI_TEMPERATURE 必须在 0 到 2 之间")
 
+        memory_idle_hours = float(env_value("AGENT_MEMORY_IDLE_HOURS", "12"))
+        memory_max_sessions = int(env_value("AGENT_MEMORY_MAX_SESSIONS", "20"))
+        if memory_idle_hours < 0:
+            raise ValueError("AGENT_MEMORY_IDLE_HOURS 不能小于 0")
+        if memory_max_sessions <= 0:
+            raise ValueError("AGENT_MEMORY_MAX_SESSIONS 必须大于 0")
+
         return cls(
             api_key=env_value("OPENAI_API_KEY") or None,
             # AGENT_MODEL 保持旧配置兼容；OPENAI_MODEL 让密钥、地址、模型使用同一命名约定。
@@ -152,6 +165,13 @@ class Settings:
                     str(_default_session_db(workspace)),
                 )
             ).expanduser().resolve(),
+            generate_memories=env_flag("AGENT_GENERATE_MEMORIES", True),
+            use_memories=env_flag("AGENT_USE_MEMORIES", True),
+            memory_dir=Path(
+                env_value("AGENT_MEMORY_DIR", str(_default_memory_dir(workspace)))
+            ).expanduser().resolve(),
+            memory_idle_hours=memory_idle_hours,
+            memory_max_sessions=memory_max_sessions,
         )
 
 
@@ -162,6 +182,15 @@ def _default_session_db(workspace: Path) -> Path:
         return Path.home() / ".codex-agent" / "sessions.db"
     except RuntimeError:
         return workspace / ".agent" / "sessions.db"
+
+
+def _default_memory_dir(workspace: Path) -> Path:
+    """与会话数据库共用用户状态根，避免把个人记忆写进项目仓库。"""
+
+    try:
+        return Path.home() / ".codex-agent" / "memories"
+    except RuntimeError:
+        return workspace / ".agent" / "memories"
 
 
 def _default_sandbox_state(workspace: Path) -> Path:

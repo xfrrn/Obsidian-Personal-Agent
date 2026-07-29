@@ -51,6 +51,10 @@ class SettingsEnvFileTest(unittest.TestCase):
         self.assertIs(settings.approval_policy, ApprovalPolicy.ON_REQUEST)
         self.assertIs(settings.sandbox_backend, SandboxBackend.AUTO)
         self.assertIs(settings.sandbox_network, SandboxNetwork.HOST)
+        self.assertTrue(settings.generate_memories)
+        self.assertTrue(settings.use_memories)
+        self.assertEqual(settings.memory_idle_hours, 12)
+        self.assertEqual(settings.memory_max_sessions, 20)
 
     def test_rejects_unknown_sandbox_mode(self) -> None:
         with patch("agent.config.settings.load_env_file"), patch.dict(
