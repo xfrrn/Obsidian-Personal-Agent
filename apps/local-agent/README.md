@@ -15,6 +15,8 @@ Windows Agent 由仓库根目录的 `npm run package:windows` 在隔离 venv 中
 
 终端模式使用 `python -m agent.cli.main`。模型地址、沙盒、Shell 和会话数据库分别由 `OPENAI_BASE_URL`、`AGENT_SANDBOX_*`、`AGENT_ENABLE_SHELL` 和 `AGENT_SESSION_DB` 配置；`AGENT_DISABLED_SKILLS` 接受逗号分隔的 Skill 名称；跨会话记忆默认启用，可通过 `AGENT_GENERATE_MEMORIES`、`AGENT_USE_MEMORIES` 和 `AGENT_MEMORY_*` 调整。
 
+内置 `$skill-installer` 通过已有 Shell 工具列出或安装 GitHub Skills，目标固定为会话数据库同目录的 `skills/`。安装经过现有宿主执行审批，同名目录不会覆盖；文件写入后由每回合的 Skill 快照自动发现。Windows 包内脚本仅依赖 PowerShell。
+
 HTTP 服务提供多会话、SSE 消息流、审批、权限、指标和 `/api/config` 运行时配置接口，根路径返回 404。Obsidian 插件首次连接时会把当前 Vault 设置为工作区；服务只为 `app://obsidian.md` 返回跨源许可，其他网页来源仍被浏览器拦截。配置接口只接受本机请求，修改配置时不能有正在运行的回合；默认服务没有请求令牌，不要绑定到公网地址。
 
 `obsidian_command` 始终可用且不依赖通用 Shell 开关。它通过 Obsidian 1.12.7+ 安装器自带的官方 CLI 列出或执行命令面板命令；执行动作复用现有宿主执行审批，Plan Mode 下禁止执行。

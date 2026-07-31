@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Installer"
+  short_description: "Install skills from curated lists or GitHub"
+  default_prompt: "Use $skill-installer to list or install a skill from GitHub."

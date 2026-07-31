@@ -36,9 +36,11 @@ try {
     $agentWork = Join-Path $workRoot "agent-work"
     $agentSource = Join-Path $repoRoot "apps/local-agent/src"
     $instructions = Join-Path $agentSource "agent/config/instructions"
+    $systemSkills = Join-Path $agentSource "agent/skills/system"
     & $packagePython -m PyInstaller --noconfirm --clean --onedir --name codex-agent `
         --paths $agentSource `
         --add-data "$($instructions):agent/config/instructions" `
+        --add-data "$($systemSkills):agent/skills/system" `
         --distpath $agentDist --workpath $agentWork --specpath $workRoot `
         "scripts/windows-agent-entry.py"
     if ($LASTEXITCODE -ne 0) { throw "Agent EXE build failed." }

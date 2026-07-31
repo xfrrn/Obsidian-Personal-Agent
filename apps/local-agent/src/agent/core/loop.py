@@ -23,7 +23,7 @@ from agent.llm.client import ModelClient
 from agent.memory import LongTermMemory, MemoryContextContributor
 from agent.permissions import PermissionManager, PermissionPolicy, PermissionRequest
 from agent.protocol.op import CancelTool, Interrupt, ResolveApproval, Shutdown, UserInput
-from agent.skills.service import SkillsService
+from agent.skills.service import SYSTEM_SKILLS_DIR, SkillsService
 from agent.storage import SessionStore, StoredSession
 from agent.tools.handlers.apply_patch import ApplyPatchTool
 from agent.tools.handlers.create_frontmatter import CreateFrontmatterTool
@@ -145,7 +145,9 @@ def create_session(
             session_id=session_id,
         ),
         skills_service=SkillsService(
-            settings.skills_dir, disabled_names=settings.disabled_skills
+            settings.skills_dir,
+            system_root=SYSTEM_SKILLS_DIR,
+            disabled_names=settings.disabled_skills,
         ),
         context_contributors=(
             AvailableSkillsContributor(),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import os
 import shlex
@@ -389,6 +390,29 @@ class ProcessInteractionTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(finished.exit_code, 0)
             finally:
                 await manager.aclose()
+
+    async def test_command_receives_user_skills_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = replace(
+                _settings(root, SandboxMode.DANGER_FULL_ACCESS),
+                session_db_path=root / "state" / "sessions.db",
+            )
+            manager = ProcessManager(5)
+            tool = ExecCommandTool(settings, manager)
+            command = subprocess.list2cmdline(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; print(os.environ['AGENT_SKILLS_DIR'])",
+                ]
+            )
+            try:
+                result = json.loads(await tool.run({"command": command}))
+            finally:
+                await manager.aclose()
+
+        self.assertEqual(result["output"].strip(), str(settings.skills_dir))
 
 
 def _interactive_command() -> str:

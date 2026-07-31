@@ -7,13 +7,20 @@ from pathlib import Path
 from agent.skills.loader import Skill, discover_skills, skill_fingerprint
 
 
+SYSTEM_SKILLS_DIR = Path(__file__).with_name("system")
+
+
 class SkillsService:
     """缓存启用的 Skill 元数据，文件变化后下一回合自动生成新快照。"""
 
     def __init__(
-        self, root: Path, *, disabled_names: frozenset[str] = frozenset()
+        self,
+        root: Path,
+        *,
+        system_root: Path | None = None,
+        disabled_names: frozenset[str] = frozenset(),
     ) -> None:
-        self._root = root
+        self._roots = ((system_root,) if system_root is not None else ()) + (root,)
         self._disabled_names = disabled_names
         self._fingerprint: tuple[tuple[str, int, int], ...] | None = None
         self._skills: tuple[Skill, ...] = ()
@@ -21,12 +28,21 @@ class SkillsService:
     def snapshot(self) -> tuple[Skill, ...]:
         """返回本回合应使用的不可变 Skill 视图。"""
 
-        fingerprint = skill_fingerprint(self._root)
+        fingerprint = tuple(
+            entry for root in self._roots for entry in skill_fingerprint(root)
+        )
         if fingerprint != self._fingerprint:
-            self._skills = tuple(
+            skills = tuple(
                 skill
-                for skill in discover_skills(self._root)
+                for root in self._roots
+                for skill in discover_skills(root)
                 if skill.name not in self._disabled_names
             )
+            names: set[str] = set()
+            for skill in skills:
+                if skill.name in names:
+                    raise ValueError(f"重复的 Skill 名称: {skill.name}")
+                names.add(skill.name)
+            self._skills = skills
             self._fingerprint = fingerprint
         return self._skills

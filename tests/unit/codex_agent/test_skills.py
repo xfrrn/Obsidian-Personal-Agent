@@ -21,6 +21,7 @@ from agent.skills.injection import build_skill_injections, collect_explicit_ment
 from agent.skills.invocation import detect_implicit_skill_invocations
 from agent.skills.loader import Skill
 from agent.skills.render import render_available_skills
+from agent.skills.service import SkillsService
 from agent.web.metrics import AgentMetrics
 
 
@@ -187,6 +188,71 @@ class SkillInjectionTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SkillBehaviorTest(unittest.TestCase):
+    def test_invalid_skill_is_skipped_without_hiding_valid_sibling(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = root / "valid" / "SKILL.md"
+            valid.parent.mkdir()
+            valid.write_text(
+                "\ufeff---\n"
+                "name: valid\n"
+                "description: |\n"
+                "  Valid workflow: handles YAML metadata.\n"
+                "  Use when compatibility matters.\n"
+                "metadata:\n"
+                "  author: example-org\n"
+                '  version: "1.0"\n'
+                "---\n"
+                "Do the work.\n",
+                encoding="utf-8",
+            )
+            invalid = root / "invalid" / "SKILL.md"
+            invalid.parent.mkdir()
+            invalid.write_text("invalid front matter", encoding="utf-8")
+
+            with self.assertLogs("agent.skills.loader", level="WARNING"):
+                skills = SkillsService(root).snapshot()
+
+        self.assertEqual(tuple(skill.name for skill in skills), ("valid",))
+        self.assertEqual(
+            skills[0].description,
+            "Valid workflow: handles YAML metadata.\nUse when compatibility matters.",
+        )
+
+    def test_bundled_installer_and_new_user_skill_are_discovered(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = Settings(
+                api_key=None,
+                model="test-model",
+                base_url="http://unused",
+                system_prompt="test system",
+                workspace=root,
+                shell_enabled=False,
+                request_timeout_seconds=1,
+                session_db_path=root / "state" / "sessions.db",
+            )
+            session = create_session(settings, AgentHandle(), RecordingClient())
+
+            initial = session.skills_service.snapshot()
+            installer = next(skill for skill in initial if skill.name == "skill-installer")
+            self.assertTrue(
+                (installer.path.parent / "scripts" / "install-skill-from-github.ps1").is_file()
+            )
+
+            _write_skill(
+                settings.skills_dir / "new-skill" / "SKILL.md",
+                "new-skill",
+                "新安装的 Skill",
+                "下一回合自动可见。",
+            )
+            refreshed = session.skills_service.snapshot()
+
+        self.assertEqual(
+            tuple(skill.name for skill in refreshed),
+            ("skill-installer", "new-skill"),
+        )
+
     def test_disabled_name_is_filtered_at_session_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -222,7 +288,9 @@ class SkillBehaviorTest(unittest.TestCase):
             skills = session.skills_service.snapshot()
             rendered = render_available_skills(skills)
 
-        self.assertEqual(tuple(skill.name for skill in skills), ("enabled",))
+        self.assertEqual(
+            tuple(skill.name for skill in skills), ("skill-installer", "enabled")
+        )
         self.assertNotIn("关闭时不可见", rendered or "")
         self.assertIn("$enabled: 保持可用", rendered or "")
 

@@ -165,6 +165,9 @@ class ExecCommandTool:
             # 参数来自模型；只有统一运行时签发的调用级能力才能越过 OS 沙盒。
             raise PermissionError("本次 exec_command 调用尚未获得宿主执行批准")
 
+        environment = subprocess_environment()
+        environment["AGENT_SKILLS_DIR"] = str(self._settings.skills_dir)
+
         async def spawn() -> ProcessHandle:
             effective_sandbox_mode = (
                 SandboxMode.READ_ONLY
@@ -179,7 +182,7 @@ class ExecCommandTool:
                     command,
                     cwd=str(self._settings.workspace),
                     # 子进程不应继承 Agent 自己的模型凭据，即使用户批准了宿主执行。
-                    env=subprocess_environment(),
+                    env=environment,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
@@ -194,7 +197,7 @@ class ExecCommandTool:
                 state_dir=self._settings.sandbox_state_dir,
                 mode=effective_sandbox_mode,
                 network=self._settings.sandbox_network,
-                environment=subprocess_environment(),
+                environment=environment,
             )
 
         read_only = (

@@ -52,6 +52,8 @@ npm run build
 
 插件首次加载时自动把当前 Vault 根目录设置为 Agent 工作区，不需要配置 `AGENT_WORKSPACE`。其他环境变量仍是服务首次启动时的后备配置；插件面板保存过配置后，以插件配置为准。会话默认保存在 `~/.codex-agent/sessions.db`，Skills 保存在同目录的 `skills/`；两者也会一起跟随设置页选择的会话数据库目录，不受插件升级影响。长期记忆默认从空闲 12 小时以上的其他会话提取并写入 `~/.codex-agent/memories/`，随后以历史数据形式注入新回合；可用 `AGENT_GENERATE_MEMORIES`、`AGENT_USE_MEMORIES`、`AGENT_MEMORY_DIR`、`AGENT_MEMORY_IDLE_HOURS` 和 `AGENT_MEMORY_MAX_SESSIONS` 调整。设置页会展示全部 Skills，可逐项启用、禁用或导入根目录含 `SKILL.md` 的文件夹；`AGENT_DISABLED_SKILLS=code-review,skill-installer` 仍可提供启动时默认值。`apply_patch` 默认可用，Shell 工具由插件设置开关控制。
 
+内置 `$skill-installer` 可列出 `openai/skills` 的 curated/experimental Skills，或从指定 GitHub 仓库路径安装到上述持久化目录；安装复用 Shell、网络和宿主执行审批，不覆盖同名目录，新 Skill 在下一回合自动出现。Windows 一体包使用自带 PowerShell 脚本，不要求目标电脑安装 Python。
+
 ### 调用 Obsidian 命令
 
 内置 `obsidian_command` 工具可以列出并执行 Obsidian 命令面板中的命令，包括第三方插件注册的命令。它不依赖 Agent 的 Shell 开关；执行命令时仍遵循当前宿主执行权限和单次审批策略。
