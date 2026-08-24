@@ -35,6 +35,7 @@ from agent.core.turn.task import SessionTask
 from agent.utils.logging import log_context
 from agent.llm.types import AssistantResponse, ClientError, ContextLimitError, ToolCall
 from agent.protocol.mode import ModeKind
+from agent.protocol.op import UnattendedPolicy
 from agent.skills.injection import build_skill_injections
 from agent.skills.invocation import detect_implicit_skill_invocations
 from agent.skills.loader import Skill
@@ -86,7 +87,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
             )
         )
         context_messages = await _build_context_messages(session, context)
-        tool_specs = session.tool_router.model_visible_specs()
+        tool_specs = session.tool_router.model_visible_specs(context.unattended_policy)
         round_number = 0
         # 固定轮数上限会截断合法的长工具链；回合由模型终止信号、取消或上下文预算结束。
         while True:
@@ -172,6 +173,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
                     response.tool_calls,
                     context.mode,
                     context.skill_snapshot,
+                    context.unattended_policy,
                 )
     except asyncio.CancelledError:
         session.conversation.clear_pending_model_inputs()
@@ -256,6 +258,7 @@ async def _run_tool_calls(
     calls: tuple[ToolCall, ...],
     mode: ModeKind = ModeKind.DEFAULT,
     skills: tuple[Skill, ...] = (),
+    unattended_policy: UnattendedPolicy | None = None,
 ) -> None:
     """并发提交同一响应的调用；运行时按 Handler 的声明隔离有副作用的工具。"""
 
@@ -267,7 +270,9 @@ async def _run_tool_calls(
 
     executions = await asyncio.gather(
         *(
-            _execute_tool(session, submission_id, invocation, mode)
+            _execute_tool(
+                session, submission_id, invocation, mode, unattended_policy
+            )
             for invocation in invocations
         )
     )
@@ -328,10 +333,13 @@ async def _execute_tool(
     submission_id: int,
     invocation: ToolInvocation,
     mode: ModeKind = ModeKind.DEFAULT,
+    unattended_policy: UnattendedPolicy | None = None,
 ) -> tuple[ToolExecution, ToolResultStatus]:
     tool_started_at = time.monotonic()
     with log_context(tool_name=invocation.name, tool_call_id=invocation.call_id):
-        execution = await session.tool_runtime.execute(invocation, submission_id, mode)
+        execution = await session.tool_runtime.execute(
+            invocation, submission_id, mode, unattended_policy
+        )
         status = (
             ToolResultStatus.INTERRUPTED
             if execution.interrupted

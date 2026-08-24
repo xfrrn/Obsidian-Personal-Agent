@@ -1,6 +1,11 @@
 import { App, Modal, Notice, PluginSettingTab, setIcon, Setting, SettingGroup } from "obsidian";
 import type { ButtonComponent, DropdownComponent, TextComponent } from "obsidian";
 import type CodeXAgentPlugin from "./main";
+import {
+  nextDailyRun,
+  ScheduledTask,
+  ScheduledTaskAccess
+} from "./scheduled-tasks";
 import type { ThemeMode } from "./theme";
 import { agentPortFromUrl } from "./url";
 
@@ -28,6 +33,7 @@ export interface AgentSettings {
   sessionDbPath: string;
   themeMode: ThemeMode;
   configured: boolean;
+  scheduledTasks: ScheduledTask[];
 }
 
 export interface AgentSkill {
@@ -47,7 +53,8 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   disabledSkills: [],
   sessionDbPath: "",
   themeMode: "system",
-  configured: false
+  configured: false,
+  scheduledTasks: []
 };
 
 export class AgentSettingTab extends PluginSettingTab {
@@ -58,7 +65,14 @@ export class AgentSettingTab extends PluginSettingTab {
   display(): void {
     this.containerEl.empty();
     this.containerEl.addClass("pka-settings-page");
-    const next = { ...this.agentPlugin.settings };
+    const next = {
+      ...this.agentPlugin.settings,
+      scheduledTasks: this.agentPlugin.settings.scheduledTasks.map((task) => ({
+        ...task,
+        permissions: { ...task.permissions },
+        ...(task.lastRun ? { lastRun: { ...task.lastRun } } : {})
+      }))
+    };
     let apiKey = this.agentPlugin.getApiKey();
     let webApiKeys = { ...this.agentPlugin.getWebApiKeys() };
     const agentPort = agentPortFromUrl(next.agentUrl);
@@ -289,6 +303,73 @@ export class AgentSettingTab extends PluginSettingTab {
         }
       })));
 
+    const scheduledGroup = new SettingGroup(this.containerEl)
+      .setHeading("定时任务")
+      .addClass("pka-settings-group", "pka-scheduled-tasks-group");
+    const scheduledToolbar = new Setting(scheduledGroup.listEl)
+      .setName("每日任务")
+      .setDesc("Obsidian 打开期间每分钟检查一次；写入、联网权限按任务单独限制。")
+      .addButton((button) => button.setButtonText("添加任务").onClick(() => {
+        new ScheduledTaskModal(this.app, null, (task) => {
+          next.scheduledTasks = [...next.scheduledTasks, task];
+          renderScheduledTasks();
+          updateDirtyState();
+        }).open();
+      }));
+    scheduledToolbar.settingEl.addClass("pka-scheduled-task-toolbar");
+    const scheduledList = scheduledGroup.listEl.createDiv({ cls: "pka-scheduled-task-list" });
+    const renderScheduledTasks = () => {
+      scheduledList.empty();
+      if (!next.scheduledTasks.length) {
+        renderSkillState(scheduledList, "还没有定时任务", "添加一条每日执行的 Agent 指令。");
+        return;
+      }
+      for (const task of next.scheduledTasks) {
+        const persisted = this.agentPlugin.settings.scheduledTasks.find(({ id }) => id === task.id);
+        const runnable = persisted !== undefined && JSON.stringify(persisted) === JSON.stringify(task);
+        const item = new Setting(scheduledList)
+          .setName(task.name)
+          .setDesc(scheduledTaskDescription(task))
+          .addToggle((toggle) => toggle.setValue(task.enabled).onChange((enabled) => {
+            task.enabled = enabled;
+            if (enabled) task.nextRunAt = nextDailyRun(task.time);
+            renderScheduledTasks();
+            updateDirtyState();
+          }))
+          .addButton((button) => button
+            .setButtonText("立即运行")
+            .setDisabled(!runnable)
+            .setTooltip(runnable ? "立即执行，不改变下次计划时间" : "请先保存任务")
+            .onClick(async () => {
+              button.setDisabled(true).setButtonText("运行中…");
+              try {
+                await this.agentPlugin.runScheduledTask(task.id);
+                new Notice(`定时任务“${task.name}”已完成。`);
+              } catch (error) {
+                new Notice(error instanceof Error ? error.message : "定时任务执行失败。");
+              } finally {
+                this.display();
+              }
+            }))
+          .addButton((button) => button.setButtonText("编辑").onClick(() => {
+            new ScheduledTaskModal(this.app, task, (updated) => {
+              next.scheduledTasks = next.scheduledTasks.map((candidate) =>
+                candidate.id === updated.id ? updated : candidate
+              );
+              renderScheduledTasks();
+              updateDirtyState();
+            }).open();
+          }))
+          .addButton((button) => button.setWarning().setButtonText("删除").onClick(() => {
+            next.scheduledTasks = next.scheduledTasks.filter(({ id }) => id !== task.id);
+            renderScheduledTasks();
+            updateDirtyState();
+          }));
+        item.settingEl.classList.toggle("is-disabled", !task.enabled);
+      }
+    };
+    renderScheduledTasks();
+
     const securityGroup = new SettingGroup(this.containerEl).setHeading("执行与安全").addClass("pka-settings-group");
     securityGroup.addSetting((setting) => setting
       .setName("沙盒模式")
@@ -440,6 +521,87 @@ export class AgentSettingTab extends PluginSettingTab {
       );
     }
   }
+}
+
+class ScheduledTaskModal extends Modal {
+  constructor(
+    app: App,
+    private readonly existing: ScheduledTask | null,
+    private readonly save: (task: ScheduledTask) => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle(this.existing ? "编辑定时任务" : "添加定时任务");
+    let name = this.existing?.name ?? "";
+    let time = this.existing?.time ?? "09:00";
+    let instruction = this.existing?.instruction ?? "";
+    let access: ScheduledTaskAccess = this.existing?.permissions.access ?? "workspace-write";
+    let allowWeb = this.existing?.permissions.allowWeb ?? false;
+
+    new Setting(this.contentEl).setName("名称").addText((text) => text
+      .setPlaceholder("每日文档整理")
+      .setValue(name)
+      .onChange((value) => { name = value; }));
+    new Setting(this.contentEl).setName("每日执行时间").addText((text) => {
+      text.inputEl.type = "time";
+      text.setValue(time).onChange((value) => { time = value; });
+    });
+    new Setting(this.contentEl).setName("任务指令").addTextArea((area) => {
+      area.inputEl.rows = 8;
+      area.inputEl.addClass("pka-scheduled-task-instruction");
+      area.setPlaceholder("说明需要检查、修改和输出什么。")
+        .setValue(instruction)
+        .onChange((value) => { instruction = value; });
+    });
+    new Setting(this.contentEl).setName("工作区权限").addDropdown((dropdown) => dropdown
+      .addOptions({ "read-only": "只读", "workspace-write": "允许修改 Vault" })
+      .setValue(access)
+      .onChange((value) => { access = value as ScheduledTaskAccess; }));
+    new Setting(this.contentEl)
+      .setName("允许访问互联网")
+      .setDesc("关闭时不会向定时任务提供 Web 搜索和网页读取工具。")
+      .addToggle((toggle) => toggle.setValue(allowWeb).onChange((value) => { allowWeb = value; }));
+
+    const actions = this.contentEl.createDiv({ cls: "pka-memory-actions" });
+    actions.createEl("button", { text: "取消" }).addEventListener("click", () => this.close());
+    const saveButton = actions.createEl("button", { cls: "mod-cta", text: "保存任务" });
+    saveButton.addEventListener("click", () => {
+      try {
+        const trimmedName = name.trim();
+        const trimmedInstruction = instruction.trim();
+        if (!trimmedName || !trimmedInstruction) throw new Error("任务名称和指令不能为空。");
+        const scheduleChanged = !this.existing || this.existing.time !== time;
+        this.save({
+          ...(this.existing ?? {}),
+          id: this.existing?.id ?? crypto.randomUUID(),
+          name: trimmedName,
+          enabled: this.existing?.enabled ?? true,
+          time,
+          instruction: trimmedInstruction,
+          permissions: { access, allowWeb },
+          nextRunAt: scheduleChanged ? nextDailyRun(time) : this.existing.nextRunAt
+        });
+        this.close();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : "无法保存定时任务。");
+      }
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+function scheduledTaskDescription(task: ScheduledTask): string {
+  const permission = task.permissions.access === "workspace-write" ? "可修改 Vault" : "只读";
+  const next = task.enabled ? `下次：${new Date(task.nextRunAt).toLocaleString()}` : "已停用";
+  const last = task.lastRun
+    ? `上次：${task.lastRun.status === "success" ? "成功" : task.lastRun.status === "failed" ? "失败" : "运行中"}`
+    : "尚未运行";
+  return `${task.time} · ${permission}${task.permissions.allowWeb ? " · 可联网" : ""} · ${next} · ${last}`;
 }
 
 function addWebKeyInputs(

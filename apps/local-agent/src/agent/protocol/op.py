@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TypeAlias
 
 from agent.protocol.mode import ModeKind
@@ -17,6 +18,28 @@ class FileReference:
     path: str
 
 
+class UnattendedAccess(str, Enum):
+    """无人值守回合允许的最大工作区能力。"""
+
+    READ_ONLY = "read-only"
+    WORKSPACE_WRITE = "workspace-write"
+
+    @classmethod
+    def parse(cls, value: str) -> "UnattendedAccess":
+        try:
+            return cls(value.strip().lower())
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("access 必须是 read-only 或 workspace-write") from exc
+
+
+@dataclass(frozen=True, slots=True)
+class UnattendedPolicy:
+    """定时任务显式授予的回合级权限上限。"""
+
+    access: UnattendedAccess
+    allow_web: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class UserInput:
     """一条来自用户的新输入。"""
@@ -25,6 +48,7 @@ class UserInput:
     # None 沿用会话当前选择，让既有嵌入式调用保持兼容。
     mode: ModeKind | None = None
     references: tuple[FileReference, ...] = ()
+    unattended_policy: UnattendedPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)

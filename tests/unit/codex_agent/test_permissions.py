@@ -26,7 +26,12 @@ from agent.permissions import (
 )
 from agent.protocol.event import EventKind
 from agent.protocol.mode import ModeKind
-from agent.protocol.op import ResolveApproval, UserInput
+from agent.protocol.op import (
+    ResolveApproval,
+    UnattendedAccess,
+    UnattendedPolicy,
+    UserInput,
+)
 from agent.sandbox import SandboxBackend, SandboxNetwork
 from agent.tools.invocation import ToolInvocation
 from agent.tools.registry import ToolRegistry
@@ -451,6 +456,48 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((workspace / "denied.txt").exists())
         self.assertTrue(result.is_error)
         self.assertIn("read-only", result.content)
+
+    async def test_unattended_policy_caps_tools_even_when_global_access_is_wider(self) -> None:
+        policy = UnattendedPolicy(UnattendedAccess.READ_ONLY, allow_web=False)
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "agent.tools.handlers.exec_command._native_windows_available",
+            return_value=True,
+        ):
+            workspace = Path(directory)
+            session = create_session(
+                _settings(
+                    workspace,
+                    shell_enabled=True,
+                    sandbox_mode=SandboxMode.DANGER_FULL_ACCESS,
+                ),
+                AgentHandle(),
+                client=object(),
+            )
+            visible = {
+                spec["function"]["name"]
+                for spec in session.tool_router.model_visible_specs(policy)
+            }
+            denied_write = await session.tool_runtime.execute(
+                ToolInvocation(
+                    "call-write",
+                    "apply_patch",
+                    {"patch": "*** Begin Patch\n*** Add File: denied.txt\n+no\n*** End Patch"},
+                ),
+                unattended_policy=policy,
+            )
+            denied_host = await session.tool_runtime.execute(
+                ToolInvocation("call-host", "obsidian_command", {"action": "list"}),
+                unattended_policy=policy,
+            )
+
+        self.assertNotIn("apply_patch", visible)
+        self.assertNotIn("exec_command", visible)
+        self.assertNotIn("obsidian_command", visible)
+        self.assertTrue(denied_write.is_error)
+        self.assertIn("read-only", denied_write.content)
+        self.assertTrue(denied_host.is_error)
+        self.assertIn("无人值守", denied_host.content)
+        self.assertFalse((workspace / "denied.txt").exists())
 
     async def test_danger_full_access_runs_shell_without_agent_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

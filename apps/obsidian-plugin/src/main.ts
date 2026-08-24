@@ -13,6 +13,11 @@ import { normalizeAgentUrl, normalizeApiBaseUrl } from "./url";
 import { CODEX_AGENT_VIEW_TYPE, CodeXAgentView } from "./codex-agent-view";
 import { isThemeMode, ThemeMode } from "./theme";
 import { agentLaunchSpec } from "./agent-process";
+import {
+  nextDailyRun,
+  normalizeScheduledTasks,
+  ScheduledTask
+} from "./scheduled-tasks";
 
 const API_KEY_SECRET_ID = "personal-knowledge-agent-api-key";
 const WEB_API_KEY_SECRET_IDS: Record<WebProviderName, string> = {
@@ -23,6 +28,7 @@ const WEB_API_KEY_SECRET_IDS: Record<WebProviderName, string> = {
 const AGENT_START_ATTEMPTS = 100;
 const MAX_SKILL_IMPORT_FILES = 500;
 const MAX_SKILL_IMPORT_BYTES = 10 * 1024 * 1024;
+const SCHEDULE_CHECK_INTERVAL_MS = 60_000;
 
 interface AgentChildProcess {
   stderr: { on(event: "data", listener: (chunk: { toString(): string }) => void): void } | null;
@@ -49,6 +55,9 @@ export default class CodeXAgentPlugin extends Plugin {
   private initialSyncPromise: Promise<void> | null = null;
   private agentStartError = "";
   private unloading = false;
+  private scheduledTaskQueue: Promise<void> = Promise.resolve();
+  private queuedScheduledTasks = new Map<string, Promise<void>>();
+  private settingsSaveQueue: Promise<void> = Promise.resolve();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -69,9 +78,13 @@ export default class CodeXAgentPlugin extends Plugin {
       callback: () => void this.activateView()
     });
     this.addSettingTab(new AgentSettingTab(this.app, this));
+    this.registerInterval(window.setInterval(
+      () => this.queueDueScheduledTasks(),
+      SCHEDULE_CHECK_INTERVAL_MS
+    ));
     const initialSync = this.syncAgentSettings();
     this.initialSyncPromise = initialSync;
-    void initialSync.catch((error) => {
+    void initialSync.then(() => this.queueDueScheduledTasks()).catch((error) => {
       if (!this.unloading) {
         new Notice(error instanceof Error ? error.message : "无法自动启动本地 Agent。");
       }
@@ -162,6 +175,10 @@ export default class CodeXAgentPlugin extends Plugin {
     }
   }
 
+  async runScheduledTask(taskId: string): Promise<void> {
+    return this.queueScheduledTask(taskId, true);
+  }
+
   async isAgentRunning(): Promise<boolean> {
     if (this.initialSyncPromise) await this.initialSyncPromise.catch(() => undefined);
     return this.isAgentAvailable();
@@ -198,7 +215,7 @@ export default class CodeXAgentPlugin extends Plugin {
 
   async persistPanelSettings(settings: { themeMode?: ThemeMode }): Promise<void> {
     this.settings = { ...this.settings, ...settings };
-    await this.saveData(this.settings);
+    await this.saveSettings();
   }
 
   async applySettings(value: AgentSettings, apiKey: string, webApiKeys: WebApiKeys): Promise<boolean> {
@@ -215,6 +232,10 @@ export default class CodeXAgentPlugin extends Plugin {
         workspace,
         disabledSkills: normalizeSkillNames(value.disabledSkills),
         sessionDbPath: value.sessionDbPath.trim(),
+        scheduledTasks: mergeScheduledTaskRuntime(
+          normalizeScheduledTasks(value.scheduledTasks),
+          this.settings.scheduledTasks
+        ),
         configured: true
       };
       this.apiKey = apiKey.trim();
@@ -223,7 +244,7 @@ export default class CodeXAgentPlugin extends Plugin {
       for (const provider of webProviderNames()) {
         this.app.secretStorage.setSecret(WEB_API_KEY_SECRET_IDS[provider], this.webApiKeys[provider]);
       }
-      await this.saveData(this.settings);
+      await this.saveSettings();
       if (this.settings.agentUrl !== previousAgentUrl) this.stopLocalAgent();
     } catch (error) {
       new Notice(error instanceof Error ? error.message : "无法保存 Agent 配置。");
@@ -315,6 +336,7 @@ export default class CodeXAgentPlugin extends Plugin {
       disabledSkills: normalizeSkillNames(saved?.disabledSkills),
       sessionDbPath: typeof saved?.sessionDbPath === "string" ? saved.sessionDbPath : DEFAULT_SETTINGS.sessionDbPath,
       themeMode: isThemeMode(saved?.themeMode) ? saved.themeMode : DEFAULT_SETTINGS.themeMode,
+      scheduledTasks: normalizeScheduledTasks(saved?.scheduledTasks, true),
       configured
     };
     this.apiKey = this.app.secretStorage.getSecret(API_KEY_SECRET_ID) ?? "";
@@ -323,6 +345,123 @@ export default class CodeXAgentPlugin extends Plugin {
       exa: this.app.secretStorage.getSecret(WEB_API_KEY_SECRET_IDS.exa) ?? "",
       talordata: this.app.secretStorage.getSecret(WEB_API_KEY_SECRET_IDS.talordata) ?? ""
     };
+  }
+
+  private queueDueScheduledTasks(): void {
+    const now = Date.now();
+    for (const task of this.settings.scheduledTasks) {
+      if (task.enabled && task.nextRunAt <= now && !this.queuedScheduledTasks.has(task.id)) {
+        void this.queueScheduledTask(task.id, false).catch((error) => {
+          if (!this.unloading) {
+            const message = error instanceof Error ? error.message : "未知错误";
+            new Notice(`定时任务“${task.name}”失败：${message}`);
+          }
+        });
+      }
+    }
+  }
+
+  private queueScheduledTask(taskId: string, manual: boolean): Promise<void> {
+    const queued = this.queuedScheduledTasks.get(taskId);
+    if (queued) return queued;
+    const run = this.scheduledTaskQueue.then(() => this.executeScheduledTask(taskId, manual));
+    const tracked = run.finally(() => this.queuedScheduledTasks.delete(taskId));
+    this.queuedScheduledTasks.set(taskId, tracked);
+    this.scheduledTaskQueue = tracked.catch(() => undefined);
+    return tracked;
+  }
+
+  private async executeScheduledTask(taskId: string, manual: boolean): Promise<void> {
+    let task = this.settings.scheduledTasks.find(({ id }) => id === taskId);
+    if (!task) throw new Error("定时任务不存在。");
+    if (!manual && (!task.enabled || task.nextRunAt > Date.now())) return;
+
+    const startedAt = Date.now();
+    task = await this.updateScheduledTask(taskId, (current) => ({
+      ...current,
+      ...(!manual ? { nextRunAt: nextDailyRun(current.time, startedAt) } : {}),
+      lastRun: { startedAt, status: "running" }
+    }));
+    try {
+      await this.ensureAgentReady();
+      if (!task.sessionId) {
+        const response = await requestUrl({
+          url: `${this.settings.agentUrl}/api/sessions`,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          throw: false
+        });
+        const payload = response.json as { id?: unknown; error?: unknown };
+        if (response.status < 200 || response.status >= 300 || typeof payload.id !== "string") {
+          throw new Error(typeof payload.error === "string" ? payload.error : `创建任务会话失败：HTTP ${response.status}`);
+        }
+        task = await this.updateScheduledTask(taskId, (current) => ({
+          ...current,
+          sessionId: payload.id as string
+        }));
+      }
+      const response = await requestUrl({
+        url: `${this.settings.agentUrl}/api/sessions/${encodeURIComponent(task.sessionId!)}/messages`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: scheduledTaskPrompt(task),
+          unattended: {
+            access: task.permissions.access,
+            allow_web: task.permissions.allowWeb
+          }
+        }),
+        throw: false
+      });
+      const payload = response.json as {
+        error?: unknown;
+        events?: Array<{ kind?: unknown; text?: unknown }>;
+      };
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(typeof payload.error === "string" ? payload.error : `执行任务失败：HTTP ${response.status}`);
+      }
+      const terminal = payload.events?.at(-1);
+      if (terminal?.kind !== "turn_finished") {
+        throw new Error(typeof terminal?.text === "string" && terminal.text ? terminal.text : "任务没有正常完成。");
+      }
+      await this.updateScheduledTask(taskId, (current) => ({
+        ...current,
+        lastRun: { startedAt, finishedAt: Date.now(), status: "success" }
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
+      await this.updateScheduledTask(taskId, (current) => ({
+        ...current,
+        lastRun: { startedAt, finishedAt: Date.now(), status: "failed", error: message }
+      }));
+      throw new Error(message);
+    }
+  }
+
+  private async updateScheduledTask(
+    taskId: string,
+    update: (task: ScheduledTask) => ScheduledTask
+  ): Promise<ScheduledTask> {
+    let updated: ScheduledTask | undefined;
+    this.settings = {
+      ...this.settings,
+      scheduledTasks: this.settings.scheduledTasks.map((task) => {
+        if (task.id !== taskId) return task;
+        updated = update(task);
+        return updated;
+      })
+    };
+    if (!updated) throw new Error("定时任务不存在。");
+    await this.saveSettings();
+    return updated;
+  }
+
+  private saveSettings(): Promise<void> {
+    const snapshot = this.settings;
+    const save = this.settingsSaveQueue.then(() => this.saveData(snapshot));
+    this.settingsSaveQueue = save.catch(() => undefined);
+    return save;
   }
 
   /** 已有服务直接复用；连接失败时只启动一个由插件托管的 Python 子进程。 */
@@ -408,6 +547,32 @@ function normalizeSkillNames(value: unknown): string[] {
   return Array.from(new Set(value.filter(
     (name): name is string => typeof name === "string" && /^[a-z0-9][a-z0-9-]*$/.test(name)
   ))).sort();
+}
+
+function scheduledTaskPrompt(task: ScheduledTask): string {
+  return [
+    "这是无人值守定时任务。请直接完成任务，不要向用户提问，也不要请求临时授权。",
+    `任务名称：${task.name}`,
+    "任务指令：",
+    task.instruction,
+    "完成后简要说明结果和修改过的文件；无法完成的部分请明确说明原因。"
+  ].join("\n\n");
+}
+
+function mergeScheduledTaskRuntime(
+  edited: ScheduledTask[],
+  current: ScheduledTask[]
+): ScheduledTask[] {
+  return edited.map((task) => {
+    const running = current.find(({ id }) => id === task.id);
+    if (!running) return task;
+    return {
+      ...task,
+      nextRunAt: task.time === running.time ? running.nextRunAt : task.nextRunAt,
+      ...(running.sessionId ? { sessionId: running.sessionId } : {}),
+      ...(running.lastRun ? { lastRun: running.lastRun } : {})
+    };
+  });
 }
 
 function normalizeWebApiKeys(value: WebApiKeys): WebApiKeys {

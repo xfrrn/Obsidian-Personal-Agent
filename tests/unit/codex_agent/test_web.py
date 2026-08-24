@@ -38,6 +38,20 @@ class RecordingClient:
         return AssistantResponse(f"收到：{user_text}")
 
 
+class ToolRecordingClient:
+    def __init__(self) -> None:
+        self.tool_names: set[str] = set()
+
+    async def complete(
+        self, messages: list[dict[str, object]], tools: list[dict[str, object]]
+    ) -> AssistantResponse:
+        self.tool_names = {
+            str(spec["function"]["name"])
+            for spec in tools
+        }
+        return AssistantResponse("完成")
+
+
 class StreamingClient:
     async def stream_complete(self, messages: list[dict[str, object]], tools: list[dict[str, object]], on_delta: object) -> AssistantResponse:
         await on_delta("逐")
@@ -416,13 +430,43 @@ class WebRuntimeTest(unittest.TestCase):
             finally:
                 server.shutdown()
                 server.server_close()
-                thread.join()
-                runtime.close()
+            thread.join()
+            runtime.close()
 
         self.assertEqual(response["events"][1]["text"], "收到：网页消息")
         self.assertEqual(response["events"][0]["data"]["mode"], "plan")
         self.assertEqual(detail["session"]["mode"], "plan")
         self.assertEqual(metrics["turns"]["finished"], 1)
+
+    def test_http_unattended_message_applies_the_task_permission_cap(self) -> None:
+        client = ToolRecordingClient()
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = AgentRuntime(_settings(Path(directory)), lambda: client)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            try:
+                session_id = _post_json(f"{address}/api/sessions", {})["id"]
+                response = _post_json(
+                    f"{address}/api/sessions/{session_id}/messages",
+                    {
+                        "text": "检查文档",
+                        "unattended": {
+                            "access": "read-only",
+                            "allow_web": False,
+                        },
+                    },
+                )
+            finally:
+                runtime.close()
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
+        self.assertEqual(response["events"][-1]["kind"], "turn_finished")
+        self.assertNotIn("apply_patch", client.tool_names)
+        self.assertNotIn("obsidian_command", client.tool_names)
 
     def test_http_imports_and_lists_a_complete_skill_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

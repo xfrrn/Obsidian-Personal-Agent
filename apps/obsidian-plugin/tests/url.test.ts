@@ -4,6 +4,7 @@ import test from 'node:test';
 import { agentPortFromUrl, normalizeAgentUrl, normalizeApiBaseUrl } from "../src/url";
 import { agentLaunchSpec } from "../src/agent-process";
 import { isThemeMode } from "../src/theme";
+import { nextDailyRun, normalizeScheduledTasks } from "../src/scheduled-tasks";
 
 test('accepts only normalized loopback Agent URLs', () => {
   assert.equal(normalizeAgentUrl('http://127.0.0.1:8000/path?q=1'), 'http://127.0.0.1:8000');
@@ -37,6 +38,27 @@ test("accepts only supported native panel theme modes", () => {
   assert.equal(isThemeMode("iframe"), false);
 });
 
+test("calculates and restores daily scheduled tasks without duplicate running state", () => {
+  const morning = new Date(2026, 0, 2, 8, 0, 0, 0).getTime();
+  assert.equal(nextDailyRun("09:30", morning), new Date(2026, 0, 2, 9, 30, 0, 0).getTime());
+  assert.equal(
+    nextDailyRun("09:30", new Date(2026, 0, 2, 10, 0, 0, 0).getTime()),
+    new Date(2026, 0, 3, 9, 30, 0, 0).getTime()
+  );
+  const [task] = normalizeScheduledTasks([{
+    id: "daily",
+    name: "整理",
+    enabled: true,
+    time: "09:30",
+    instruction: "整理 Inbox",
+    permissions: { access: "read-only", allowWeb: false },
+    nextRunAt: morning,
+    lastRun: { startedAt: morning, status: "running" }
+  }], true);
+  assert.equal(task.permissions.access, "read-only");
+  assert.equal(task.lastRun?.status, "failed");
+});
+
 test("mounts the React UI directly in the Obsidian ItemView", () => {
   const view = readFileSync("apps/obsidian-plugin/src/codex-agent-view.ts", "utf8");
   const mount = readFileSync("apps/obsidian-plugin/ui/src/mount.tsx", "utf8");
@@ -55,7 +77,7 @@ test("groups plugin settings and keeps one sticky save bar", () => {
   const settings = readFileSync("apps/obsidian-plugin/src/settings.ts", "utf8");
   const main = readFileSync("apps/obsidian-plugin/src/main.ts", "utf8");
   const styles = readFileSync("apps/obsidian-plugin/styles.css", "utf8");
-  for (const heading of ["Agent 服务", "模型配置", "互联网搜索", "工作区与数据", "执行与安全", "外观", "技能（Skills）"]) {
+  for (const heading of ["Agent 服务", "模型配置", "互联网搜索", "工作区与数据", "定时任务", "执行与安全", "外观", "技能（Skills）"]) {
     assert.ok(settings.includes(`setHeading("${heading}")`));
   }
   assert.match(settings, /配置已修改/);

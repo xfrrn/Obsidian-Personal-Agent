@@ -34,6 +34,7 @@ async def user_input_or_turn(session: Session) -> None:
         skill_snapshot=skill_snapshot,
         mentioned_skills=collect_explicit_mentions(submission.op.text, skill_snapshot),
         mode=session.mode,
+        unattended_policy=submission.op.unattended_policy,
     )
     session_task = AgentTurnTask(session, context)
     asyncio_task = asyncio.create_task(session_task.run(), name=f"agent-turn-{submission.id}")

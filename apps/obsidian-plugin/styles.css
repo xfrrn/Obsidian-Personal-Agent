@@ -170,6 +170,20 @@
   margin-top: var(--size-4-4);
 }
 
+.pka-scheduled-task-instruction {
+  min-height: 180px;
+  resize: vertical;
+  width: 100%;
+}
+
+.pka-scheduled-task-list .setting-item.is-disabled .setting-item-info {
+  opacity: 0.55;
+}
+
+.pka-scheduled-task-toolbar {
+  border-top: 0 !important;
+}
+
 .pka-skills-group {
   background: var(--background-secondary);
 }

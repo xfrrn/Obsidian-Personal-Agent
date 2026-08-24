@@ -6,6 +6,7 @@ from typing import Any
 
 from agent.permissions import PermissionRequirement, ToolAccess
 from agent.protocol.mode import ModeKind
+from agent.protocol.op import UnattendedAccess, UnattendedPolicy
 from agent.tools.invocation import ToolInvocation
 from agent.tools.registry import ToolRegistry
 from agent.tools.types import ToolExecution
@@ -17,10 +18,16 @@ class ToolRouter:
     def __init__(self, registry: ToolRegistry) -> None:
         self._registry = registry
 
-    def model_visible_specs(self) -> list[dict[str, Any]]:
+    def model_visible_specs(
+        self, unattended_policy: UnattendedPolicy | None = None
+    ) -> list[dict[str, Any]]:
         """只公布当前真正注册且可执行的工具。"""
 
-        return [handler.spec.as_openai_function() for handler in self._registry.handlers()]
+        return [
+            handler.spec.as_openai_function()
+            for handler in self._registry.handlers()
+            if _visible_to_model(handler, unattended_policy)
+        ]
 
     def build_invocation(
         self, call_id: str, name: str, arguments: dict[str, Any]
@@ -57,3 +64,17 @@ class ToolRouter:
             mode=mode,
             submission_id=submission_id,
         )
+
+
+def _visible_to_model(handler: object, policy: UnattendedPolicy | None) -> bool:
+    if policy is None:
+        return True
+    name = handler.spec.name
+    if name in {"exec_command", "write_stdin", "obsidian_command"}:
+        return False
+    if not policy.allow_web and name in {"web_search", "web_fetch"}:
+        return False
+    return not (
+        policy.access is UnattendedAccess.READ_ONLY
+        and handler.required_access is ToolAccess.WORKSPACE_WRITE
+    )

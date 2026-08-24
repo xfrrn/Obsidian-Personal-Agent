@@ -34,7 +34,14 @@ from agent.utils.logging import configure_logging
 from agent.web.metrics import AgentMetrics
 from agent.protocol.event import Event, EventKind
 from agent.protocol.mode import ModeKind
-from agent.protocol.op import FileReference, Interrupt, ResolveApproval, UserInput
+from agent.protocol.op import (
+    FileReference,
+    Interrupt,
+    ResolveApproval,
+    UnattendedAccess,
+    UnattendedPolicy,
+    UserInput,
+)
 from agent.storage import SessionStore, StoredSession
 from agent.web_access.config import (
     WebProviderConfig,
@@ -335,10 +342,15 @@ class AgentRuntime:
         session_id: str | None = None,
         mode: ModeKind | None = None,
         references: tuple[str, ...] = (),
+        unattended_policy: UnattendedPolicy | None = None,
     ) -> list[Event]:
         """提交一条消息，并收集该回合的全部可展示事件。"""
 
-        return list(self.ask_events(text, session_id, mode, references))
+        return list(
+            self.ask_events(
+                text, session_id, mode, references, unattended_policy
+            )
+        )
 
     def ask_events(
         self,
@@ -346,6 +358,7 @@ class AgentRuntime:
         session_id: str | None = None,
         mode: ModeKind | None = None,
         references: tuple[str, ...] = (),
+        unattended_policy: UnattendedPolicy | None = None,
     ) -> Iterator[Event]:
         """逐条产出回合事件，供 SSE 在模型生成期间立即转发。"""
 
@@ -354,7 +367,9 @@ class AgentRuntime:
             raise ValueError("消息不能为空")
         if len(text) > 20_000:
             raise ValueError("消息不能超过 20000 个字符")
-        return self._ask_events(text, session_id, mode, file_references)
+        return self._ask_events(
+            text, session_id, mode, file_references, unattended_policy
+        )
 
     def _ask_events(
         self,
@@ -362,6 +377,7 @@ class AgentRuntime:
         session_id: str | None,
         mode: ModeKind | None,
         references: tuple[FileReference, ...],
+        unattended_policy: UnattendedPolicy | None,
     ) -> Iterator[Event]:
         # 只保护提交动作。持锁等完整 SSE 会使下一条输入无法到达调度器，
         # 从而把可取消的 steering 又变回串行对话。
@@ -370,7 +386,13 @@ class AgentRuntime:
             if resolved_session_id is None:
                 raise RuntimeError("请先创建或选择会话")
             turn_key = self._call(
-                self._submit(resolved_session_id, text, mode, references)
+                self._submit(
+                    resolved_session_id,
+                    text,
+                    mode,
+                    references,
+                    unattended_policy,
+                )
             )
         try:
             while True:
@@ -554,9 +576,12 @@ class AgentRuntime:
         text: str,
         mode: ModeKind | None,
         references: tuple[FileReference, ...],
+        unattended_policy: UnattendedPolicy | None,
     ) -> tuple[str, int, int]:
         live = await self._ensure_live(session_id)
-        submission_id = live.handle.submit(UserInput(text, mode, references))
+        submission_id = live.handle.submit(
+            UserInput(text, mode, references, unattended_policy)
+        )
         live.active_submission_id = submission_id
         turn_key = (session_id, live.generation, submission_id)
         # submit() 不会让出事件循环，因此调度器还没来得及发 TurnStarted；
@@ -820,12 +845,25 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     raise ValueError("text 必须是字符串")
                 mode = _mode_body(body)
                 references = _reference_paths(body)
+                unattended_policy = _unattended_policy_body(body)
                 if route[1] == "messages/stream":
                     self._stream_events(
-                        self.server.runtime.ask_events(text, route[0], mode, references)
+                        self.server.runtime.ask_events(
+                            text,
+                            route[0],
+                            mode,
+                            references,
+                            unattended_policy,
+                        )
                     )
                 else:
-                    events = self.server.runtime.ask(text, route[0], mode, references)
+                    events = self.server.runtime.ask(
+                        text,
+                        route[0],
+                        mode,
+                        references,
+                        unattended_policy,
+                    )
                     self._send_json(
                         HTTPStatus.OK,
                         {"events": [_event_json(event) for event in events]},
@@ -932,6 +970,24 @@ def _reference_paths(body: dict[str, Any]) -> tuple[str, ...]:
         else:
             raise ValueError("references 只能包含文件路径")
     return tuple(paths)
+
+
+def _unattended_policy_body(
+    body: dict[str, Any],
+) -> UnattendedPolicy | None:
+    raw_policy = body.get("unattended")
+    if raw_policy is None:
+        return None
+    if not isinstance(raw_policy, dict) or set(raw_policy) != {"access", "allow_web"}:
+        raise ValueError("unattended 必须且只能包含 access 和 allow_web")
+    if not isinstance(raw_policy["access"], str):
+        raise ValueError("unattended.access 必须是字符串")
+    if not isinstance(raw_policy["allow_web"], bool):
+        raise ValueError("unattended.allow_web 必须是布尔值")
+    return UnattendedPolicy(
+        UnattendedAccess.parse(raw_policy["access"]),
+        raw_policy["allow_web"],
+    )
 
 
 def _undo_paths(body: dict[str, Any]) -> list[str]:

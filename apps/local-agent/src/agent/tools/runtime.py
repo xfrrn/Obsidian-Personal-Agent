@@ -15,6 +15,7 @@ from agent.permissions import (
     ToolAccess,
 )
 from agent.protocol.mode import ModeKind
+from agent.protocol.op import UnattendedAccess, UnattendedPolicy
 from agent.tools.invocation import ToolInvocation
 from agent.tools.router import ToolRouter
 from agent.tools.types import ToolExecution
@@ -84,9 +85,12 @@ class ToolCallRuntime:
         invocation: ToolInvocation,
         submission_id: int | None = None,
         mode: ModeKind = ModeKind.DEFAULT,
+        unattended_policy: UnattendedPolicy | None = None,
     ) -> ToolExecution:
         task = asyncio.create_task(
-            self._dispatch_with_gate(invocation, submission_id, mode),
+            self._dispatch_with_gate(
+                invocation, submission_id, mode, unattended_policy
+            ),
             name=f"agent-tool-{invocation.call_id}",
         )
         self._running[invocation.call_id] = task
@@ -111,6 +115,7 @@ class ToolCallRuntime:
         invocation: ToolInvocation,
         submission_id: int | None,
         mode: ModeKind,
+        unattended_policy: UnattendedPolicy | None,
     ) -> ToolExecution:
         async with self._execution_gate.hold(
             self._router.supports_parallel_tool_calls(invocation)
@@ -125,6 +130,11 @@ class ToolCallRuntime:
                 return await self._router.dispatch(
                     invocation, mode=mode, submission_id=submission_id
                 )
+            denial = _unattended_denial(
+                invocation.name, requirement.access, unattended_policy
+            )
+            if denial is not None:
+                return ToolExecution(denial, is_error=True)
             request = PermissionRequest(
                 submission_id=submission_id,
                 call_id=invocation.call_id,
@@ -168,3 +178,25 @@ class ToolCallRuntime:
         self._cancel_requested.add(call_id)
         task.cancel()
         return True
+
+
+def _unattended_denial(
+    tool_name: str,
+    access: ToolAccess,
+    policy: UnattendedPolicy | None,
+) -> str | None:
+    if policy is None:
+        return None
+    if tool_name in {"exec_command", "write_stdin", "obsidian_command"} or access in {
+        ToolAccess.OS_SANDBOX_EXECUTION,
+        ToolAccess.HOST_EXECUTION,
+    }:
+        return "无人值守任务不允许执行 Shell 或宿主命令。"
+    if not policy.allow_web and tool_name in {"web_search", "web_fetch"}:
+        return "无人值守任务未获得互联网访问权限。"
+    if (
+        policy.access is UnattendedAccess.READ_ONLY
+        and access is ToolAccess.WORKSPACE_WRITE
+    ):
+        return "无人值守任务的权限为 read-only，不能修改工作区。"
+    return None

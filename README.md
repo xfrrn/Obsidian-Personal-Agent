@@ -81,6 +81,12 @@ obsidian commands filter=linter
 
 三个工具都直接维护 Markdown，不依赖 Bases 或 Tasks 私有 API。Properties 修改会自动反映到 Bases；需要统一格式时，在一次 Agent 操作结束后再通过 `obsidian_command` 运行 Linter。
 
+### 定时任务
+
+在插件设置的“定时任务”中可以添加每日任务。Obsidian 打开期间插件每分钟检查一次，到点后在任务自己的持久化会话中提交指令；错过时间会在下一次检查时补执行一次，也可以手动“立即运行”。
+
+任务权限只能缩小全局 Agent 权限：可选择只读或允许修改 Vault，并单独决定是否开放 Web 工具。无人值守回合始终禁用 Shell 和 Obsidian 宿主命令，失败当天不会自动重试，执行结果与文件变更继续进入现有会话和变更记录。
+
 ## 开发
 
 ```powershell
