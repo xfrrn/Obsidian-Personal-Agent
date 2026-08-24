@@ -67,6 +67,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
     """运行一个上下文已冻结的用户回合，并仅通过 TurnEventBus 对外暴露状态。"""
 
     started_at = time.monotonic()
+    session.conversation.clear_pending_model_inputs()
     _LOGGER.info("turn.started")
     try:
         user_message = session.conversation.append_user(
@@ -94,7 +95,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
             compacted_summary = session.context_window.render_summary()
             messages = build_messages(
                 context.system_prompt,
-                session.conversation.snapshot(),
+                session.conversation.model_snapshot(),
                 context_messages,
                 compacted_summary,
             )
@@ -117,7 +118,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
                         raise
                     messages = build_messages(
                         context.system_prompt,
-                        session.conversation.snapshot(),
+                        session.conversation.model_snapshot(),
                         context_messages,
                         session.context_window.render_summary(),
                     )
@@ -159,6 +160,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
             )
             session.emit(AssistantResponseReceived(context.submission_id, response, streamed))
             if not needs_follow_up:
+                session.conversation.clear_pending_model_inputs()
                 _LOGGER.info("turn.finished", extra={"duration_ms": _elapsed_ms(started_at)})
                 session.emit(TurnFinished(context.submission_id))
                 return
@@ -172,6 +174,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
                     context.skill_snapshot,
                 )
     except asyncio.CancelledError:
+        session.conversation.clear_pending_model_inputs()
         _LOGGER.info("turn.cancelled", extra={"duration_ms": _elapsed_ms(started_at)})
         before = len(session.conversation.messages)
         interrupted_results = session.conversation.complete_interrupted_tools()
@@ -200,6 +203,7 @@ async def _run_turn(session: Session, context: TurnContext) -> None:
         session.emit(TurnInterrupted(context.submission_id))
         raise
     except Exception as exc:
+        session.conversation.clear_pending_model_inputs()
         _LOGGER.error("turn.failed", extra={"duration_ms": _elapsed_ms(started_at), "error_type": type(exc).__name__})
         before = len(session.conversation.messages)
         interrupted_results = session.conversation.complete_interrupted_tools()
@@ -274,6 +278,11 @@ async def _run_tool_calls(
             invocation.call_id, invocation.name, execution.content
         )
         completed.append((invocation, execution, status, message))
+    for _, execution, status, _ in completed:
+        if status is ToolResultStatus.SUCCESS and execution.image_url is not None:
+            session.conversation.queue_image_input(
+                execution.image_url, execution.image_detail
+            )
     # 同一模型响应若包含多次更新，以调用顺序中的最后一个完整快照为当前状态。
     plan_update = next(
         (
@@ -412,7 +421,7 @@ async def _auto_compact_if_needed(
     active_tokens = session.token_counter.estimate_request(
         build_messages(
             context.system_prompt,
-            session.conversation.snapshot(),
+            session.conversation.model_snapshot(),
             context_messages,
             compacted_summary,
         ),

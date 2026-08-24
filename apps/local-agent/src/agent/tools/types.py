@@ -114,3 +114,5 @@ class ToolExecution:
     is_error: bool = False
     interrupted: bool = False
     plan_update: PlanUpdate | None = None
+    image_url: str | None = None
+    image_detail: str = "auto"

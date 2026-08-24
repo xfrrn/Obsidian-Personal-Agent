@@ -10,6 +10,24 @@ from agent.llm.types import TokenUsage
 
 
 class TokenCounterTest(unittest.TestCase):
+    def test_base64_image_is_counted_as_an_image_not_text(self) -> None:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64," + "A" * 1_000_000,
+                            "detail": "auto",
+                        },
+                    }
+                ],
+            }
+        ]
+
+        self.assertLess(TokenCounter("test-model").estimate_request(messages, []), 10_000)
+
     def test_records_server_usage_and_never_relaxes_calibration(self) -> None:
         messages = [{"role": "user", "content": "请分析这个 Python 文件。"}]
         counter = TokenCounter("gpt-4.1-mini")

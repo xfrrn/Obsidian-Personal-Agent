@@ -140,6 +140,7 @@ class ContextToolsTest(unittest.IsolatedAsyncioTestCase):
                 "query_tasks",
                 "update_plan",
                 "update_properties",
+                "view_image",
             ],
         )
 

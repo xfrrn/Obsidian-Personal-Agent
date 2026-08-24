@@ -35,6 +35,7 @@ from agent.tools.handlers.new_context_window import NewContextWindowTool
 from agent.tools.handlers.obsidian_command import ObsidianCommandTool
 from agent.tools.handlers.update_plan import UpdatePlanTool
 from agent.tools.handlers.update_properties import UpdatePropertiesTool
+from agent.tools.handlers.view_image import ViewImageTool
 from agent.tools.handlers.web_fetch import WebFetchTool
 from agent.tools.handlers.web_search import WebSearchTool
 from agent.tools.handlers.write_stdin import WriteStdinTool
@@ -89,6 +90,7 @@ def create_session(
         QueryTasksTool(settings),
         UpdatePlanTool(),
         UpdatePropertiesTool(settings),
+        ViewImageTool(settings),
     ]
     if (search_provider is None) != (fetch_provider is None):
         raise ValueError("web_search 和 web_fetch Provider 必须同时提供")

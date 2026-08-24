@@ -223,6 +223,7 @@ class ProcessInteractionTest(unittest.IsolatedAsyncioTestCase):
                 "query_tasks",
                 "update_plan",
                 "update_properties",
+                "view_image",
                 "write_stdin",
             },
         )

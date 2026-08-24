@@ -26,6 +26,7 @@ class ConversationHistory:
     def __init__(self) -> None:
         self._messages: list[dict[str, Any]] = []
         self._pending_tool_calls: dict[str, str] = {}
+        self._pending_model_inputs: list[dict[str, Any]] = []
 
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -35,6 +36,37 @@ class ConversationHistory:
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [dict(message) for message in self._messages]
+
+    def model_snapshot(self) -> list[dict[str, Any]]:
+        """返回持久历史和本回合临时的多模态输入。"""
+
+        return [
+            *(dict(message) for message in self._messages),
+            *(dict(message) for message in self._pending_model_inputs),
+        ]
+
+    def queue_image_input(self, image_url: str, detail: str) -> None:
+        if not image_url.startswith("data:image/") or detail not in {
+            "auto",
+            "low",
+            "high",
+        }:
+            raise ValueError("图片输入格式无效")
+        self._pending_model_inputs.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "view_image 返回的图片内容。"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url, "detail": detail},
+                    },
+                ],
+            }
+        )
+
+    def clear_pending_model_inputs(self) -> None:
+        self._pending_model_inputs.clear()
 
     def append_user(
         self, text: str, references: tuple[FileReference, ...] = ()
@@ -81,6 +113,7 @@ class ConversationHistory:
     def replace(self, messages: list[dict[str, Any]]) -> None:
         self._messages[:] = (dict(message) for message in messages)
         self._pending_tool_calls.clear()
+        self._pending_model_inputs.clear()
         # 恢复可能发生在工具执行中途；重建未完成调用后，调用方才能补齐中断结果。
         for message in self._messages:
             if message.get("role") == "assistant":

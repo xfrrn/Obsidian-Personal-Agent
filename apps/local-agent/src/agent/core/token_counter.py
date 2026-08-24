@@ -15,6 +15,9 @@ except ImportError:  # pragma: no cover - 部署环境可只依赖服务端 usag
     tiktoken = None
 
 
+_IMAGE_TOKEN_ALLOWANCE = 8_192
+
+
 class ContextBudgetError(ValueError):
     """自动压缩后仍无法容纳当前请求。"""
 
@@ -77,15 +80,47 @@ class TokenCounter:
         self._calibration_factor = max(self._calibration_factor, usage.prompt_tokens / max(base_tokens, 1))
 
     def _base_estimate(self, messages: list[dict[str, Any]], tool_specs: list[dict[str, Any]]) -> int:
-        return 3 + sum(self._json_tokens(message) + 4 for message in messages) + sum(
-            self._json_tokens(tool) + 12 for tool in tool_specs
+        return (
+            3
+            + sum(self._json_tokens(message) + 4 for message in messages)
+            + sum(self._json_tokens(tool) + 12 for tool in tool_specs)
+            + _IMAGE_TOKEN_ALLOWANCE * sum(_image_input_count(message) for message in messages)
         )
 
     def _json_tokens(self, value: object) -> int:
-        payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        payload = json.dumps(
+            _redact_image_data(value), ensure_ascii=False, separators=(",", ":")
+        )
         if self._encoding is not None:
             return len(self._encoding.encode(payload))
 
         ascii_characters = sum(character.isascii() for character in payload)
         non_ascii_characters = len(payload) - ascii_characters
         return math.ceil(ascii_characters / 3) + non_ascii_characters
+
+
+def _redact_image_data(value: object) -> object:
+    if isinstance(value, dict):
+        if value.get("type") == "image_url" and isinstance(
+            image_url := value.get("image_url"), dict
+        ):
+            url = image_url.get("url")
+            if isinstance(url, str) and url.startswith("data:image/"):
+                return {
+                    **value,
+                    "image_url": {**image_url, "url": "data:image/[base64 omitted]"},
+                }
+        return {key: _redact_image_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_image_data(item) for item in value]
+    return value
+
+
+def _image_input_count(value: object) -> int:
+    if isinstance(value, dict):
+        return (value.get("type") == "image_url") + sum(
+            _image_input_count(item) for item in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return sum(_image_input_count(item) for item in value)
+    return 0
