@@ -27,6 +27,7 @@ from agent.core.loop import start_agent
 from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInterrupted
 from agent.core.turn.public_events import PublicEventAdapter
 from agent.memory import read_editable_memory, save_memory_override
+from agent.mcp import McpManager
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
 from agent.skills.loader import discover_skills, is_valid_skill_name
@@ -99,6 +100,7 @@ class AgentRuntime:
         self._store = SessionStore(settings.session_db_path)
         self._changes = ChangeJournal(settings.workspace, settings.session_db_path)
         self._sessions: dict[str, LiveSession] = {}
+        self._mcp_manager: McpManager | None = None
         self._next_generation = 0
         self._default_session_id: str | None = None
         self._turn_events: dict[tuple[str, int, int], asyncio.Queue[Event]] = {}
@@ -497,6 +499,10 @@ class AgentRuntime:
 
         self._next_generation += 1
         generation = self._next_generation
+        if self._mcp_manager is None:
+            manager = McpManager(self._settings.mcp_config_path)
+            await manager.start()
+            self._mcp_manager = manager
         client = self._client_factory() if self._client_factory else None
         handle, runner = await start_agent(
             self._settings,
@@ -506,6 +512,7 @@ class AgentRuntime:
             change_journal=self._changes,
             search_provider=self._search_provider,
             fetch_provider=self._fetch_provider,
+            mcp_manager=self._mcp_manager,
         )
         live = LiveSession(handle, runner, generation)
         self._sessions[session_id] = live
@@ -631,6 +638,9 @@ class AgentRuntime:
             for session_id, _ in live_sessions:
                 self._changes.finish_active_session(session_id)
         self._sessions.clear()
+        if self._mcp_manager is not None:
+            await self._mcp_manager.close()
+            self._mcp_manager = None
 
     def metrics(self) -> dict[str, Any]:
         """返回当前 Python 进程内跨会话累计的安全监控数据。"""

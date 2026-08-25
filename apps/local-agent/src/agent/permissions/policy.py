@@ -34,6 +34,18 @@ class PermissionPolicy:
                 PermissionDecisionKind.DENY,
                 f"权限策略拒绝：Plan Mode 不允许 {access.value}。",
             )
+        if requirement.approval_required is True:
+            if self.approval_policy is ApprovalPolicy.NEVER:
+                return PermissionDecision(
+                    PermissionDecisionKind.DENY,
+                    "权限策略拒绝：工具要求审批，但审批策略为 never。",
+                )
+            return PermissionDecision(
+                PermissionDecisionKind.REQUIRE_APPROVAL,
+                requirement.approval_reason or "工具要求用户批准本次调用。",
+            )
+        if requirement.approval_required is False:
+            return PermissionDecision(PermissionDecisionKind.ALLOW)
         if access is ToolAccess.READ_ONLY:
             return PermissionDecision(PermissionDecisionKind.ALLOW)
         if access is ToolAccess.WORKSPACE_WRITE:

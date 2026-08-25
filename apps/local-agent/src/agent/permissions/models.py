@@ -51,6 +51,8 @@ class PermissionRequirement:
 
     access: ToolAccess
     approval_reason: str | None = None
+    # None 使用原有权限策略；True/False 供已配置的外部工具显式要求/免除审批。
+    approval_required: bool | None = None
 
 
 class PermissionDecisionKind(str, Enum):

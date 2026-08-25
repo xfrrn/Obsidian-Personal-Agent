@@ -58,6 +58,17 @@ class TurnEventBusTest(unittest.IsolatedAsyncioTestCase):
         event = await adapter.receive()
         self.assertEqual(event.data["command"], "obsidian command id=obsidian-linter:lint-file")
 
+    async def test_approval_event_renders_mcp_arguments(self) -> None:
+        adapter = PublicEventAdapter()
+        invocation = ToolInvocation(
+            "call-3", "mcp__demo__write", {"url": "https://example.com"}
+        )
+
+        adapter(ToolApprovalRequested(9, invocation, "调用外部 MCP Server"))
+
+        event = await adapter.receive()
+        self.assertIn('"url": "https://example.com"', event.data["command"])
+
     async def test_adapter_preserves_public_event_shape(self) -> None:
         invocation = ToolInvocation("call-1", "read_file", {"path": "README.md"})
         bus = TurnEventBus()

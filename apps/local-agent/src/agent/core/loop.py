@@ -21,6 +21,7 @@ from agent.core.turn.audit import audit_events
 from agent.core.turn.events import RuntimeShutdown, ToolApprovalRequested, TurnError
 from agent.llm.client import ModelClient
 from agent.memory import LongTermMemory, MemoryContextContributor
+from agent.mcp import McpInstructionsContributor, McpManager
 from agent.permissions import PermissionManager, PermissionPolicy, PermissionRequest
 from agent.protocol.op import CancelTool, Interrupt, ResolveApproval, Shutdown, UserInput
 from agent.skills.service import SYSTEM_SKILLS_DIR, SkillsService
@@ -69,6 +70,7 @@ def create_session(
     change_journal: ChangeJournal | None = None,
     search_provider: SearchProvider | None = None,
     fetch_provider: FetchProvider | None = None,
+    mcp_manager: McpManager | None = None,
 ) -> Session:
     """在唯一组合根创建服务；核心模块只接收已组合好的依赖。"""
 
@@ -114,6 +116,8 @@ def create_session(
                 WriteStdinTool(process_manager),
             )
         )
+    if mcp_manager is not None:
+        handlers.extend(mcp_manager.handlers())
     tools = ToolRegistry(handlers)
     tool_router = ToolRouter(tools)
 
@@ -156,6 +160,10 @@ def create_session(
             CurrentTimeContributor(),
             WorldStateContributor(settings.workspace),
         ) + (
+            (McpInstructionsContributor(mcp_manager),)
+            if mcp_manager is not None
+            else ()
+        ) + (
             (MemoryContextContributor(settings.memory_dir),)
             if settings.use_memories
             else ()
@@ -186,6 +194,7 @@ async def start_agent(
     change_journal: ChangeJournal | None = None,
     search_provider: SearchProvider | None = None,
     fetch_provider: FetchProvider | None = None,
+    mcp_manager: McpManager | None = None,
 ) -> tuple[AgentHandle, asyncio.Task[None]]:
     """嵌入式入口：调用方取得 handle 后即可提交操作并消费事件。"""
 
@@ -202,51 +211,65 @@ async def start_agent(
             if stored_session is None:
                 raise ValueError(f"会话不存在或已归档: {session_id}")
 
-    handle = AgentHandle()
-    session = create_session(
-        resolved_settings,
-        handle,
-        client,
-        session_id=session_id,
-        store=store,
-        stored_session=stored_session,
-        change_journal=change_journal,
-        search_provider=search_provider,
-        fetch_provider=fetch_provider,
-    )
-    memory = (
-        LongTermMemory(
-            store,
-            session.client,
-            resolved_settings.memory_dir,
-            idle_hours=resolved_settings.memory_idle_hours,
-            max_sessions=resolved_settings.memory_max_sessions,
+    owned_mcp = None
+    if mcp_manager is None:
+        owned_mcp = McpManager(resolved_settings.mcp_config_path)
+        mcp_manager = owned_mcp
+    await mcp_manager.start()
+    try:
+        handle = AgentHandle()
+        session = create_session(
+            resolved_settings,
+            handle,
+            client,
+            session_id=session_id,
+            store=store,
+            stored_session=stored_session,
+            change_journal=change_journal,
+            search_provider=search_provider,
+            fetch_provider=fetch_provider,
+            mcp_manager=mcp_manager,
         )
-        if store is not None
-        and session_id is not None
-        and resolved_settings.generate_memories
-        else None
-    )
-    if stored_session is not None:
-        if stored_session.last_turn_state == "running":
-            # 进程句柄不能跨 Agent 进程恢复；告警比假装仍可 write_stdin 更安全。
-            _LOGGER.warning("session.recovered_possible_orphan_processes")
-        before = len(session.conversation.messages)
-        session.conversation.complete_interrupted_tools()
-        repaired = session.conversation.snapshot()[before:]
-        if repaired or stored_session.last_turn_state == "running":
-            await session.persist_messages(
-                None,
-                tuple((message, False) for message in repaired),
-                "interrupted",
+        memory = (
+            LongTermMemory(
+                store,
+                session.client,
+                resolved_settings.memory_dir,
+                idle_hours=resolved_settings.memory_idle_hours,
+                max_sessions=resolved_settings.memory_max_sessions,
             )
+            if store is not None
+            and session_id is not None
+            and resolved_settings.generate_memories
+            else None
+        )
+        if stored_session is not None:
+            if stored_session.last_turn_state == "running":
+                # 进程句柄不能跨 Agent 进程恢复；告警比假装仍可 write_stdin 更安全。
+                _LOGGER.warning("session.recovered_possible_orphan_processes")
+            before = len(session.conversation.messages)
+            session.conversation.complete_interrupted_tools()
+            repaired = session.conversation.snapshot()[before:]
+            if repaired or stored_session.last_turn_state == "running":
+                await session.persist_messages(
+                    None,
+                    tuple((message, False) for message in repaired),
+                    "interrupted",
+                )
+    except BaseException:
+        if owned_mcp is not None:
+            await owned_mcp.close()
+        raise
     return handle, asyncio.create_task(
-        _run_session(session, handle, memory), name="agent-submission-loop"
+        _run_session(session, handle, memory, owned_mcp), name="agent-submission-loop"
     )
 
 
 async def _run_session(
-    session: Session, handle: AgentHandle, memory: LongTermMemory | None = None
+    session: Session,
+    handle: AgentHandle,
+    memory: LongTermMemory | None = None,
+    owned_mcp: McpManager | None = None,
 ) -> None:
     """在组合根注册审计 watcher，并让其随 Session 关闭有序收尾。"""
 
@@ -266,6 +289,8 @@ async def _run_session(
             with suppress(asyncio.CancelledError):
                 await memory_task
         await session.aclose()
+        if owned_mcp is not None:
+            await owned_mcp.close()
         await audit_task
 
 

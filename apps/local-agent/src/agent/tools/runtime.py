@@ -131,7 +131,7 @@ class ToolCallRuntime:
                     invocation, mode=mode, submission_id=submission_id
                 )
             denial = _unattended_denial(
-                invocation.name, requirement.access, unattended_policy
+                invocation.name, requirement, unattended_policy
             )
             if denial is not None:
                 return ToolExecution(denial, is_error=True)
@@ -182,11 +182,14 @@ class ToolCallRuntime:
 
 def _unattended_denial(
     tool_name: str,
-    access: ToolAccess,
+    requirement: PermissionRequirement,
     policy: UnattendedPolicy | None,
 ) -> str | None:
     if policy is None:
         return None
+    access = requirement.access
+    if requirement.approval_required is True:
+        return "无人值守任务不能执行需要用户审批的工具。"
     if tool_name in {"exec_command", "write_stdin", "obsidian_command"} or access in {
         ToolAccess.OS_SANDBOX_EXECUTION,
         ToolAccess.HOST_EXECUTION,

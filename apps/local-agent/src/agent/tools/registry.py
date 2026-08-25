@@ -40,6 +40,14 @@ class ToolRegistry:
         handler = self._handlers.get(invocation.name)
         if handler is None:
             return None
+        requirement_resolver = getattr(handler, "permission_requirement", None)
+        if callable(requirement_resolver):
+            requirement = requirement_resolver(invocation.arguments, mode=mode)
+            if not isinstance(requirement, PermissionRequirement):
+                raise ValueError(
+                    f"工具 {invocation.name} 返回了无效的 permission_requirement"
+                )
+            return requirement
         resolver = getattr(handler, "required_access_for", None)
         access = (
             resolver(invocation.arguments, mode=mode)

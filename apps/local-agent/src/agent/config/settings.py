@@ -42,6 +42,7 @@ class Settings:
     log_format: str = "text"
     temperature: float = 0.0
     session_db_path: Path = field(default_factory=lambda: _default_session_db(Path.cwd()))
+    mcp_config_path: Path | None = None
     # 直接构造 Settings 的测试/嵌入方保持无外部副作用；from_env 为正常入口启用记忆。
     generate_memories: bool = False
     use_memories: bool = False
@@ -196,6 +197,9 @@ class Settings:
                     str(_default_session_db(workspace)),
                 )
             ).expanduser().resolve(),
+            mcp_config_path=Path(
+                env_value("AGENT_MCP_CONFIG", str(_default_mcp_config(workspace)))
+            ).expanduser().resolve(),
             generate_memories=env_flag("AGENT_GENERATE_MEMORIES", True),
             use_memories=env_flag("AGENT_USE_MEMORIES", True),
             memory_dir=Path(
@@ -218,6 +222,13 @@ def _default_session_db(workspace: Path) -> Path:
         return Path.home() / ".codex-agent" / "sessions.db"
     except RuntimeError:
         return workspace / ".agent" / "sessions.db"
+
+
+def _default_mcp_config(workspace: Path) -> Path:
+    try:
+        return Path.home() / ".codex-agent" / "config.toml"
+    except RuntimeError:
+        return workspace / ".agent" / "config.toml"
 
 
 def _parse_disabled_skills(value: str) -> frozenset[str]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import asyncio
 
 from agent.core.turn.events import (
@@ -118,4 +120,8 @@ def _approval_command(invocation: ToolInvocation) -> str:
         command_id = invocation.arguments.get("command_id")
         if isinstance(command_id, str):
             return f"obsidian command id={command_id}"
+    if invocation.name.startswith("mcp__"):
+        return json.dumps(
+            invocation.arguments, ensure_ascii=False, indent=2
+        )[:2_000]
     return ""
