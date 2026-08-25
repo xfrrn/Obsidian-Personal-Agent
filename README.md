@@ -54,6 +54,10 @@ npm run build
 
 内置 `$skill-installer` 可列出 `openai/skills` 的 curated/experimental Skills，或从指定 GitHub 仓库路径安装到上述持久化目录；安装复用 Shell、网络和宿主执行审批，不覆盖同名目录，新 Skill 在下一回合自动出现。Windows 一体包使用自带 PowerShell 脚本，不要求目标电脑安装 Python。
 
+### MCP 服务
+
+在 `设置 → Personal Knowledge Agent → MCP 服务` 可编辑 Codex 格式的 `[mcp_servers.<name>]` TOML，并查看每个 Server 的连接、Tools、Resources 和 OAuth 状态。本地第三方 Server 使用 `command`/`args`（stdio），远程 Server 使用 `url`（Streamable HTTP）；保存后 Agent 会校验配置并安全重载。Bearer 密钥只引用环境变量，OAuth Server 可直接在同一设置页完成浏览器授权。完整字段和示例见 [本地 Agent 文档](apps/local-agent/README.md)。
+
 ### 调用 Obsidian 命令
 
 内置 `obsidian_command` 工具可以列出并执行 Obsidian 命令面板中的命令，包括第三方插件注册的命令。它不依赖 Agent 的 Shell 开关；执行命令时仍遵循当前宿主执行权限和单次审批策略。
@@ -65,7 +69,7 @@ obsidian version
 obsidian commands filter=linter
 ```
 
-工具每次调用都会重新读取 Windows 用户和系统 PATH，因此启用 CLI 后不必重启 Agent。如果命令仍不可用，工具会返回上述安装与启用提示。当前版本只支持列出命令和按命令 ID 执行，不包含 MCP、插件私有 API 或专用插件适配器。
+工具每次调用都会重新读取 Windows 用户和系统 PATH，因此启用 CLI 后不必重启 Agent。如果命令仍不可用，工具会返回上述安装与启用提示。当前版本只支持列出命令和按命令 ID 执行，不包含插件私有 API 或专用插件适配器。
 
 ### 创建笔记 Frontmatter
 

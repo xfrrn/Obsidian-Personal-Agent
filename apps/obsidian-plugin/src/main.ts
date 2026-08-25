@@ -5,6 +5,7 @@ import {
   AgentSkill,
   ApprovalPolicy,
   DEFAULT_SETTINGS,
+  McpServerStatus,
   SandboxMode,
   WebApiKeys,
   WebProviderName
@@ -173,6 +174,77 @@ export default class CodeXAgentPlugin extends Plugin {
       const payload = response.json as { error?: unknown };
       throw new Error(typeof payload?.error === "string" ? payload.error : `保存长期记忆失败：HTTP ${response.status}`);
     }
+  }
+
+  async getMcpConfiguration(): Promise<{ path: string; content: string }> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/mcp/config`,
+      method: "GET",
+      throw: false
+    });
+    const payload = response.json as { error?: unknown; path?: unknown; content?: unknown };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `读取 MCP 配置失败：HTTP ${response.status}`);
+    }
+    return {
+      path: typeof payload.path === "string" ? payload.path : "",
+      content: typeof payload.content === "string" ? payload.content : ""
+    };
+  }
+
+  async updateMcpConfiguration(content: string): Promise<void> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/mcp/config`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+      throw: false
+    });
+    if (response.status < 200 || response.status >= 300) {
+      const payload = response.json as { error?: unknown };
+      throw new Error(typeof payload?.error === "string" ? payload.error : `保存 MCP 配置失败：HTTP ${response.status}`);
+    }
+  }
+
+  async listMcpServers(): Promise<McpServerStatus[]> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/mcp/servers`,
+      method: "GET",
+      throw: false
+    });
+    const payload = response.json as { error?: unknown; servers?: unknown };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `读取 MCP 状态失败：HTTP ${response.status}`);
+    }
+    return Array.isArray(payload.servers) ? payload.servers as McpServerStatus[] : [];
+  }
+
+  async loginMcpServer(server: string): Promise<string | null> {
+    const payload = await this.mcpOAuthRequest("login", server) as { authorization_url?: unknown };
+    return typeof payload.authorization_url === "string" ? payload.authorization_url : null;
+  }
+
+  async logoutMcpServer(server: string): Promise<void> {
+    await this.mcpOAuthRequest("logout", server);
+  }
+
+  private async mcpOAuthRequest(action: "login" | "logout", server: string): Promise<object> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/mcp/oauth/${action}`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server }),
+      throw: false
+    });
+    const payload = response.json as { error?: unknown };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `MCP OAuth 失败：HTTP ${response.status}`);
+    }
+    return payload;
   }
 
   async runScheduledTask(taskId: string): Promise<void> {

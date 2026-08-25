@@ -899,6 +899,92 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(created["workspace"], str(workspace))
         self.assertTrue(db_created)
 
+    def test_http_mcp_configuration_can_be_edited_and_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            runtime = AgentRuntime(
+                replace(_settings(root), mcp_config_path=config), RecordingClient
+            )
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            content = '[mcp_servers.remote]\nurl = "https://example.com/mcp"\n'
+            try:
+                initial = _get_json(f"{address}/api/mcp/config")
+                updated = _post_json(
+                    f"{address}/api/mcp/config", {"content": content}
+                )
+                with self.assertRaises(HTTPError) as invalid:
+                    _post_json(
+                        f"{address}/api/mcp/config",
+                        {"content": "[mcp_servers.remote\n"},
+                    )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+            saved_content = config.read_text(encoding="utf-8")
+
+        self.assertEqual(initial, {"path": str(config), "content": ""})
+        self.assertEqual(updated, {"path": str(config), "content": content})
+        self.assertEqual(invalid.exception.code, 400)
+        self.assertEqual(saved_content, content)
+
+    def test_http_mcp_status_and_oauth_actions_are_loopback_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = AgentRuntime(_settings(Path(directory)), RecordingClient)
+            server = AgentHTTPServer(("127.0.0.1", 0), runtime)
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            address = f"http://127.0.0.1:{server.server_port}"
+            status = {
+                "servers": [
+                    {
+                        "name": "remote",
+                        "status": "failed",
+                        "auth": "oauth_not_authenticated",
+                    }
+                ]
+            }
+            try:
+                with (
+                    patch.object(runtime, "mcp_servers", return_value=status),
+                    patch.object(
+                        runtime,
+                        "begin_mcp_oauth",
+                        return_value={
+                            "server": "remote",
+                            "authorization_url": "https://auth.example/authorize",
+                        },
+                    ) as login,
+                    patch.object(runtime, "logout_mcp_oauth") as logout,
+                ):
+                    listed = _get_json(f"{address}/api/mcp/servers")
+                    started = _post_json(
+                        f"{address}/api/mcp/oauth/login", {"server": "remote"}
+                    )
+                    signed_out = _post_json(
+                        f"{address}/api/mcp/oauth/logout", {"server": "remote"}
+                    )
+                    callback_url = login.call_args.args[1]
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+                runtime.close()
+
+        self.assertEqual(listed, status)
+        self.assertEqual(started["authorization_url"], "https://auth.example/authorize")
+        self.assertEqual(signed_out, {"ok": True})
+        self.assertEqual(
+            callback_url,
+            f"http://127.0.0.1:{server.server_port}/api/mcp/oauth/callback",
+        )
+        logout.assert_called_once_with("remote")
+
     def test_runtime_rejects_permission_switch_during_a_turn(self) -> None:
         started = ThreadEvent()
         release = ThreadEvent()

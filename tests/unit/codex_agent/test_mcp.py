@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 import json
@@ -11,7 +12,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent.mcp import McpManager, load_mcp_config
+from agent.mcp import (
+    McpManager,
+    _OAuthStorage,
+    load_mcp_config,
+    load_mcp_settings,
+    save_mcp_config,
+)
+from mcp.shared.auth import OAuthToken
 from agent.permissions import (
     ApprovalPolicy,
     PermissionDecisionKind,
@@ -144,6 +152,10 @@ server = MCPServer("fixture", instructions="Use echo for text.")
 def echo(text: str) -> str:
     return "echo:" + text
 
+@server.resource("note://fixture", name="fixture-note")
+def note() -> str:
+    return "resource text"
+
 server.run()
 """,
                 encoding="utf-8",
@@ -156,17 +168,30 @@ server.run()
                 encoding="utf-8",
             )
             manager = McpManager(config)
-            await manager.start()
+            await asyncio.create_task(manager.start())
             try:
                 self.assertEqual(
                     [handler.spec.name for handler in manager.handlers()],
-                    ["mcp__fixture__echo"],
+                    [
+                        "mcp__fixture__echo",
+                        "list_mcp_resources",
+                        "list_mcp_resource_templates",
+                        "read_mcp_resource",
+                    ],
                 )
                 execution = await manager.handlers()[0].run({"text": "hello"})
                 self.assertIn("echo:hello", execution.content)
                 self.assertIn("Use echo for text", manager.instructions or "")
+                listed = json.loads(await manager.list_resources({"server": "fixture"}))
+                self.assertEqual(listed["resources"][0]["uri"], "note://fixture")
+                read = json.loads(
+                    await manager.read_resource(
+                        {"server": "fixture", "uri": "note://fixture"}
+                    )
+                )
+                self.assertEqual(read["contents"][0]["text"], "resource text")
             finally:
-                await manager.close()
+                await asyncio.create_task(manager.close())
 
     async def test_discovers_filters_approves_and_calls_mcp_tools(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -237,6 +262,99 @@ approval_mode = "prompt"
             )
             with self.assertRaisesRegex(ValueError, "必须且只能设置 command 或 url"):
                 load_mcp_config(config)
+
+    def test_save_config_validates_before_replacing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            original = '[mcp_servers.demo]\ncommand = "server"\n'
+            config.write_text(original, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "TOML 无效"):
+                save_mcp_config(config, "[mcp_servers.demo\n")
+            self.assertEqual(config.read_text(encoding="utf-8"), original)
+
+            updated = '[mcp_servers.remote]\nurl = "https://example.com/mcp"\n'
+            save_mcp_config(config, updated)
+            self.assertEqual(config.read_text(encoding="utf-8"), updated)
+
+    def test_codex_compatible_oauth_fields_are_parsed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text(
+                """
+mcp_oauth_callback_port = 8000
+mcp_oauth_callback_url = "http://127.0.0.1:8000/api/mcp/oauth/callback"
+
+[mcp_servers.remote]
+url = "https://example.com/mcp"
+scopes = ["read", "write"]
+oauth_resource = "https://example.com/"
+
+[mcp_servers.remote.oauth]
+client_id = "obsidian-agent"
+callback_port = 8000
+""",
+                encoding="utf-8",
+            )
+            settings = load_mcp_settings(config)
+
+        self.assertEqual(settings.oauth_callback_port, 8000)
+        self.assertEqual(settings.servers[0].scopes, ("read", "write"))
+        self.assertEqual(settings.servers[0].oauth.client_id, "obsidian-agent")
+
+    def test_transport_specific_fields_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text(
+                '[mcp_servers.demo]\ncommand = "server"\nhttp_headers = { X = "y" }\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "不支持 stdio"):
+                load_mcp_config(config)
+
+    async def test_oauth_login_matches_callback_by_state(self) -> None:
+        async def fake_login(
+            _manager: McpManager, _config: object, _callback: str, flow: object
+        ) -> None:
+            flow.state = "expected-state"
+            flow.redirect.set_result(
+                "https://auth.example/authorize?state=expected-state"
+            )
+            result = await flow.callback
+            self.assertEqual(result.code, "authorization-code")
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text(
+                '[mcp_servers.remote]\nurl = "https://example.com/mcp"\n',
+                encoding="utf-8",
+            )
+            manager = McpManager(config)
+            with patch.object(McpManager, "_run_oauth_login", fake_login):
+                started = await manager.begin_oauth_login(
+                    "remote", "http://127.0.0.1:8000/api/mcp/oauth/callback"
+                )
+                completed = await manager.complete_oauth_login(
+                    code="authorization-code", state="expected-state", iss=None
+                )
+
+        self.assertEqual(completed, "remote")
+        self.assertIn("authorization_url", started)
+
+    async def test_oauth_credentials_are_persisted_without_plaintext_on_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oauth.json"
+            storage = _OAuthStorage(path, "remote")
+            await storage.set_tokens(
+                OAuthToken(access_token="access-secret", refresh_token="refresh-secret")
+            )
+            restored = await storage.get_tokens()
+            raw = path.read_bytes()
+
+        self.assertEqual(restored.access_token if restored else None, "access-secret")
+        if os.name == "nt":
+            self.assertTrue(raw.startswith(b"DPAPI\0"))
+            self.assertNotIn(b"access-secret", raw)
 
     def test_permission_override_reuses_existing_policy(self) -> None:
         policy = PermissionPolicy(approval_policy=ApprovalPolicy.ON_REQUEST)

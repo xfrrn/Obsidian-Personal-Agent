@@ -15,7 +15,7 @@ Windows Agent 由仓库根目录的 `npm run package:windows` 在隔离 venv 中
 
 终端模式使用 `python -m agent.cli.main`。模型地址、沙盒、Shell 和会话数据库分别由 `OPENAI_BASE_URL`、`AGENT_SANDBOX_*`、`AGENT_ENABLE_SHELL` 和 `AGENT_SESSION_DB` 配置；`AGENT_DISABLED_SKILLS` 接受逗号分隔的 Skill 名称；跨会话记忆默认启用，可通过 `AGENT_GENERATE_MEMORIES`、`AGENT_USE_MEMORIES` 和 `AGENT_MEMORY_*` 调整。
 
-MCP Host 默认读取 `~/.codex-agent/config.toml`，可用 `AGENT_MCP_CONFIG` 指向其他文件。配置采用 Codex 的 `[mcp_servers.<name>]` 结构，支持 stdio、Streamable HTTP、环境变量密钥、工具过滤、超时和 `auto`、`prompt`、`writes`、`approve` 审批模式；修改后重启 Agent：
+MCP Host 默认读取 `~/.codex-agent/config.toml`，可用 `AGENT_MCP_CONFIG` 指向其他文件。配置采用 Codex 的 `[mcp_servers.<name>]` 结构，支持 stdio、Streamable HTTP、Bearer/OAuth、Tools、Resources、Server Instructions、工具过滤、超时和 `auto`、`prompt`、`writes`、`approve` 审批模式。Obsidian 设置页的“MCP 服务”可以查看连接状态、登录 OAuth、校验并立即重载这份配置；手动修改文件后需要重启 Agent：
 
 ```toml
 [mcp_servers.example]
@@ -31,7 +31,32 @@ tool_timeout_sec = 60
 approval_mode = "prompt"
 ```
 
-远程 Server 改用 `url`，Bearer Token 只配置环境变量名：`bearer_token_env_var = "EXAMPLE_TOKEN"`。当前版本不处理 OAuth 登录、Resources 或 Prompts。
+远程 Server 改用 `url`。Bearer Token 只配置环境变量名，并优先于 OAuth：
+
+```toml
+[mcp_servers.remote]
+url = "https://example.com/mcp"
+bearer_token_env_var = "EXAMPLE_TOKEN"
+http_headers = { X-Client = "obsidian" }
+env_http_headers = { X-Workspace-Token = "WORKSPACE_TOKEN" }
+```
+
+需要 OAuth 时不要设置 Bearer；动态客户端注册只需配置 URL，然后在 Obsidian 设置页点击“授权”。服务要求固定客户端 ID 或 scopes 时：
+
+```toml
+mcp_oauth_callback_port = 8000
+
+[mcp_servers.remote]
+url = "https://example.com/mcp"
+scopes = ["read", "write"]
+oauth_resource = "https://example.com/"
+
+[mcp_servers.remote.oauth]
+client_id = "registered-client-id"
+callback_port = 8000
+```
+
+`callback_port` 必须与 Agent 当前监听端口一致；使用反向代理时可改设完整的 `mcp_oauth_callback_url`。OAuth 凭据在 Windows 通过当前用户 DPAPI 加密，其他系统写入仅当前用户可读的文件。Agent 会向模型注册 `list_mcp_resources`、`list_mcp_resource_templates` 和 `read_mcp_resource`；MCP Prompts 不直接变成模型工具，未声明的 Sampling、Elicitation 和 Roots 客户端能力会按协议由 Server 跳过。
 
 内置 `$skill-installer` 通过已有 Shell 工具列出或安装 GitHub Skills，目标固定为会话数据库同目录的 `skills/`。安装经过现有宿主执行审批，同名目录不会覆盖；文件写入后由每回合的 Skill 快照自动发现。Windows 包内脚本仅依赖 PowerShell。
 

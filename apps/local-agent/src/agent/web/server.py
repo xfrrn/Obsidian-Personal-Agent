@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import base64
 import binascii
+import html
 import ipaddress
 import json
 import logging
@@ -27,7 +28,7 @@ from agent.core.loop import start_agent
 from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInterrupted
 from agent.core.turn.public_events import PublicEventAdapter
 from agent.memory import read_editable_memory, save_memory_override
-from agent.mcp import McpManager
+from agent.mcp import McpManager, read_mcp_config, save_mcp_config
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
 from agent.skills.loader import discover_skills, is_valid_skill_name
@@ -60,6 +61,7 @@ OBSIDIAN_APP_ORIGIN = "app://obsidian.md"
 MAX_SKILL_IMPORT_FILES = 500
 MAX_SKILL_IMPORT_BYTES = 10 * 1024 * 1024
 MAX_SKILL_IMPORT_BODY_BYTES = 16 * 1024 * 1024
+MAX_MCP_CONFIG_BODY_BYTES = 6 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -195,6 +197,72 @@ class AgentRuntime:
         """返回用户可编辑且 Agent 实际优先使用的长期记忆。"""
 
         return {"memory": read_editable_memory(self._settings.memory_dir)}
+
+    def mcp_configuration(self) -> dict[str, str]:
+        """返回 MCP TOML；接口仅允许本机读取。"""
+
+        path = self._settings.mcp_config_path
+        return {
+            "path": str(path) if path is not None else "",
+            "content": read_mcp_config(path),
+        }
+
+    def update_mcp_configuration(self, content: str) -> dict[str, str]:
+        """校验并原子保存 MCP TOML，让下一次会话重新发现工具。"""
+
+        with self._request_lock:
+            if self._turn_events or self._metrics.snapshot()["active_turns"]:
+                raise RuntimeError("运行中的回合结束后才能应用 MCP 配置")
+            save_mcp_config(self._settings.mcp_config_path, content)
+            self._call(self._shutdown())
+            return self.mcp_configuration()
+
+    def mcp_servers(self) -> dict[str, object]:
+        """连接已启用的 MCP Server 并返回模型实际可用的能力。"""
+
+        with self._request_lock:
+            if self._mcp_manager is None:
+                self._mcp_manager = McpManager(self._settings.mcp_config_path)
+            self._call(self._mcp_manager.start())
+            return self._mcp_manager.status()
+
+    def begin_mcp_oauth(self, server: str, callback_url: str) -> dict[str, object]:
+        with self._request_lock:
+            if self._turn_events or self._metrics.snapshot()["active_turns"]:
+                raise RuntimeError("运行中的回合结束后才能进行 MCP OAuth 授权")
+            if self._mcp_manager is None:
+                self._mcp_manager = McpManager(self._settings.mcp_config_path)
+            return self._call(
+                self._mcp_manager.begin_oauth_login(server, callback_url)
+            )
+
+    def complete_mcp_oauth(
+        self,
+        *,
+        code: str,
+        state: str | None,
+        iss: str | None,
+        error: str | None = None,
+    ) -> str:
+        with self._request_lock:
+            if self._mcp_manager is None:
+                raise ValueError("没有等待中的 MCP OAuth 授权")
+            server = self._call(
+                self._mcp_manager.complete_oauth_login(
+                    code=code, state=state, iss=iss, error=error
+                )
+            )
+            self._call(self._shutdown())
+            return server
+
+    def logout_mcp_oauth(self, server: str) -> None:
+        with self._request_lock:
+            if self._turn_events or self._metrics.snapshot()["active_turns"]:
+                raise RuntimeError("运行中的回合结束后才能退出 MCP OAuth")
+            if self._mcp_manager is None:
+                self._mcp_manager = McpManager(self._settings.mcp_config_path)
+            self._call(self._mcp_manager.logout_oauth(server))
+            self._call(self._shutdown())
 
     def update_memory(self, content: str) -> dict[str, str]:
         """保存用户维护的长期记忆；自动合并文件继续独立更新。"""
@@ -728,6 +796,48 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError) as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
+        if path == "/api/mcp/config":
+            if not _is_loopback_client(self.client_address[0]):
+                self._send_json(
+                    HTTPStatus.FORBIDDEN, {"error": "MCP 配置只允许本机读取"}
+                )
+                return
+            try:
+                self._send_json(HTTPStatus.OK, self.server.runtime.mcp_configuration())
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        if path == "/api/mcp/servers":
+            if not _is_loopback_client(self.client_address[0]):
+                self._send_json(
+                    HTTPStatus.FORBIDDEN, {"error": "MCP 状态只允许本机读取"}
+                )
+                return
+            try:
+                self._send_json(HTTPStatus.OK, self.server.runtime.mcp_servers())
+            except (RuntimeError, ValueError) as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"error": str(exc)})
+            return
+        if path == "/api/mcp/oauth/callback":
+            if not _is_loopback_client(self.client_address[0]):
+                self._send_html(HTTPStatus.FORBIDDEN, "MCP OAuth 回调只允许来自本机")
+                return
+            query = parse_qs(parsed.query)
+            state = query.get("state", [None])[0]
+            code = query.get("code", [""])[0]
+            iss = query.get("iss", [None])[0]
+            error = query.get("error_description", query.get("error", [None]))[0]
+            try:
+                server = self.server.runtime.complete_mcp_oauth(
+                    code=code, state=state, iss=iss, error=error
+                )
+                self._send_html(
+                    HTTPStatus.OK,
+                    f"MCP Server {html.escape(server)} 授权成功，可以关闭此页面。",
+                )
+            except (RuntimeError, ValueError, TimeoutError) as exc:
+                self._send_html(HTTPStatus.BAD_REQUEST, str(exc))
+            return
         if path == "/api/skills":
             if not _is_loopback_client(self.client_address[0]):
                 self._send_json(HTTPStatus.FORBIDDEN, {"error": "Skills 只允许本机读取"})
@@ -793,6 +903,55 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.server.runtime.update_memory(body["memory"]),
                 )
+                return
+            if path == "/api/mcp/config":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(
+                        HTTPStatus.FORBIDDEN,
+                        {"error": "MCP 配置只允许从本机修改"},
+                    )
+                    return
+                body = self._read_json_body(MAX_MCP_CONFIG_BODY_BYTES)
+                if set(body) != {"content"} or not isinstance(
+                    body["content"], str
+                ):
+                    raise ValueError("MCP 配置请求必须且只能包含 content 字符串")
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.update_mcp_configuration(body["content"]),
+                )
+                return
+            if path == "/api/mcp/oauth/login":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(
+                        HTTPStatus.FORBIDDEN, {"error": "MCP OAuth 只允许从本机启动"}
+                    )
+                    return
+                body = self._read_json_body()
+                if set(body) != {"server"} or not isinstance(body["server"], str):
+                    raise ValueError("MCP OAuth 请求必须且只能包含 server 字符串")
+                callback_url = (
+                    f"http://127.0.0.1:{self.server.server_address[1]}"
+                    "/api/mcp/oauth/callback"
+                )
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.begin_mcp_oauth(
+                        body["server"].strip(), callback_url
+                    ),
+                )
+                return
+            if path == "/api/mcp/oauth/logout":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(
+                        HTTPStatus.FORBIDDEN, {"error": "MCP OAuth 只允许从本机退出"}
+                    )
+                    return
+                body = self._read_json_body()
+                if set(body) != {"server"} or not isinstance(body["server"], str):
+                    raise ValueError("MCP OAuth 请求必须且只能包含 server 字符串")
+                self.server.runtime.logout_mcp_oauth(body["server"].strip())
+                self._send_json(HTTPStatus.OK, {"ok": True})
                 return
             if path == "/api/permissions":
                 if not _is_loopback_client(self.client_address[0]):
@@ -910,6 +1069,18 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _send_html(self, status: HTTPStatus, message: str) -> None:
+        encoded = (
+            "<!doctype html><meta charset=utf-8><title>MCP OAuth</title>"
+            f"<p>{html.escape(message)}</p>"
+        ).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
