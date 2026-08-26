@@ -146,6 +146,7 @@ def create_session(
             PermissionManager(
                 PermissionPolicy(settings.sandbox_mode, settings.approval_policy),
                 request_approval,
+                settings.request_timeout_seconds,
             ),
             change_journal=change_journal,
             session_id=session_id,

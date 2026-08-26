@@ -17,6 +17,7 @@ from agent.core.turn.public_events import PublicEventAdapter
 from agent.llm.types import AssistantResponse, ToolCall
 from agent.permissions import (
     ApprovalPolicy,
+    PermissionDenied,
     PermissionManager,
     PermissionPolicy,
     PermissionRequest,
@@ -127,6 +128,29 @@ class PermissionPolicyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grant.call_id, "call-1")
         self.assertEqual(grant.submission_id, 7)
         self.assertIs(grant.access, ToolAccess.HOST_EXECUTION)
+        self.assertFalse(manager.resolve("call-1", True, 7))
+
+    async def test_manager_expires_unanswered_approval(self) -> None:
+        requests: list[PermissionRequest] = []
+        manager = PermissionManager(
+            PermissionPolicy(SandboxMode.WORKSPACE_WRITE, ApprovalPolicy.ON_REQUEST),
+            requests.append,
+            approval_timeout_seconds=0.01,
+        )
+        request = PermissionRequest(
+            submission_id=7,
+            call_id="call-1",
+            tool_name="exec_command",
+            arguments={"command": "echo approved"},
+            requirement=PermissionRequirement(
+                ToolAccess.HOST_EXECUTION, "需要宿主环境"
+            ),
+        )
+
+        with self.assertRaisesRegex(PermissionDenied, "等待工具审批超过"):
+            await manager.authorize(request)
+
+        self.assertEqual(requests, [request])
         self.assertFalse(manager.resolve("call-1", True, 7))
 
     def test_registry_rejects_tool_without_an_access_declaration(self) -> None:

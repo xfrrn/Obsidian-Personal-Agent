@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agent.config.settings import Settings
 from agent.llm.session import ModelClientSession, _http_error
-from agent.llm.types import ContextLimitError, TokenUsage, ToolCall
+from agent.llm.types import ClientError, ContextLimitError, TokenUsage, ToolCall
 
 
 class ModelStreamingTest(unittest.IsolatedAsyncioTestCase):
@@ -30,6 +30,7 @@ class ModelStreamingTest(unittest.IsolatedAsyncioTestCase):
             chunks = [
                 {"choices": [{"delta": {"content": "你"}}]},
                 {"choices": [{"delta": {"content": "好"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
                 {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11}},
             ]
             await _send_sse(writer, *(json.dumps(chunk, ensure_ascii=False) for chunk in chunks), "[DONE]")
@@ -78,6 +79,84 @@ class ModelStreamingTest(unittest.IsolatedAsyncioTestCase):
             await server.wait_closed()
 
         self.assertEqual(response.content, None)
+        self.assertEqual(response.tool_calls, (ToolCall("call-1", "echo", {"text": "hello"}),))
+
+    async def test_total_timeout_is_not_extended_by_sse_heartbeats(self) -> None:
+        async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await _read_request(reader)
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+            try:
+                while True:
+                    writer.write(b": keepalive\n\n")
+                    await writer.drain()
+                    await asyncio.sleep(0.02)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server, base_url = await _start_server(handler)
+        try:
+            with self.assertRaisesRegex(ClientError, "模型请求超过"):
+                await _client(base_url, timeout=0.1).stream_complete(
+                    [{"role": "user", "content": "test"}], [], _ignore
+                )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_streamed_error_object_is_not_silently_ignored(self) -> None:
+        async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await _read_request(reader)
+            await _send_sse(
+                writer,
+                json.dumps({"error": {"message": "upstream failed"}}),
+                "[DONE]",
+            )
+
+        server, base_url = await _start_server(handler)
+        try:
+            with self.assertRaisesRegex(ClientError, "upstream failed"):
+                await _client(base_url).stream_complete(
+                    [{"role": "user", "content": "test"}], [], _ignore
+                )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def test_finishes_tool_call_on_finish_reason_without_done_marker(self) -> None:
+        peer_closed = asyncio.Event()
+
+        async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            await _read_request(reader)
+            chunks = [
+                {"choices": [{"delta": {"tool_calls": [{
+                    "index": 0,
+                    "id": "call-1",
+                    "function": {"name": "echo", "arguments": '{"text":"hello"}'},
+                }]}}]},
+                {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+            ]
+            await _send_sse(writer, *(json.dumps(chunk) for chunk in chunks), close=False)
+            await reader.read()
+            peer_closed.set()
+            writer.close()
+            await writer.wait_closed()
+
+        server, base_url = await _start_server(handler)
+        try:
+            response = await asyncio.wait_for(
+                _client(base_url).stream_complete(
+                    [{"role": "user", "content": "test"}], [], _ignore
+                ),
+                timeout=3,
+            )
+            await asyncio.wait_for(peer_closed.wait(), timeout=3)
+        finally:
+            server.close()
+            await server.wait_closed()
+
         self.assertEqual(response.tool_calls, (ToolCall("call-1", "echo", {"text": "hello"}),))
 
     async def test_collects_reasoning_content(self) -> None:
@@ -153,7 +232,7 @@ class ModelStreamingTest(unittest.IsolatedAsyncioTestCase):
             await server.wait_closed()
 
 
-def _client(base_url: str) -> ModelClientSession:
+def _client(base_url: str, timeout: float = 5) -> ModelClientSession:
     settings = Settings(
         api_key="test-key",
         model="test-model",
@@ -161,7 +240,7 @@ def _client(base_url: str) -> ModelClientSession:
         system_prompt="test",
         workspace=Path.cwd(),
         shell_enabled=False,
-        request_timeout_seconds=5,
+        request_timeout_seconds=timeout,
     )
     return ModelClientSession(settings)
 

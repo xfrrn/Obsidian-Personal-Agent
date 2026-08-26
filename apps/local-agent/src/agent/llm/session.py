@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -19,6 +20,7 @@ from agent.llm.types import (
 
 
 TextDeltaHandler = Callable[[str], Awaitable[None]]
+_POST_FINISH_GRACE_SECONDS = 1.0
 
 
 class ModelClientSession:
@@ -55,37 +57,75 @@ class ModelClientSession:
         end_turn: bool | None = None
 
         try:
-            async with httpx.AsyncClient(timeout=self._settings.request_timeout_seconds) as client:
-                # async with 在 CancelledError 向上传播时也会关闭 response/client，
-                # 因而不再像 to_thread 那样留下继续读取网络的后台线程。
-                async with client.stream(
-                    "POST", self._endpoint, headers=self._headers, json=payload
-                ) as response:
-                    if response.is_error:
-                        detail = (await response.aread()).decode("utf-8", errors="replace")[:1000]
-                        raise _http_error(response.status_code, detail)
-                    async for chunk_data in _sse_chunks(response):
-                        if chunk_data == "[DONE]":
-                            break
-                        chunk = _parse_stream_chunk(chunk_data)
-                        usage = _parse_usage(chunk.get("usage")) or usage
-                        parsed_end_turn = _parse_end_turn(chunk.get("end_turn"))
-                        if parsed_end_turn is not None:
-                            end_turn = parsed_end_turn
-                        for choice in _choices(chunk):
-                            delta = choice.get("delta")
-                            if not isinstance(delta, dict):
-                                raise ClientError("模型返回了格式不合法的流式响应")
-                            content = _text_content(delta.get("content"))
-                            if content:
-                                content_parts.append(content)
-                                await on_text_delta(content)
-                            reasoning = _text_content(delta.get("reasoning_content")) or _text_content(delta.get("reasoning"))
-                            if reasoning:
-                                reasoning_parts.append(reasoning)
-                                if on_reasoning_delta is not None:
-                                    await on_reasoning_delta(reasoning)
-                            _merge_tool_call_deltas(delta.get("tool_calls"), tool_call_parts)
+            async with asyncio.timeout(self._settings.request_timeout_seconds):
+                async with httpx.AsyncClient(timeout=self._settings.request_timeout_seconds) as client:
+                    # async with 在 CancelledError 向上传播时也会关闭 response/client，
+                    # 因而不再像 to_thread 那样留下继续读取网络的后台线程。
+                    async with client.stream(
+                        "POST", self._endpoint, headers=self._headers, json=payload
+                    ) as response:
+                        if response.is_error:
+                            detail = (await response.aread()).decode("utf-8", errors="replace")[:1000]
+                            raise _http_error(response.status_code, detail)
+                        chunks = aiter(_sse_chunks(response))
+                        finished = False
+                        while True:
+                            try:
+                                chunk_data = (
+                                    await asyncio.wait_for(
+                                        anext(chunks), _POST_FINISH_GRACE_SECONDS
+                                    )
+                                    if finished
+                                    else await anext(chunks)
+                                )
+                            except StopAsyncIteration:
+                                break
+                            except TimeoutError:
+                                if finished:
+                                    break
+                                raise
+                            if chunk_data == "[DONE]":
+                                break
+                            chunk = _parse_stream_chunk(chunk_data)
+                            raw_error = chunk.get("error")
+                            if raw_error is not None:
+                                detail = (
+                                    raw_error.get("message")
+                                    if isinstance(raw_error, dict)
+                                    else raw_error
+                                )
+                                if not isinstance(detail, str):
+                                    detail = json.dumps(raw_error, ensure_ascii=False)
+                                raise _http_error(
+                                    response.status_code, f"流式错误：{detail[:1000]}"
+                                )
+                            usage = _parse_usage(chunk.get("usage")) or usage
+                            parsed_end_turn = _parse_end_turn(chunk.get("end_turn"))
+                            if parsed_end_turn is not None:
+                                end_turn = parsed_end_turn
+                            for choice in _choices(chunk):
+                                delta = choice.get("delta")
+                                if not isinstance(delta, dict):
+                                    raise ClientError("模型返回了格式不合法的流式响应")
+                                content = _text_content(delta.get("content"))
+                                if content:
+                                    content_parts.append(content)
+                                    await on_text_delta(content)
+                                reasoning = _text_content(delta.get("reasoning_content")) or _text_content(delta.get("reasoning"))
+                                if reasoning:
+                                    reasoning_parts.append(reasoning)
+                                    if on_reasoning_delta is not None:
+                                        await on_reasoning_delta(reasoning)
+                                _merge_tool_call_deltas(delta.get("tool_calls"), tool_call_parts)
+                                finish_reason = choice.get("finish_reason")
+                                if finish_reason is not None:
+                                    if not isinstance(finish_reason, str):
+                                        raise ClientError("模型返回了格式不合法的流式响应")
+                                    finished = True
+        except TimeoutError as exc:
+            raise ClientError(
+                f"模型请求超过 {self._settings.request_timeout_seconds:g} 秒，已终止"
+            ) from exc
         except httpx.RequestError as exc:
             raise ClientError(f"无法连接模型端点: {exc}") from exc
 

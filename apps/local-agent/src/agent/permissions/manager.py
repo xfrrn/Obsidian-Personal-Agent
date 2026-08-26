@@ -24,9 +24,13 @@ class PermissionManager:
         self,
         policy: PermissionPolicy = PermissionPolicy(),
         approval_requested: Callable[[PermissionRequest], None] | None = None,
+        approval_timeout_seconds: float = 60.0,
     ) -> None:
+        if approval_timeout_seconds <= 0:
+            raise ValueError("approval_timeout_seconds 必须大于 0")
         self._policy = policy
         self._approval_requested = approval_requested
+        self._approval_timeout_seconds = approval_timeout_seconds
         self._pending: dict[str, tuple[int, asyncio.Future[bool]]] = {}
 
     async def authorize(self, request: PermissionRequest) -> PermissionGrant:
@@ -55,7 +59,14 @@ class PermissionManager:
             # 先登记 Future 再发事件，避免入口立即答复时丢失批准。
             assert self._approval_requested is not None
             self._approval_requested(request)
-            return await decision
+            try:
+                return await asyncio.wait_for(
+                    decision, self._approval_timeout_seconds
+                )
+            except TimeoutError as exc:
+                raise PermissionDenied(
+                    f"等待工具审批超过 {self._approval_timeout_seconds:g} 秒。"
+                ) from exc
         finally:
             current = self._pending.get(request.call_id)
             if current is not None and current[1] is decision:
