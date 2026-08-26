@@ -13,13 +13,16 @@ import unittest
 from unittest.mock import patch
 
 from agent.mcp import (
+    McpServerConfig,
     McpManager,
     _OAuthStorage,
+    _oauth_provider,
     load_mcp_config,
     load_mcp_settings,
     save_mcp_config,
 )
 from mcp.shared.auth import OAuthToken
+from mcp.client.auth import OAuthClientProvider
 from agent.permissions import (
     ApprovalPolicy,
     PermissionDecisionKind,
@@ -88,6 +91,48 @@ class _FakeClient:
 
 class McpHostTest(unittest.IsolatedAsyncioTestCase):
     async def test_http_transport_resolves_headers_from_environment(self) -> None:
+    async def test_persisted_oauth_token_is_refreshed_after_restart(self) -> None:
+        requested: list[str] = []
+        metadata = SimpleNamespace(token_endpoint="https://auth.example/token")
+
+        class FakeHttpClient:
+            async def __aenter__(self) -> FakeHttpClient:
+                return self
+
+            async def __aexit__(self, *_args: object) -> None:
+                pass
+
+            async def get(self, url: str) -> object:
+                requested.append(url)
+                return object()
+
+        async def load_stored(provider: OAuthClientProvider) -> None:
+            provider.context.current_tokens = OAuthToken(
+                access_token="expired", refresh_token="refresh"
+            )
+            provider.context.client_info = SimpleNamespace(
+                client_id="client", issuer="https://auth.example"
+            )
+            provider._initialized = True
+
+        async def discover(_response: object) -> tuple[bool, object]:
+            return True, metadata
+
+        provider = _oauth_provider(
+            McpServerConfig(name="remote", url="https://resource.example/mcp"),
+            SimpleNamespace(),
+        )
+        with (
+            patch.object(OAuthClientProvider, "_initialize", load_stored),
+            patch("agent.mcp.httpx2.AsyncClient", return_value=FakeHttpClient()),
+            patch("agent.mcp.handle_auth_metadata_response", discover),
+        ):
+            await provider._initialize()
+
+        self.assertIs(provider.context.oauth_metadata, metadata)
+        self.assertFalse(provider.context.is_token_valid())
+        self.assertTrue(requested[0].startswith("https://auth.example/"))
+
         class FakeHttpClient:
             created: FakeHttpClient | None = None
 

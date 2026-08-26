@@ -21,6 +21,10 @@ import httpx2
 from mcp.client import Client
 from mcp.client.auth import OAuthClientProvider
 from mcp.client.stdio import StdioServerParameters
+from mcp.client.auth.oauth2 import (
+    build_oauth_authorization_server_metadata_discovery_urls,
+    handle_auth_metadata_response,
+)
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import (
     AuthorizationCodeResult,
@@ -102,6 +106,33 @@ class _OAuthFlow:
 
 
 class _OAuthStorage:
+class _PersistentOAuthClientProvider(OAuthClientProvider):
+    async def _initialize(self) -> None:
+        await super()._initialize()
+        if not self.context.can_refresh_token():
+            return
+        issuer = getattr(self.context.client_info, "issuer", None)
+        if not issuer:
+            return
+        try:
+            async with httpx2.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+                for url in build_oauth_authorization_server_metadata_discovery_urls(
+                    issuer, self.context.server_url
+                ):
+                    retry, metadata = await handle_auth_metadata_response(
+                        await client.get(url)
+                    )
+                    if metadata:
+                        self.context.auth_server_url = issuer
+                        self.context.oauth_metadata = metadata
+                        self.context.token_expiry_time = -1
+                        return
+                    if not retry:
+                        return
+        except httpx2.HTTPError:
+            return
+
+
     def __init__(
         self, path: Path, server: str, configured_client_id: str | None = None
     ) -> None:
@@ -1228,7 +1259,7 @@ def _oauth_provider(
         client_name="Obsidian Personal Agent",
         scope=" ".join(config.scopes) or None,
     )
-    provider = OAuthClientProvider(
+    provider = _PersistentOAuthClientProvider(
         config.url or "",
         metadata,
         storage,
