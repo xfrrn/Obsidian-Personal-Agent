@@ -15,7 +15,7 @@ Windows Agent 由仓库根目录的 `npm run package:windows` 在隔离 venv 中
 
 终端模式使用 `python -m agent.cli.main`。模型地址、沙盒、Shell 和会话数据库分别由 `OPENAI_BASE_URL`、`AGENT_SANDBOX_*`、`AGENT_ENABLE_SHELL` 和 `AGENT_SESSION_DB` 配置；`AGENT_DISABLED_SKILLS` 接受逗号分隔的 Skill 名称；跨会话记忆默认启用，可通过 `AGENT_GENERATE_MEMORIES`、`AGENT_USE_MEMORIES` 和 `AGENT_MEMORY_*` 调整。
 
-MCP Host 默认读取 `~/.codex-agent/config.toml`，可用 `AGENT_MCP_CONFIG` 指向其他文件。配置采用 Codex 的 `[mcp_servers.<name>]` 结构，支持 stdio、Streamable HTTP、Bearer/OAuth、Tools、Resources、Server Instructions、工具过滤、超时和 `auto`、`prompt`、`writes`、`approve` 审批模式。Obsidian 设置页的“MCP 服务”可以查看连接状态、登录 OAuth、校验并立即重载这份配置；手动修改文件后需要重启 Agent：
+MCP Host 默认读取 `~/.codex-agent/config.toml`，可用 `AGENT_MCP_CONFIG` 指向其他文件。配置采用 Codex 的 `[mcp_servers.<name>]` 结构，支持 stdio、Streamable HTTP、Bearer/OAuth、Tools、Resources、Server Instructions、工具过滤、超时和 `auto`、`prompt`、`writes`、`approve` 审批模式。普通用户可在 Obsidian 设置页的“MCP 服务”直接添加、编辑、启停、删除和登录；以下 TOML 仅用于高级配置或手动部署：
 
 ```toml
 [mcp_servers.example]

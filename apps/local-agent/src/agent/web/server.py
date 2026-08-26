@@ -28,7 +28,7 @@ from agent.core.loop import start_agent
 from agent.core.turn.events import TurnError, TurnEvent, TurnFinished, TurnInterrupted
 from agent.core.turn.public_events import PublicEventAdapter
 from agent.memory import read_editable_memory, save_memory_override
-from agent.mcp import McpManager, read_mcp_config, save_mcp_config
+from agent.mcp import McpManager, mutate_mcp_server, read_mcp_config, save_mcp_config
 from agent.permissions import ApprovalPolicy, SandboxMode
 from agent.sandbox import SandboxBackend
 from agent.skills.loader import discover_skills, is_valid_skill_name
@@ -225,6 +225,14 @@ class AgentRuntime:
                 self._mcp_manager = McpManager(self._settings.mcp_config_path)
             self._call(self._mcp_manager.start())
             return self._mcp_manager.status()
+
+    def mutate_mcp_server(self, request: dict[str, object]) -> dict[str, object]:
+        with self._request_lock:
+            if self._turn_events or self._metrics.snapshot()["active_turns"]:
+                raise RuntimeError("运行中的回合结束后才能修改 MCP 服务")
+            mutate_mcp_server(self._settings.mcp_config_path, request)
+            self._call(self._shutdown())
+            return {"ok": True}
 
     def begin_mcp_oauth(self, server: str, callback_url: str) -> dict[str, object]:
         with self._request_lock:
@@ -939,6 +947,17 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                     self.server.runtime.begin_mcp_oauth(
                         body["server"].strip(), callback_url
                     ),
+                )
+                return
+            if path == "/api/mcp/servers":
+                if not _is_loopback_client(self.client_address[0]):
+                    self._send_json(
+                        HTTPStatus.FORBIDDEN, {"error": "MCP 服务只允许从本机修改"}
+                    )
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    self.server.runtime.mutate_mcp_server(self._read_json_body()),
                 )
                 return
             if path == "/api/mcp/oauth/logout":

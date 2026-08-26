@@ -52,6 +52,21 @@ export interface McpServerStatus {
   tools: string[];
   supports_resources: boolean;
   auth: "unsupported" | "unknown" | "not_required" | "bearer" | "oauth_authenticated" | "oauth_pending" | "oauth_not_authenticated";
+  command: string | null;
+  url: string | null;
+  args: string[];
+  env_vars: string[];
+  bearer_token_env_var: string | null;
+}
+
+export interface McpServerForm {
+  name: string;
+  transport: "stdio" | "streamable_http";
+  command: string;
+  url: string;
+  args: string[];
+  env_vars: string[];
+  bearer_token_env_var: string;
 }
 
 export const DEFAULT_SETTINGS: AgentSettings = {
@@ -236,114 +251,37 @@ export class AgentSettingTab extends PluginSettingTab {
       }
     );
 
-    const mcpGroup = new SettingGroup(this.containerEl).setHeading("MCP 服务").addClass("pka-settings-group");
-    mcpGroup.addSetting((setting) => {
-      setting.setName("Server 状态").setDesc("检查连接、工具、Resources 和 OAuth 状态。");
-      const container = setting.controlEl.createDiv({ cls: "pka-skill-list" });
-      const render = async () => {
-        container.empty();
-        container.createSpan({ text: "检查中…" });
+    const mcpGroup = new SettingGroup(this.containerEl)
+      .setHeading("MCP 服务")
+      .addClass("pka-settings-group", "pka-mcp-group");
+    const mcpToolbar = new Setting(mcpGroup.listEl)
+      .setName("管理 MCP 服务")
+      .setDesc("添加本地命令或远程服务；连接后工具会自动提供给 Agent。")
+      .addButton((button) => button.setCta().setButtonText("添加服务").onClick(() => {
+        new McpServerModal(this.app, null, async (server) => {
+          await this.agentPlugin.mutateMcpServer("add", server);
+          await renderMcpServers();
+        }).open();
+      }))
+      .addButton((button) => button.setButtonText("刷新").onClick(() => renderMcpServers()))
+      .addButton((button) => button.setButtonText("高级配置").onClick(async () => {
+        button.setDisabled(true);
         try {
-          const servers = await this.agentPlugin.listMcpServers();
-          container.empty();
-          if (!servers.length) {
-            container.createSpan({ text: "尚未配置 MCP Server" });
-            return;
-          }
-          for (const server of servers) {
-            const row = container.createDiv({ cls: "pka-skill-item" });
-            row.createSpan({
-              text: `${server.name} · ${mcpStatusLabel(server)} · ${server.tools.length} 个工具${server.supports_resources ? " · Resources" : ""}`
-            }).title = server.error ?? "";
-            if (server.auth === "oauth_not_authenticated") {
-              row.createEl("button", { text: "授权" }).addEventListener("click", async (event) => {
-                const button = event.currentTarget as HTMLButtonElement;
-                button.disabled = true;
-                try {
-                  const authorizationUrl = await this.agentPlugin.loginMcpServer(server.name);
-                  if (authorizationUrl) window.open(authorizationUrl, "_blank", "noopener,noreferrer");
-                  new Notice(authorizationUrl ? "已打开 MCP 授权页面；完成后点击刷新。" : "MCP Server 无需授权。");
-                } catch (error) {
-                  new Notice(error instanceof Error ? error.message : "无法启动 MCP OAuth。");
-                } finally {
-                  button.disabled = false;
-                }
-              });
-            } else if (server.auth === "oauth_authenticated") {
-              row.createEl("button", { text: "退出授权" }).addEventListener("click", async (event) => {
-                const button = event.currentTarget as HTMLButtonElement;
-                button.disabled = true;
-                try {
-                  await this.agentPlugin.logoutMcpServer(server.name);
-                  await render();
-                } catch (error) {
-                  new Notice(error instanceof Error ? error.message : "无法退出 MCP OAuth。");
-                  button.disabled = false;
-                }
-              });
-            }
-          }
-        } catch (error) {
-          container.empty();
-          container.createSpan({ text: error instanceof Error ? error.message : "无法读取 MCP 状态。" });
-        }
-      };
-      setting.addButton((button) => button.setButtonText("刷新").onClick(render));
-      void render();
-    });
-    mcpGroup.addSetting((setting) => setting
-      .setName("管理 MCP Servers")
-      .setDesc("编辑 Codex 格式的 TOML 配置；支持本地 stdio 和远程 Streamable HTTP，保存后立即重载。")
-      .addButton((button) => button.setButtonText("管理服务").onClick(async () => {
-        button.setDisabled(true).setButtonText("读取中…");
-        try {
-          const configuration = await this.agentPlugin.getMcpConfiguration();
-          const modal = new Modal(this.app).setTitle("MCP 服务");
-          const path = modal.contentEl.createEl("p", {
-            cls: "pka-memory-help",
-            text: `配置文件：${configuration.path || "未设置"}`
-          });
-          path.title = configuration.path;
-          const editor = modal.contentEl.createEl("textarea", {
-            cls: "pka-memory-editor",
-            attr: {
-              "aria-label": "MCP TOML 配置",
-              placeholder: MCP_CONFIG_EXAMPLE
-            }
-          });
-          editor.value = configuration.content;
-          modal.contentEl.createEl("p", {
-            cls: "pka-memory-help",
-            text: "密钥请通过 env_vars、bearer_token_env_var 或 env_http_headers 引用环境变量，不要直接写入 TOML。"
-          });
-          const actions = modal.contentEl.createDiv({ cls: "pka-memory-actions" });
-          actions.createEl("button", { text: "插入示例" }).addEventListener("click", () => {
-            if (!editor.value.trim()) editor.value = MCP_CONFIG_EXAMPLE;
-            editor.focus();
-          });
-          actions.createEl("button", { text: "取消" }).addEventListener("click", () => modal.close());
-          const saveMcpButton = actions.createEl("button", { cls: "mod-cta", text: "保存并重载" });
-          saveMcpButton.addEventListener("click", async () => {
-            saveMcpButton.disabled = true;
-            saveMcpButton.textContent = "保存中…";
-            try {
-              await this.agentPlugin.updateMcpConfiguration(editor.value);
-              new Notice("MCP 配置已保存并重载。");
-              modal.close();
-            } catch (error) {
-              new Notice(error instanceof Error ? error.message : "无法保存 MCP 配置。");
-              saveMcpButton.disabled = false;
-              saveMcpButton.textContent = "保存并重载";
-            }
-          });
-          modal.open();
-          editor.focus();
+          await this.openAdvancedMcpEditor(renderMcpServers);
         } catch (error) {
           new Notice(error instanceof Error ? error.message : "无法读取 MCP 配置。");
         } finally {
-          button.setDisabled(false).setButtonText("管理服务");
+          button.setDisabled(false);
         }
-      })));
+      }));
+    mcpToolbar.settingEl.addClass("pka-mcp-toolbar");
+    const mcpList = mcpGroup.listEl.createDiv({ cls: "pka-skill-list pka-mcp-list" });
+    const renderMcpServers: () => Promise<void> = () => this.renderMcpServers(
+      mcpList,
+      mcpToolbar,
+      renderMcpServers
+    );
+    void renderMcpServers();
 
     const dataGroup = new SettingGroup(this.containerEl).setHeading("工作区与数据").addClass("pka-settings-group");
     dataGroup.addSetting((setting) => setting
@@ -650,6 +588,275 @@ export class AgentSettingTab extends PluginSettingTab {
       );
     }
   }
+
+  private async renderMcpServers(
+    container: HTMLElement,
+    toolbar: Setting,
+    refresh: () => Promise<void>
+  ): Promise<void> {
+    container.empty();
+    renderSkillState(container, "正在检查 MCP 服务…", "本地命令首次启动可能需要几秒钟。");
+    try {
+      const servers = await this.agentPlugin.listMcpServers();
+      container.empty();
+      toolbar.setName(servers.length ? `${servers.length} 个 MCP 服务` : "管理 MCP 服务");
+      if (!servers.length) {
+        toolbar.setDesc("点击“添加服务”，无需手写配置文件。");
+        renderSkillState(container, "还没有 MCP 服务", "添加后，Agent 会自动发现可用工具。");
+        return;
+      }
+      const ready = servers.filter((server) => server.status === "ready").length;
+      toolbar.setDesc(`${ready} 个已连接；关闭服务不会删除配置。`);
+      for (const server of servers) {
+        const target = server.command
+          ? [server.command, ...server.args].join(" ")
+          : server.url ?? "未设置地址";
+        const details = [
+          server.transport === "stdio" ? "本地命令" : "远程服务",
+          mcpStatusLabel(server),
+          `${server.tools.length} 个工具`,
+          ...(server.supports_resources ? ["支持资源"] : []),
+          target
+        ];
+        const item = new Setting(container)
+          .setName(server.name)
+          .setDesc(details.join(" · "))
+          .addToggle((toggle) => toggle.setValue(server.enabled).onChange(async (enabled) => {
+            item.setDisabled(true);
+            try {
+              await this.agentPlugin.mutateMcpServer("toggle", { name: server.name, enabled });
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : "无法切换 MCP 服务。");
+            }
+            await refresh();
+          }));
+        if (server.auth === "oauth_not_authenticated") {
+          item.addButton((button) => button.setButtonText("登录").onClick(async () => {
+            button.setDisabled(true);
+            try {
+              const authorizationUrl = await this.agentPlugin.loginMcpServer(server.name);
+              if (authorizationUrl) window.open(authorizationUrl, "_blank", "noopener,noreferrer");
+              new Notice(authorizationUrl ? "授权完成后返回此页并点击刷新。" : "此服务无需登录。");
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : "无法启动 MCP 登录。");
+              button.setDisabled(false);
+            }
+          }));
+        } else if (server.auth === "oauth_authenticated") {
+          item.addExtraButton((button) => button
+            .setIcon("log-out")
+            .setTooltip("退出登录")
+            .onClick(async () => {
+              try {
+                await this.agentPlugin.logoutMcpServer(server.name);
+                await refresh();
+              } catch (error) {
+                new Notice(error instanceof Error ? error.message : "无法退出 MCP 登录。");
+              }
+            }));
+        }
+        item
+          .addExtraButton((button) => button
+            .setIcon("pencil")
+            .setTooltip("编辑服务")
+            .onClick(() => new McpServerModal(this.app, server, async (form) => {
+              await this.agentPlugin.mutateMcpServer("update", form);
+              await refresh();
+            }).open()))
+          .addExtraButton((button) => button
+            .setIcon("trash-2")
+            .setTooltip("删除服务")
+            .onClick(async () => {
+              if (!window.confirm(`确定删除 MCP 服务“${server.name}”吗？`)) return;
+              try {
+                await this.agentPlugin.mutateMcpServer("delete", { name: server.name });
+                await refresh();
+              } catch (error) {
+                new Notice(error instanceof Error ? error.message : "无法删除 MCP 服务。");
+              }
+            }));
+        item.settingEl.addClass("pka-mcp-item");
+        item.settingEl.classList.toggle("is-disabled", !server.enabled);
+        item.settingEl.title = server.error ?? "";
+      }
+    } catch (error) {
+      container.empty();
+      toolbar.setName("MCP 服务").setDesc("暂时无法读取服务状态。");
+      renderSkillState(
+        container,
+        "无法读取 MCP 服务",
+        error instanceof Error ? error.message : "Agent 暂时不可用。"
+      );
+    }
+  }
+
+  private async openAdvancedMcpEditor(onSaved: () => Promise<void>): Promise<void> {
+    const configuration = await this.agentPlugin.getMcpConfiguration();
+    const modal = new Modal(this.app).setTitle("MCP 高级配置");
+    const path = modal.contentEl.createEl("p", {
+      cls: "pka-memory-help",
+      text: `配置文件：${configuration.path || "未设置"}`
+    });
+    path.title = configuration.path;
+    const editor = modal.contentEl.createEl("textarea", {
+      cls: "pka-memory-editor",
+      attr: { "aria-label": "MCP TOML 配置", placeholder: MCP_CONFIG_EXAMPLE }
+    });
+    editor.value = configuration.content;
+    modal.contentEl.createEl("p", {
+      cls: "pka-memory-help",
+      text: "这里只用于 OAuth scopes、自定义请求头和工具审批等高级选项；密钥请引用环境变量。"
+    });
+    const actions = modal.contentEl.createDiv({ cls: "pka-memory-actions" });
+    actions.createEl("button", { text: "取消" }).addEventListener("click", () => modal.close());
+    const save = actions.createEl("button", { cls: "mod-cta", text: "保存并重载" });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        await this.agentPlugin.updateMcpConfiguration(editor.value);
+        await onSaved();
+        new Notice("MCP 高级配置已保存。");
+        modal.close();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : "无法保存 MCP 配置。");
+        save.disabled = false;
+      }
+    });
+    modal.open();
+    editor.focus();
+  }
+}
+
+class McpServerModal extends Modal {
+  constructor(
+    app: App,
+    private readonly existing: McpServerStatus | null,
+    private readonly save: (server: McpServerForm) => Promise<void>
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle(this.existing ? `编辑 ${this.existing.name}` : "添加 MCP 服务");
+    let form: McpServerForm = this.existing
+      ? {
+          name: this.existing.name,
+          transport: this.existing.transport,
+          command: this.existing.command ?? "",
+          url: this.existing.url ?? "",
+          args: [...this.existing.args],
+          env_vars: [...this.existing.env_vars],
+          bearer_token_env_var: this.existing.bearer_token_env_var ?? ""
+        }
+      : {
+          name: "",
+          transport: "stdio",
+          command: "npx",
+          url: "",
+          args: [],
+          env_vars: [],
+          bearer_token_env_var: ""
+        };
+
+    new Setting(this.contentEl)
+      .setName("服务名称")
+      .setDesc(this.existing ? "名称创建后不能修改。" : "只使用字母、数字、下划线或连字符。")
+      .addText((text) => {
+        text.setPlaceholder("例如：notion").setValue(form.name).onChange((value) => {
+          form = { ...form, name: value.trim() };
+        });
+        text.inputEl.readOnly = this.existing !== null;
+      });
+    const fields = this.contentEl.createDiv();
+    const renderFields = () => {
+      fields.empty();
+      if (form.transport === "stdio") {
+        new Setting(fields)
+          .setName("启动命令")
+          .setDesc("填写可执行程序，例如 npx、uvx、python 或完整路径。")
+          .addText((text) => text.setPlaceholder("npx").setValue(form.command).onChange((value) => {
+            form = { ...form, command: value };
+          }));
+        new Setting(fields)
+          .setName("启动参数")
+          .setDesc("每行一个参数；可以直接按服务文档中的顺序填写。")
+          .addTextArea((area) => {
+            area.inputEl.rows = 5;
+            area.inputEl.addClass("pka-mcp-form-textarea");
+            area.setPlaceholder("-y\n@modelcontextprotocol/server-example")
+              .setValue(form.args.join("\n"))
+              .onChange((value) => {
+                form = { ...form, args: splitLines(value) };
+              });
+          });
+        new Setting(fields)
+          .setName("需要传入的系统环境变量")
+          .setDesc("可选，每行一个变量名。这里不填写 API Key 的实际值。")
+          .addTextArea((area) => {
+            area.inputEl.rows = 3;
+            area.inputEl.addClass("pka-mcp-form-textarea");
+            area.setPlaceholder("NOTION_TOKEN")
+              .setValue(form.env_vars.join("\n"))
+              .onChange((value) => {
+                form = { ...form, env_vars: splitLines(value) };
+              });
+          });
+      } else {
+        new Setting(fields)
+          .setName("服务地址")
+          .setDesc("服务文档提供的 Streamable HTTP 地址。")
+          .addText((text) => text
+            .setPlaceholder("https://example.com/mcp")
+            .setValue(form.url)
+            .onChange((value) => {
+              form = { ...form, url: value.trim() };
+            }));
+        new Setting(fields)
+          .setName("Bearer Token 环境变量")
+          .setDesc("可选，只填写变量名；留空时可在服务列表中使用 OAuth 登录。")
+          .addText((text) => text
+            .setPlaceholder("EXAMPLE_MCP_TOKEN")
+            .setValue(form.bearer_token_env_var)
+            .onChange((value) => {
+              form = { ...form, bearer_token_env_var: value.trim() };
+            }));
+      }
+    };
+    new Setting(this.contentEl)
+      .setName("连接方式")
+      .setDesc("大多数本机安装包使用本地命令；网页服务使用远程地址。")
+      .addDropdown((dropdown) => dropdown
+        .addOptions({ stdio: "本地命令", streamable_http: "远程服务" })
+        .setValue(form.transport)
+        .onChange((value) => {
+          form = { ...form, transport: value as McpServerForm["transport"] };
+          renderFields();
+        }));
+    renderFields();
+
+    const actions = this.contentEl.createDiv({ cls: "pka-memory-actions" });
+    actions.createEl("button", { text: "取消" }).addEventListener("click", () => this.close());
+    const save = actions.createEl("button", {
+      cls: "mod-cta",
+      text: this.existing ? "保存并重连" : "添加并连接"
+    });
+    save.addEventListener("click", async () => {
+      try {
+        validateMcpServerForm(form);
+        save.disabled = true;
+        await this.save(form);
+        new Notice(this.existing ? "MCP 服务已更新。" : "MCP 服务已添加。");
+        this.close();
+      } catch (error) {
+        new Notice(error instanceof Error ? error.message : "无法保存 MCP 服务。");
+        save.disabled = false;
+      }
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 function mcpStatusLabel(server: McpServerStatus): string {
@@ -658,6 +865,34 @@ function mcpStatusLabel(server: McpServerStatus): string {
   if (server.auth === "oauth_pending") return "等待授权";
   if (server.auth === "oauth_not_authenticated") return "需要授权";
   return server.status === "failed" ? "连接失败" : "未启动";
+}
+
+function splitLines(value: string): string[] {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function validateMcpServerForm(server: McpServerForm): void {
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(server.name)) {
+    throw new Error("服务名称只能包含字母、数字、下划线和连字符。");
+  }
+  if (server.transport === "stdio" && !server.command.trim()) {
+    throw new Error("请填写本地服务的启动命令。");
+  }
+  if (server.transport === "streamable_http") {
+    let url: URL;
+    try {
+      url = new URL(server.url);
+    } catch {
+      throw new Error("请填写有效的远程服务地址。");
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+      throw new Error("远程服务必须使用不含账号密码的 HTTP(S) 地址。");
+    }
+  }
+  const variables = [...server.env_vars, server.bearer_token_env_var].filter(Boolean);
+  if (variables.some((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))) {
+    throw new Error("环境变量名只能包含字母、数字和下划线，且不能以数字开头。");
+  }
 }
 
 class ScheduledTaskModal extends Modal {

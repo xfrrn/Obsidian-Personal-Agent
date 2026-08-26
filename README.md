@@ -56,7 +56,7 @@ npm run build
 
 ### MCP 服务
 
-在 `设置 → Personal Knowledge Agent → MCP 服务` 可编辑 Codex 格式的 `[mcp_servers.<name>]` TOML，并查看每个 Server 的连接、Tools、Resources 和 OAuth 状态。本地第三方 Server 使用 `command`/`args`（stdio），远程 Server 使用 `url`（Streamable HTTP）；保存后 Agent 会校验配置并安全重载。Bearer 密钥只引用环境变量，OAuth Server 可直接在同一设置页完成浏览器授权。完整字段和示例见 [本地 Agent 文档](apps/local-agent/README.md)。
+在 `设置 → Personal Knowledge Agent → MCP 服务` 点击“添加服务”，选择“本地命令”或“远程服务”，按第三方服务文档填写命令/参数或 URL 即可；列表中可直接启停、编辑、删除、登录 OAuth，并查看连接、Tools 和 Resources 状态。只有 scopes、自定义请求头和工具审批等选项需要打开“高级配置”编辑 Codex 格式 TOML。完整字段和示例见 [本地 Agent 文档](apps/local-agent/README.md)。
 
 ### 调用 Obsidian 命令
 

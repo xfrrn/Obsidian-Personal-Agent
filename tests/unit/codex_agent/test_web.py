@@ -961,6 +961,9 @@ class WebRuntimeTest(unittest.TestCase):
                         },
                     ) as login,
                     patch.object(runtime, "logout_mcp_oauth") as logout,
+                    patch.object(
+                        runtime, "mutate_mcp_server", return_value={"ok": True}
+                    ) as mutate,
                 ):
                     listed = _get_json(f"{address}/api/mcp/servers")
                     started = _post_json(
@@ -968,6 +971,10 @@ class WebRuntimeTest(unittest.TestCase):
                     )
                     signed_out = _post_json(
                         f"{address}/api/mcp/oauth/logout", {"server": "remote"}
+                    )
+                    changed = _post_json(
+                        f"{address}/api/mcp/servers",
+                        {"action": "toggle", "name": "remote", "enabled": False},
                     )
                     callback_url = login.call_args.args[1]
             finally:
@@ -979,11 +986,15 @@ class WebRuntimeTest(unittest.TestCase):
         self.assertEqual(listed, status)
         self.assertEqual(started["authorization_url"], "https://auth.example/authorize")
         self.assertEqual(signed_out, {"ok": True})
+        self.assertEqual(changed, {"ok": True})
         self.assertEqual(
             callback_url,
             f"http://127.0.0.1:{server.server_port}/api/mcp/oauth/callback",
         )
         logout.assert_called_once_with("remote")
+        mutate.assert_called_once_with(
+            {"action": "toggle", "name": "remote", "enabled": False}
+        )
 
     def test_runtime_rejects_permission_switch_during_a_turn(self) -> None:
         started = ThreadEvent()

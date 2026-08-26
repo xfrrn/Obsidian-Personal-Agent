@@ -19,10 +19,11 @@ from agent.mcp import (
     _oauth_provider,
     load_mcp_config,
     load_mcp_settings,
+    mutate_mcp_server,
     save_mcp_config,
 )
-from mcp.shared.auth import OAuthToken
 from mcp.client.auth import OAuthClientProvider
+from mcp.shared.auth import OAuthToken
 from agent.permissions import (
     ApprovalPolicy,
     PermissionDecisionKind,
@@ -90,7 +91,6 @@ class _FakeClient:
 
 
 class McpHostTest(unittest.IsolatedAsyncioTestCase):
-    async def test_http_transport_resolves_headers_from_environment(self) -> None:
     async def test_persisted_oauth_token_is_refreshed_after_restart(self) -> None:
         requested: list[str] = []
         metadata = SimpleNamespace(token_endpoint="https://auth.example/token")
@@ -133,6 +133,7 @@ class McpHostTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(provider.context.is_token_valid())
         self.assertTrue(requested[0].startswith("https://auth.example/"))
 
+    async def test_http_transport_resolves_headers_from_environment(self) -> None:
         class FakeHttpClient:
             created: FakeHttpClient | None = None
 
@@ -356,6 +357,57 @@ callback_port = 8000
             )
             with self.assertRaisesRegex(ValueError, "不支持 stdio"):
                 load_mcp_config(config)
+
+    def test_structured_server_actions_preserve_advanced_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "config.toml"
+            config.write_text(
+                """# keep this comment
+[mcp_servers.remote]
+url = "https://old.example/mcp"
+http_headers = { X-Client = "obsidian" }
+""",
+                encoding="utf-8",
+            )
+            mutate_mcp_server(
+                config,
+                {
+                    "action": "update",
+                    "name": "remote",
+                    "transport": "streamable_http",
+                    "command": "",
+                    "url": "https://new.example/mcp",
+                    "args": [],
+                    "env_vars": [],
+                    "bearer_token_env_var": "REMOTE_TOKEN",
+                },
+            )
+            mutate_mcp_server(
+                config,
+                {
+                    "action": "add",
+                    "name": "local",
+                    "transport": "stdio",
+                    "command": "npx",
+                    "url": "",
+                    "args": ["-y", "example-mcp"],
+                    "env_vars": ["EXAMPLE_TOKEN"],
+                    "bearer_token_env_var": "",
+                },
+            )
+            mutate_mcp_server(
+                config, {"action": "toggle", "name": "local", "enabled": False}
+            )
+            content = config.read_text(encoding="utf-8")
+            servers = load_mcp_config(config)
+            mutate_mcp_server(config, {"action": "delete", "name": "remote"})
+
+            self.assertIn("# keep this comment", content)
+            self.assertIn('http_headers = { X-Client = "obsidian" }', content)
+            self.assertEqual(servers[0].url, "https://new.example/mcp")
+            self.assertEqual(servers[0].bearer_token_env_var, "REMOTE_TOKEN")
+            self.assertFalse(servers[1].enabled)
+            self.assertEqual([server.name for server in load_mcp_config(config)], ["local"])
 
     async def test_oauth_login_matches_callback_by_state(self) -> None:
         async def fake_login(

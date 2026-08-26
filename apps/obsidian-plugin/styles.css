@@ -215,6 +215,32 @@
   opacity: 0.55;
 }
 
+.pka-mcp-group {
+  background: var(--background-secondary);
+}
+
+.pka-mcp-toolbar {
+  background: var(--background-primary);
+  border-top: 0 !important;
+}
+
+.pka-mcp-item .setting-item-name {
+  font-family: var(--font-monospace);
+}
+
+.pka-mcp-item .setting-item-description {
+  overflow-wrap: anywhere;
+}
+
+.pka-mcp-item.is-disabled .setting-item-info {
+  opacity: 0.55;
+}
+
+.pka-mcp-form-textarea {
+  resize: vertical;
+  width: 100%;
+}
+
 .pka-skill-state {
   align-items: center;
   color: var(--text-muted);

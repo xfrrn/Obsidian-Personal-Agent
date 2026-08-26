@@ -18,13 +18,14 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx2
+import tomlkit
 from mcp.client import Client
 from mcp.client.auth import OAuthClientProvider
-from mcp.client.stdio import StdioServerParameters
 from mcp.client.auth.oauth2 import (
     build_oauth_authorization_server_metadata_discovery_urls,
     handle_auth_metadata_response,
 )
+from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import (
     AuthorizationCodeResult,
@@ -105,7 +106,6 @@ class _OAuthFlow:
     state: str | None = None
 
 
-class _OAuthStorage:
 class _PersistentOAuthClientProvider(OAuthClientProvider):
     async def _initialize(self) -> None:
         await super()._initialize()
@@ -133,6 +133,7 @@ class _PersistentOAuthClientProvider(OAuthClientProvider):
             return
 
 
+class _OAuthStorage:
     def __init__(
         self, path: Path, server: str, configured_client_id: str | None = None
     ) -> None:
@@ -671,6 +672,11 @@ class McpManager:
                         and _supports(connection.client, "resources")
                     ),
                     "auth": self._auth_status(config, connection),
+                    "command": config.command,
+                    "url": config.url,
+                    "args": list(config.args),
+                    "env_vars": list(config.env_vars),
+                    "bearer_token_env_var": config.bearer_token_env_var,
                 }
             )
         return {"servers": servers}
@@ -899,6 +905,128 @@ def save_mcp_config(path: Path | None, content: str) -> None:
                 temporary_path.unlink(missing_ok=True)
     except OSError as exc:
         raise ValueError(f"无法保存 MCP 配置 {path}: {exc}") from exc
+
+
+def mutate_mcp_server(path: Path | None, request: dict[str, object]) -> None:
+    """用结构化表单维护常用字段，高级 TOML 字段原样保留。"""
+
+    if path is None:
+        raise ValueError("未配置 MCP 配置文件路径")
+    action = request.get("action")
+    if action not in {"add", "update", "toggle", "delete"}:
+        raise ValueError("MCP Server 操作无效")
+    name = request.get("name")
+    if not isinstance(name, str) or not _SERVER_NAME.fullmatch(name):
+        raise ValueError("MCP Server 名称只能包含字母、数字、下划线和连字符")
+    expected = (
+        {"action", "name", "enabled"}
+        if action == "toggle"
+        else {"action", "name"}
+        if action == "delete"
+        else {
+            "action",
+            "name",
+            "transport",
+            "command",
+            "url",
+            "args",
+            "env_vars",
+            "bearer_token_env_var",
+        }
+    )
+    if set(request) != expected:
+        raise ValueError("MCP Server 请求字段无效")
+
+    try:
+        document = tomlkit.parse(read_mcp_config(path))
+    except Exception as exc:
+        raise ValueError(f"MCP 配置 TOML 无效: {exc}") from exc
+    servers = document.get("mcp_servers")
+    if servers is None:
+        servers = tomlkit.table()
+        document["mcp_servers"] = servers
+    if not isinstance(servers, dict):
+        raise ValueError("mcp_servers 必须是 TOML Table")
+
+    exists = name in servers
+    if action == "add" and exists:
+        raise ValueError(f"MCP Server 已存在: {name}")
+    if action != "add" and not exists:
+        raise ValueError(f"MCP Server 不存在: {name}")
+    if action == "delete":
+        del servers[name]
+        if not servers:
+            del document["mcp_servers"]
+        save_mcp_config(path, tomlkit.dumps(document))
+        try:
+            _OAuthStorage(_oauth_storage_path(path), name).clear()
+        except (OSError, ValueError):
+            _LOGGER.warning("mcp.oauth_credentials_cleanup_failed", extra={"server": name})
+        return
+    table = servers[name] if exists else tomlkit.table()
+    if not isinstance(table, dict):
+        raise ValueError(f"mcp_servers.{name} 必须是 TOML Table")
+    if action == "toggle":
+        enabled = request["enabled"]
+        if type(enabled) is not bool:
+            raise ValueError("enabled 必须是布尔值")
+        table["enabled"] = enabled
+    else:
+        _update_mcp_table(name, table, request)
+        if not exists:
+            servers[name] = table
+    save_mcp_config(path, tomlkit.dumps(document))
+
+
+def _update_mcp_table(
+    name: str, table: dict[str, object], request: dict[str, object]
+) -> None:
+    transport = request["transport"]
+    if transport not in {"stdio", "streamable_http"}:
+        raise ValueError("transport 必须是 stdio 或 streamable_http")
+    args = _string_tuple(request["args"], f"{name}.args")
+    env_vars = _string_tuple(request["env_vars"], f"{name}.env_vars")
+    for variable in env_vars:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", variable):
+            raise ValueError(f"环境变量名无效: {variable}")
+    bearer = request["bearer_token_env_var"]
+    if not isinstance(bearer, str):
+        raise ValueError("bearer_token_env_var 必须是字符串")
+    bearer = bearer.strip()
+    if bearer and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", bearer):
+        raise ValueError("Bearer Token 环境变量名无效")
+
+    if transport == "stdio":
+        command = request["command"]
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("本地 MCP Server 必须填写启动命令")
+        for field_name in (
+            "url",
+            "bearer_token_env_var",
+            "http_headers",
+            "env_http_headers",
+            "auth",
+            "scopes",
+            "oauth",
+            "oauth_resource",
+        ):
+            table.pop(field_name, None)
+        table["command"] = command.strip()
+        table["args"] = list(args)
+        if env_vars:
+            table["env_vars"] = list(env_vars)
+        else:
+            table.pop("env_vars", None)
+        return
+
+    url = _absolute_http_url(request["url"], f"{name}.url")
+    for field_name in ("command", "args", "env", "env_vars", "cwd"):
+        table.pop(field_name, None)
+    table["url"] = url
+    if bearer:
+        table["bearer_token_env_var"] = bearer
+    else:
+        table.pop("bearer_token_env_var", None)
 
 
 def _parse_mcp_config(content: str) -> tuple[McpServerConfig, ...]:

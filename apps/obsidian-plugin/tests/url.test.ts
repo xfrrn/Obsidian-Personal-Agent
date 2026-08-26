@@ -84,6 +84,9 @@ test("groups plugin settings and keeps one sticky save bar", () => {
   assert.match(settings, /\.setValue\(!disabled\.has\(skill\.name\)\)/);
   assert.match(settings, /renderSkillState\(container/);
   assert.match(settings, /pka-memory-editor/);
+  assert.match(settings, /class McpServerModal extends Modal/);
+  assert.match(settings, /setButtonText\("添加服务"\)/);
+  assert.match(settings, /setButtonText\("高级配置"\)/);
   assert.match(settings, /Tavily API Keys/);
   assert.match(settings, /addWebKeyInputs/);
   assert.match(settings, /keys\[activeIndex\]/);
@@ -99,9 +102,11 @@ test("groups plugin settings and keeps one sticky save bar", () => {
   assert.match(main, /web_fetch_provider: "auto"/);
   assert.match(main, /web_api_keys: \{/);
   assert.match(main, /disabled_skills: this\.settings\.disabledSkills/);
+  assert.match(main, /async mutateMcpServer\(/);
   assert.match(main, /method: "POST"[\s\S]*JSON\.stringify\(\{ memory \}\)/);
   assert.match(styles, /\.pka-settings-actions\s*{[^}]*position: sticky;/s);
   assert.match(styles, /\.pka-settings-group\s*{[^}]*border:/s);
   assert.match(styles, /\.pka-settings-group\s*{[^}]*padding-top:/s);
   assert.match(styles, /\.pka-skill-toolbar\s*{/);
+  assert.match(styles, /\.pka-mcp-toolbar\s*{/);
 });

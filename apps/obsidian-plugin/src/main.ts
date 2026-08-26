@@ -6,6 +6,7 @@ import {
   ApprovalPolicy,
   DEFAULT_SETTINGS,
   McpServerStatus,
+  McpServerForm,
   SandboxMode,
   WebApiKeys,
   WebProviderName
@@ -229,6 +230,24 @@ export default class CodeXAgentPlugin extends Plugin {
 
   async logoutMcpServer(server: string): Promise<void> {
     await this.mcpOAuthRequest("logout", server);
+  }
+
+  async mutateMcpServer(
+    action: "add" | "update" | "toggle" | "delete",
+    server: McpServerForm | { name: string; enabled?: boolean }
+  ): Promise<void> {
+    await this.ensureAgentReady();
+    const response = await requestUrl({
+      url: `${this.settings.agentUrl}/api/mcp/servers`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...server }),
+      throw: false
+    });
+    const payload = response.json as { error?: unknown };
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(typeof payload?.error === "string" ? payload.error : `修改 MCP 服务失败：HTTP ${response.status}`);
+    }
   }
 
   private async mcpOAuthRequest(action: "login" | "logout", server: string): Promise<object> {
